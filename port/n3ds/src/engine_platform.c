@@ -113,6 +113,14 @@ int n3ds_engine_read_cfg_language(void)
     cfguExit();
     return R_SUCCEEDED(result)?(int)language:-1;
 }
+int n3ds_engine_read_cfg_model(void)
+{
+    u8 model=0;
+    if(R_FAILED(cfguInit())) return -1;
+    Result result=CFGU_GetSystemModel(&model);
+    cfguExit();
+    return R_SUCCEEDED(result)?(int)model:-1;
+}
 unsigned long n3ds_engine_available_memory(void)
 {
     struct native_memory_snapshot state;

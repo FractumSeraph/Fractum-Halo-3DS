@@ -677,6 +677,9 @@ struct widget_instance;
 #include "text/text_group.h"
 #include "text/unicode.h"
 #include "ui_widget.h"
+#ifdef HALO_N3DS
+#include "engine_network.h"
+#endif
 
 /* ---------- constants */
 
@@ -3616,6 +3619,11 @@ static void widget_instance_initialize(
 	widget->render_regardless_of_controller_index =
 		TEST_FLAG(definition->flags, _widget_render_regardless_of_controller_index_bit);
 	widget->pause_game_time = TEST_FLAG(definition->flags, _widget_pause_game_time_bit);
+#ifdef HALO_N3DS
+	/* Set this before incrementing the pause counter. Clearing it on deletion
+	 * would leave both the counter and the shared simulation paused. */
+	if(n3ds_network_coop_active()) widget->pause_game_time=FALSE;
+#endif
 	widget->creation_time = widget_globals.current_system_milliseconds;
 	widget->milliseconds_to_auto_close = MAX(definition->milliseconds_to_auto_close, 0);
 	widget->auto_close_fade_time = MAX(definition->auto_close_fade_time, 0);
@@ -3707,6 +3715,14 @@ struct widget_instance *ui_widget_load_by_name_or_tag(
 		(widget_stack>=0) && (widget_stack<MAXIMUM_GAMEPADS));
 	if (tag_index == NONE)
 		tag_index = tag_loaded(UI_WIDGET_DEFINITION_TAG, name);
+#ifdef HALO_N3DS
+	/* Co-op uses one local profile per wireless console, not the Xbox's
+	 * second-controller sign-in. Preserve the calling menu's normal history. */
+	if(tag_index!=NONE && !strcmp(tag_get_name(tag_index),
+		"ui\\shell\\main_menu\\multiplayer_type_select\\coop\\player1_profile_select_screen"))
+		tag_index=tag_loaded(UI_WIDGET_DEFINITION_TAG,
+			"ui\\shell\\main_menu\\multiplayer_type_select\\connected\\4way_profile_select\\4way_start2join_screen");
+#endif
 	if (tag_index != NONE)
 	{
 		definition = ui_widget_definition_get(tag_index);
@@ -4297,6 +4313,9 @@ void display_error(
 				if (!widget->pause_game_time)
 				{
 					widget->pause_game_time = pause_game_time;
+#ifdef HALO_N3DS
+					if(n3ds_network_coop_active()) widget->pause_game_time=FALSE;
+#endif
 					if (widget->pause_game_time == TRUE)
 					{
 						match_vassert(
@@ -4902,7 +4921,11 @@ static void widget_instance_render_text_box(
 	rectangle2d bounds;
 	rectangle2d clip;
 
-	if (definition->text_label_string_list.index != NONE)
+	if (definition->text_label_string_list.index != NONE
+#ifdef HALO_N3DS
+		&& widget->parameters.text_box.string_list_index != -2
+#endif
+	)
 	{
 		short string_list_index;
 		wchar_t *string;
@@ -5268,8 +5291,29 @@ static void widget_instance_render_recursive(
 	}
 	if (!widget->visible)
 		return;
+	long background_bitmap_index = definition->background_bitmap.index;
+#ifdef HALO_N3DS
+	if(background_bitmap_index!=NONE && n3ds_network_coop_menu() &&
+		!strcmp(tag_get_name(background_bitmap_index),"ui\\shell\\bitmaps\\mp_map_grafix"))
+	{
+		long campaign_images=tag_loaded(BITMAP_GROUP_TAG,"ui\\shell\\bitmaps\\sp_levels");
+		if(campaign_images!=NONE) background_bitmap_index=campaign_images;
+	}
+	/* The heading is bitmap artwork. Reuse the campaign difficulty heading
+	 * already present in ui.map, without changing the map or widget data. */
+	{ extern int n3ds_network_coop_selected(void);
+	  if(background_bitmap_index!=NONE && n3ds_network_coop_selected() &&
+		 !strcmp(tag_get_name(background_bitmap_index),
+			"ui\\shell\\main_menu\\gametype_select\\header_select_gametype"))
+	  {
+		long heading=tag_loaded(BITMAP_GROUP_TAG,
+			"ui\\shell\\main_menu\\difficulty_select\\header_choose_difficulty");
+		if(heading!=NONE) background_bitmap_index=heading;
+	  }
+	}
+#endif
 	bitmap = bitmap_group_get_bitmap_from_sequence(
-		definition->background_bitmap.index,
+		background_bitmap_index,
 		0,
 		widget->animation.current_frame_index);
 	if (bitmap)
@@ -5280,7 +5324,7 @@ static void widget_instance_render_recursive(
 		rectangle2d clipped;
 		struct rasterizer_dynamic_screen_geometry_parameters parameters;
 		struct bitmap_group *bitmap_group =
-			bitmap_group_get(definition->background_bitmap.index);
+			bitmap_group_get(background_bitmap_index);
 		struct bitmap_group_sequence *sequence = TAG_BLOCK_GET_ELEMENT(
 			&bitmap_group->sequences,
 			0,
@@ -6286,7 +6330,17 @@ static boolean ui_check_for_pause_game(
 					local_player_count++;
 				}
 #ifdef HALO_N3DS
-				if(n3ds_main_is_solo_multiplayer())
+				if(n3ds_network_coop_active())
+				{
+					/* Campaign maps contain the campaign menu, not the competitive
+					 * network menu. Keep the shared simulation running behind it. */
+					if(widget_globals.active_widgets[controller_index])
+						ui_widgets_close_all();
+					else if(!ui_widget_load_by_name_or_tag("ui\\shell\\solo_game\\pause_game\\pause_game",
+						NONE,NULL,controller_index,NONE,NONE,NONE))
+						error(_error_silent,"failed to load campaign co-op pause menu");
+				}
+				else if(n3ds_main_is_solo_multiplayer())
 				{
 					/* Use the multiplayer map's own Resume/Quit menu, without
 					 * asking for a network client or campaign-only widget tags. */

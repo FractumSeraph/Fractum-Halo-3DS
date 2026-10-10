@@ -475,6 +475,13 @@ void game_tick(
 	void)
 {
 	real seconds_per_tick;
+#ifdef HALO_N3DS
+	extern int n3ds_network_coop_active(void);
+	extern void n3ds_main_coop_before_tick(void), n3ds_main_coop_after_tick(void);
+	extern void director_update(real), observer_update(real);
+	boolean native_coop = n3ds_network_coop_active();
+	if(native_coop) n3ds_main_coop_before_tick();
+#endif
     NATIVE_GAME_BEGIN();
 
 	profile_tick_start();
@@ -513,6 +520,16 @@ void game_tick(
 	players_update_after_game();
 	hud_update();
 	player_effect_update();
+#ifdef HALO_N3DS
+	if(native_coop)
+	{
+		/* camera_time is read by campaign scripts, so its clock must follow
+		 * shared simulation ticks, including catch-up ticks on the client. */
+		director_update(1.f / TICKS_PER_SECOND);
+		observer_update(1.f / TICKS_PER_SECOND);
+		n3ds_main_coop_after_tick();
+	}
+#endif
 
 	profile_exit(game_update_section);
 	collision_log_end_period();

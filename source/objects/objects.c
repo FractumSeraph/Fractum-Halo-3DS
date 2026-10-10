@@ -2334,6 +2334,8 @@ if (!valid_real_matrix4x3(matrix)) \
 #ifdef HALO_N3DS
 static boolean native_distant_pose(long index,const struct object_datum *object)
 {
+ extern int n3ds_network_coop_active(void);
+ if(n3ds_network_coop_active())return FALSE;
  extern boolean cinematic_in_progress(void);extern int n3ds_input_platform_original_model(void);
  if(object->object.type!=_object_type_biped || object->object.parent_object_index!=NONE || cinematic_in_progress())return FALSE;
  const struct unit_datum *unit=(const struct unit_datum *)object;

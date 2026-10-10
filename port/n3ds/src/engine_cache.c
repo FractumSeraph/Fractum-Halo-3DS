@@ -280,7 +280,7 @@ fail:
 /* Listing must not deserialize every level while a menu is opening. Check
  * the small header pair and extents here; actual selection/loading retains
  * the complete tag CRC, relocation and scenario validation below. */
-boolean n3ds_engine_map_installed(const char *name)
+static boolean installed_map_header(const char *name,unsigned long *identity)
 {
     struct cache_file_header header;
     struct relocation_header relocation;
@@ -305,12 +305,22 @@ boolean n3ds_engine_map_installed(const char *name)
     read=fread(&relocation,1,sizeof(relocation),file)==sizeof(relocation);
     if(fseek(file,0,SEEK_END)) read=0;
     size=ftell(file);fclose(file);
-    return read && relocation.magic==0x314c524e && relocation.version==1 &&
+    boolean valid=read && relocation.magic==0x314c524e && relocation.version==1 &&
         relocation.bytes==(unsigned long)header.tag_data_size && relocation.xbox_base==0x803a6000 &&
         relocation.count && relocation.count<=relocation.bytes/4 &&
         size==(long)(sizeof(relocation)+relocation.count*sizeof(struct relocation_record)) &&
         relocation.header_crc==crc32(&header,sizeof(header));
+    if(valid && identity) {
+        unsigned long value=crc32(&relocation,sizeof(relocation));
+        *identity=value?value:1;
+    }
+    return valid;
 }
+
+boolean n3ds_engine_map_installed(const char *name)
+{ return installed_map_header(name,NULL); }
+unsigned long n3ds_engine_map_identity(const char *name)
+{ unsigned long identity=0;installed_map_header(name,&identity);return identity; }
 
 boolean n3ds_engine_map_available(const char *name)
 {

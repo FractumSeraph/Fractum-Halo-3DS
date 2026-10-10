@@ -5,8 +5,8 @@
 
 void n3ds_log(const char *message);
 void n3ds_ui_controls_back(void);
-static const struct native_control_settings defaults={100,100,0,0};
-static struct native_control_settings settings={100,100,0,0},opened_settings;
+static const struct native_control_settings defaults={100,100,0,0,0};
+static struct native_control_settings settings={100,100,0,0,0},opened_settings;
 static int initialized,modal,main_route,selected,save_error,repeat_ticks,swallow;
 static unsigned int previous_keys;
 static const char path[]="t:\\controller-settings.bin";
@@ -15,24 +15,34 @@ static const char backup[]="t:\\controller-settings.bak";
 struct settings_file {unsigned int magic,version;struct native_control_settings settings;unsigned int checksum;};
 
 static int valid(const struct native_control_settings *s)
-{return s->cstick>=25 && s->cstick<=300 && s->touch>=25 && s->touch<=300 && s->xbox_buttons<=1 && s->swap_shoulders<=1;}
-static unsigned int checksum(const struct settings_file *f)
+{return s->cstick>=25 && s->cstick<=300 && s->touch>=25 && s->touch<=300 && s->xbox_buttons<=1 && s->swap_shoulders<=1 && s->circle_pad_pro<=1;}
+static unsigned int checksum_bytes(const void *data,unsigned int size)
 {
- const unsigned char *p=(const unsigned char *)f;unsigned int h=2166136261u;
- for(unsigned int i=0;i<sizeof(*f)-4;++i)h=(h^p[i])*16777619u;
+ const unsigned char *p=(const unsigned char *)data;unsigned int h=2166136261u;
+ for(unsigned int i=0;i<size;++i)h=(h^p[i])*16777619u;
  return h;
+}
+static unsigned int checksum(const struct settings_file *f){return checksum_bytes(f,sizeof(*f)-4);}
+static int decode_settings(const unsigned int *f,unsigned int size,struct native_control_settings *s)
+{
+ if(!((size==28 && f[1]==1) || (size==32 && f[1]==2)) || f[0]!=0x3343544c ||
+    f[size/4-1]!=checksum_bytes(f,size-4))return 0;
+ struct native_control_settings value=defaults;
+ memcpy(&value,f+2,size-12);
+ if(!valid(&value))return 0;
+ *s=value;return 1;
 }
 static int read_settings(const char *name,struct native_control_settings *s)
 {
- struct settings_file f;unsigned int h=n3ds_file_open(name,1);if(!h)return 0;
- int ok=n3ds_file_size(h)==sizeof(f) && n3ds_file_read(h,&f,sizeof(f));
+ unsigned int f[8]={0};unsigned int h=n3ds_file_open(name,1);if(!h)return 0;
+ unsigned int size=n3ds_file_size(h);
+ int ok=(size==28 || size==sizeof(f)) && n3ds_file_read(h,f,size);
  ok=n3ds_file_close(h) && ok;
- if(!ok || f.magic!=0x3343544c || f.version!=1 || f.checksum!=checksum(&f) || !valid(&f.settings))return 0;
- *s=f.settings;return 1;
+ return ok && decode_settings(f,size,s);
 }
 static int save_settings(void)
 {
- struct settings_file f={0x3343544c,1,settings,0};f.checksum=checksum(&f);
+ struct settings_file f={0x3343544c,2,settings,0};f.checksum=checksum(&f);
  if(!n3ds_file_create(settings_temporary,0))return 0;
  unsigned int h=n3ds_file_open(settings_temporary,3);if(!h)return 0;
  int ok=n3ds_file_resize(h,0) && n3ds_file_write(h,&f,sizeof(f));ok=n3ds_file_close(h) && ok;
@@ -52,6 +62,7 @@ void n3ds_controls_initialize(void)
  if(!read_settings(path,&settings) && !read_settings(backup,&settings))settings=defaults;
 }
 void n3ds_controls_get(struct native_control_settings *s){*s=settings;}
+int n3ds_controls_circle_pad_pro(void){return settings.circle_pad_pro;}
 void n3ds_controls_set(const struct native_control_settings *s){if(valid(s))settings=*s;}
 float n3ds_controls_sensitivity(int touch){return (touch?settings.touch:settings.cstick)*.01f;}
 static unsigned int exchange(unsigned int held,unsigned int a,unsigned int b)
@@ -82,6 +93,7 @@ static void adjust(int delta)
 {
  if(selected<2){unsigned int *v=selected?&settings.touch:&settings.cstick;int value=(int)*v+delta*5;*v=value<25?25:value>300?300:value;}
  else if(selected==2)settings.xbox_buttons^=1;
+ else if(selected==3)settings.circle_pad_pro^=1;
  else if(!n3ds_input_platform_original_model())settings.swap_shoulders^=1;
  save_error=0;
 }
@@ -98,14 +110,15 @@ void n3ds_controls_filter(struct native_input_sample *s)
  unsigned int nav=held&(NATIVE_KEY_DUP|NATIVE_KEY_DDOWN|NATIVE_KEY_DLEFT|NATIVE_KEY_DRIGHT);
  if(nav && !(fresh&nav)){if(++repeat_ticks>=18 && (repeat_ticks-18)%5==0)fresh|=nav;}
  else repeat_ticks=0;
- int count=n3ds_input_platform_original_model()?3:4;
+ int count=n3ds_input_platform_original_model()?4:5;
+ int row_height=count==5?26:32;
  if(fresh&NATIVE_KEY_DUP)selected=(selected+count-1)%count;
  if(fresh&NATIVE_KEY_DDOWN)selected=(selected+1)%count;
  if(fresh&NATIVE_KEY_DLEFT)adjust(-1);
  if(fresh&NATIVE_KEY_DRIGHT)adjust(1);
  if(fresh&NATIVE_KEY_TOUCH){
   unsigned int x=s->touch_x,y=s->touch_y;
-  if(y>=42 && y<170){int row=(y-42)/32;if(row<count){selected=row;if(x>=218)adjust(x<260?-1:1);}}
+  if(y>=42 && y<42+count*row_height){int row=(y-42)/row_height;if(row<count){selected=row;if(x>=218)adjust(x<260?-1:1);}}
   if(y>=202 && y<234){if(x>=16 && x<150){settings=defaults;save_error=0;}else if(x>=170 && x<304)close_settings();}
  }
  if(fresh&NATIVE_KEY_START)close_settings();
@@ -130,9 +143,17 @@ int n3ds_controls_tests(void)
  if(n3ds_controls_buttons(NATIVE_KEY_L|NATIVE_KEY_R,0,0)!=(NATIVE_KEY_L|NATIVE_KEY_R))ok=0;
  settings.touch=125;settings.cstick=75;
  if(fabs(n3ds_controls_sensitivity(1)-1.25f)>.0001f || fabs(n3ds_controls_sensitivity(0)-.75f)>.0001f)ok=0;
- struct settings_file f={0x3343544c,1,settings,0};f.checksum=checksum(&f);f.settings.touch^=1;
+ struct settings_file f={0x3343544c,2,settings,0};f.checksum=checksum(&f);f.settings.touch^=1;
  if(f.checksum==checksum(&f))ok=0;
  settings.touch=0;if(valid(&settings))ok=0;settings.touch=301;if(valid(&settings))ok=0;
+ unsigned int legacy[7]={0x3343544c,1,75,125,1,1,0};
+ legacy[6]=checksum_bytes(legacy,24);struct native_control_settings decoded=defaults;
+ if(!decode_settings(legacy,sizeof(legacy),&decoded) || decoded.cstick!=75 ||
+    decoded.touch!=125 || decoded.xbox_buttons!=1 || decoded.swap_shoulders!=1 || decoded.circle_pad_pro)ok=0;
+ f.settings=decoded;f.settings.circle_pad_pro=1;f.checksum=checksum(&f);
+ if(!decode_settings((const unsigned int *)&f,sizeof(f),&decoded) || !decoded.circle_pad_pro)ok=0;
+ f.settings.circle_pad_pro=2;f.checksum=checksum(&f);
+ if(decode_settings((const unsigned int *)&f,sizeof(f),&decoded))ok=0;
  settings=saved;
  if(ok)n3ds_log("PASS: controller settings ranges, checksum, independent sensitivities, reversible Xbox face mapping, and New-only gameplay shoulder swap");
  return ok;

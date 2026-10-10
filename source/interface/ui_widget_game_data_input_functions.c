@@ -341,6 +341,7 @@ symbols in this file:
 #include "interface/ui_widget_definitions.h"
 #ifdef HALO_N3DS
 #include "interface/ui_widget_event_handler_functions.h"
+#include "engine_network.h"
 #endif
 #include "interface/ui_widget_game_data_input_functions.h"
 #include "interface/hud_messaging.h"
@@ -632,6 +633,31 @@ static struct network_advertised_game *displayed_servers[MAXIMUM_DISPLAYED_SERVE
 static wchar_t ui_widget_game_data_build_version_wide_string[64];
 
 /* ---------- public code */
+
+#ifdef HALO_N3DS
+static void n3ds_widget_set_ascii(struct widget_instance *widget,const char *text)
+{
+	/* This instance supplies its own text; the shared tag still has an Xbox
+	 * string list, which the renderer would otherwise copy over it each frame. */
+	widget->parameters.text_box.string_list_index = -2;
+	size_t length=strlen(text);
+	if(length>127) length=127;
+	if(widget->parameters.text_box.text)
+	{
+		size_t i=0;
+		while(i<length && widget->parameters.text_box.text[i]==(unsigned char)text[i]) ++i;
+		if(i==length && !widget->parameters.text_box.text[i]) return;
+	}
+	wchar_t *storage=ui_widget_realloc(widget->parameters.text_box.text,
+		(length+1)*sizeof(wchar_t),__FILE__,__LINE__);
+	if(storage)
+	{
+		widget->parameters.text_box.text=storage;
+		for(size_t i=0;i<length;++i) storage[i]=(unsigned char)text[i];
+		storage[length]=0;
+	}
+}
+#endif
 
 void ui_widget_game_data_function_invoke(
 	struct widget_instance *widget,
@@ -1148,6 +1174,21 @@ void server_list_menu_update(
 
 				teams_text->parameters.text_box.string_list_index =
 					(server->has_teams == TRUE) ? 12 : 13;
+#ifdef HALO_N3DS
+				int campaign=n3ds_network_campaign_level(map_name);
+				map_bitmap->visible=TRUE;
+				if(campaign>=0)
+				{
+					map_bitmap->animation.current_frame_index=campaign;
+					n3ds_widget_set_ascii(map_name_text,n3ds_network_campaign_label(campaign));
+				n3ds_widget_set_ascii(ruleset_text,"Campaign co-op");
+				}
+				else
+				{
+					if(map_name_text->parameters.text_box.text) map_name_text->parameters.text_box.text[0]=0;
+					if(ruleset_text->parameters.text_box.text) ruleset_text->parameters.text_box.text[0]=0;
+				}
+#endif
 
 				number_of_players_text->parameters.text_box.text = ui_widget_realloc(
 					number_of_players_text->parameters.text_box.text,
@@ -2336,6 +2377,15 @@ void multiplayer_game_set_text_box_for_map_name(
 	if (game)
 	{
 		map_name = game->map_name;
+#ifdef HALO_N3DS
+		int campaign=n3ds_network_campaign_level(map_name);
+		if(campaign>=0)
+		{
+			n3ds_widget_set_ascii(widget,n3ds_network_campaign_label(campaign));
+			return;
+		}
+		if(widget->parameters.text_box.text) widget->parameters.text_box.text[0]=0;
+#endif
 	if (strstr(map_name, "beavercreek"))
 	{
 		widget->parameters.text_box.string_list_index = 0;
@@ -2943,7 +2993,12 @@ void dim_if_no_system_link_cable(
 		widget->type == _ui_widget_type_text_box,
 		"expected a text box widget for system link menu text item");
 
+#ifdef HALO_N3DS
+	/* No Ethernet cable on 3DS. Initialize/check the radio on selection. */
+	widget->alpha_modifier = 1.0f;
+#else
 	widget->alpha_modifier = transport_network_available() ? 1.0f : 0.333f;
+#endif
 	return;
 }
 
@@ -3153,6 +3208,27 @@ void mutliplayer_settings_select_list_update_displayed_items(
 	spinner_list_3wide_determine_displayed_item_indices(
 		list_widget,
 		displayed_item_indices);
+
+#ifdef HALO_N3DS
+	if(n3ds_network_coop_selected())
+	{
+		static const char *const names[]={"Easy","Normal","Heroic","Legendary"};
+		for(item_index=0;item_index<3 && displayed_item_indices[item_index]!=NONE;++item_index)
+		{
+			struct widget_instance *item=widget_instance_get_nth_child(list_widget,item_index);
+			struct widget_instance *description=item->child;
+			struct widget_instance *icon=description->next;
+			struct widget_instance *label=icon->next;
+			int difficulty=displayed_item_indices[item_index];
+			assert(difficulty>=0 && difficulty<4);
+			n3ds_widget_set_ascii(description,names[difficulty]);
+			n3ds_widget_set_ascii(label,"2-player co-op");
+			icon->visible=FALSE;
+			if(label->next) label->next->visible=FALSE;
+		}
+		return;
+	}
+#endif
 	for (item_index = 0; item_index < 3; item_index++)
 	{
 		if (displayed_item_indices[item_index] != NONE)
@@ -4144,6 +4220,17 @@ void mp_level_select_list_update_displayed_items(
 		short original_index=(short)displayed_item_indices[item_index];
 #ifdef HALO_N3DS
 		original_index=n3ds_ui_multiplayer_map_original_index(original_index);
+		if(original_index>=13)
+		{
+			n3ds_widget_set_ascii(map_name,n3ds_network_campaign_label(original_index-13));
+			n3ds_widget_set_ascii(map_description,"2-player co-op");
+			map_bitmap->visible=TRUE;
+			map_bitmap->animation.current_frame_index=original_index-13;
+			continue;
+		}
+		map_bitmap->visible=TRUE;
+		if(map_name->parameters.text_box.text) map_name->parameters.text_box.text[0]=0;
+		if(map_description->parameters.text_box.text) map_description->parameters.text_box.text[0]=0;
 #endif
 		map_name->parameters.text_box.string_list_index = original_index;
 		map_bitmap->animation.current_frame_index = original_index;

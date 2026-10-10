@@ -77,6 +77,9 @@ symbols in this file:
 /* ---------- headers */
 
 #include "cseries/cseries.h"
+#ifdef HALO_N3DS
+#include "engine_cache.h"
+#endif
 #include "cseries/errors.h"
 #include "game/game.h"
 #include "game/game_engine.h"
@@ -481,6 +484,14 @@ void network_game_reset_for_next_round(
 	return;
 }
 
+#ifdef HALO_N3DS
+int n3ds_network_coop_player_count(void)
+{
+	struct network_game *game=network_game_get_game();
+	return game ? game->player_count : 0;
+}
+#endif
+
 void network_game_invalidate(
 	struct network_game *game)
 {
@@ -616,6 +627,11 @@ boolean network_game_create_game_objects(
 {
 	long player_index;
 	struct game_options options;
+#ifdef HALO_N3DS
+	if (!memchr(game->map.name,0,sizeof(game->map.name)) || !game->map.__unknown0 ||
+		(unsigned long)game->map.__unknown0 != n3ds_engine_map_identity(game->map.name))
+		return FALSE;
+#endif
 
 	match_assert(
 		"c:\\halo\\SOURCE\\networking\\network_game_manager.c",
@@ -625,6 +641,17 @@ boolean network_game_create_game_objects(
 	game_options_new(&options);
 	csstrncpy(options.map_name, game->map.name, sizeof(game->map.name) - 1);
 	options.difficulty = game->difficulty;
+#ifdef HALO_N3DS
+    extern int n3ds_network_campaign_level(const char *);
+    extern short player_spawn_count;
+    int campaign = n3ds_network_campaign_level(game->map.name) >= 0;
+    if (campaign && (game->player_count != 2 || game->machine_count != 2)) return FALSE;
+    player_spawn_count = campaign ? 2 : 1;
+    /* Campaign scripts/checkpoint headers must identify the actual network
+     * scenario, rather than the last solo mission selected in the menu. */
+    if(campaign) main_set_map_name(options.map_name);
+    { extern void n3ds_network_coop_reset(void); n3ds_network_coop_reset(); }
+#endif
 
 	switch (game_connection())
 	{
@@ -654,6 +681,10 @@ boolean network_game_create_game_objects(
 		game_unload();
 	}
 
+#ifdef HALO_N3DS
+    if (campaign) game_set_game_variant(NULL);
+    else
+#endif
 	if (game->variant.game_engine_index)
 		game_set_game_variant(&game->variant);
 

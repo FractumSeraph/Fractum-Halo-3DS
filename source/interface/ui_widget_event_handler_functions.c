@@ -925,15 +925,19 @@ struct event_record;
 #include "saved games/playlist_profile.h"
 #include "bungie_net/network/transport.h"
 #include "bungie_net/network/transport_endpoint_winsock.h"
+#ifdef HALO_N3DS
+#include "engine_wireless.h"
+#endif
 #include "interface/player_ui.h"
 #include "saved games/player_profile.h"
 #include "interface/ui_widget_definitions.h"
 #ifdef HALO_N3DS
 #include "engine_cache.h"
+#include "engine_network.h"
 #include "tag_files/tag_files.h"
 void n3ds_log(const char *);
-static char *native_multiplayer_maps[13];
-static short native_multiplayer_map_indices[13],native_multiplayer_map_count;
+static char *native_multiplayer_maps[23];
+static short native_multiplayer_map_indices[23],native_multiplayer_map_count;
 short n3ds_ui_multiplayer_map_original_index(short index)
 {
 	assert(index>=0 && index<native_multiplayer_map_count);
@@ -2024,6 +2028,9 @@ static boolean pause_game_restart_at_checkpoint(
 	struct event_record *event,
 	boolean *widget_deleted)
 {
+#ifdef HALO_N3DS
+	if(n3ds_network_coop_active()) { n3ds_network_coop_request(N3DS_COOP_REVERT); return TRUE; }
+#endif
 	main_revert_map();
 	return TRUE;
 }
@@ -2033,6 +2040,9 @@ static boolean pause_game_restart_level(
 	struct event_record *event,
 	boolean *widget_deleted)
 {
+#ifdef HALO_N3DS
+	if(n3ds_network_coop_active()) { n3ds_network_coop_request(N3DS_COOP_RESTART); return TRUE; }
+#endif
 	main_reset_map();
 	return TRUE;
 }
@@ -2042,6 +2052,9 @@ static boolean pause_game_quit_to_main_menu(
 	struct event_record *event,
 	boolean *widget_deleted)
 {
+#ifdef HALO_N3DS
+	if(n3ds_network_coop_active()) { network_game_abort(); return TRUE; }
+#endif
 	game_state_save_to_persistent_storage();
 	main_goto_main_menu();
 	return TRUE;
@@ -2052,8 +2065,13 @@ static boolean coop_game_initialize(
 	struct event_record *event,
 	boolean *widget_deleted)
 {
+#ifdef HALO_N3DS
+	n3ds_network_set_coop_menu(TRUE);
+	return display_error_if_no_network_connection(widget,event,widget_deleted);
+#else
 	player_spawn_count = 2;
 	return TRUE;
+#endif
 }
 
 static boolean multiplayer_type_menu_initialize(
@@ -2061,6 +2079,9 @@ static boolean multiplayer_type_menu_initialize(
 	struct event_record *event,
 	boolean *widget_deleted)
 {
+#ifdef HALO_N3DS
+	n3ds_network_set_coop_menu(FALSE);
+#endif
 	player_spawn_count = 1;
 	return TRUE;
 }
@@ -2326,6 +2347,12 @@ static boolean network_game_server_list_initialize(
 
 	dispose_global_network_game_client();
 	dispose_global_network_game_server();
+#ifdef HALO_N3DS
+	if (!n3ds_wireless_search() || transport_initialize()!=0) {
+		display_error(5,event ? event->controller_index : 0,TRUE,TRUE);
+		return FALSE;
+	}
+#endif
 	player_ui_clear_multiplayer_variant();
 	if (create_global_network_game_client())
 		game_connection_set(1);
@@ -2346,7 +2373,10 @@ static boolean main_menu_initialize(
 	player_ui_clear_multiplayer_variant();
 	dispose_global_network_game_client();
 	dispose_global_network_game_server();
-	network_game_accept_remote_connections(FALSE);
+	#ifdef HALO_N3DS
+    transport_dispose();
+#endif
+    network_game_accept_remote_connections(FALSE);
 	player_spawn_count = 1;
 	player_ui_end_editing_profile();
 	if (!ui_main_menu_music_active())
@@ -2648,7 +2678,14 @@ static boolean display_error_if_no_network_connection(
 	struct event_record *event,
 	boolean *widget_deleted)
 {
-	boolean result = transport_network_available();
+	#ifdef HALO_N3DS
+    if(widget && !strcmp(tag_get_name(widget->definition_tag_index),
+        "ui\\shell\\main_menu\\multiplayer_type_select\\multiplayer_type_conn_item"))
+        n3ds_network_set_coop_menu(FALSE);
+    boolean result = n3ds_wireless_search() && transport_initialize()==0;
+#else
+    boolean result = transport_network_available();
+#endif
 
 	match_vassert("c:\\halo\\SOURCE\\interface\\ui_widget_event_handler_functions.c", 4575,
 		event != NULL, "event");
@@ -3045,7 +3082,7 @@ static boolean multiplayer_level_list_initialize(
 	/* The SD installation may contain only some maps. Keep original ordinals
 	 * separately so names, thumbnails and descriptions still match each path. */
 	native_multiplayer_map_count=0;
-	for(short i=0;i<13;++i)
+	for(short i=0;!n3ds_network_coop_menu() && i<13;++i)
 	{
 		if(n3ds_engine_map_installed(event_handler_functions.multiplayer_levels[i]))
 		{
@@ -3054,9 +3091,22 @@ static boolean multiplayer_level_list_initialize(
 		}
 	}
 	level_count=native_multiplayer_map_count;
+	if(n3ds_network_coop_menu())
+	{
+		for(short i=0;i<10;++i)
+		{
+			const char *path=main_get_solo_level_name(i);
+			if(n3ds_engine_map_installed(path))
+			{
+				native_multiplayer_map_indices[native_multiplayer_map_count]=13+i;
+				native_multiplayer_maps[native_multiplayer_map_count++]=(char *)path;
+			}
+		}
+		level_count=native_multiplayer_map_count;
+	}
 	widget->generated_list=native_multiplayer_maps;
 	widget->data3C.selected_index=level_count?0:NONE;
-	{char message[96];snprintf(message,sizeof(message),"MENU MAPS: %d prepared multiplayer maps available",level_count);n3ds_log(message);}
+	{char message[96];snprintf(message,sizeof(message),"MENU MAPS: %d prepared %s maps available",level_count,n3ds_network_coop_menu()?"co-op":"multiplayer");n3ds_log(message);}
 #endif
 	widget->generated_count = level_count;
 	if (level_count && saved_game_file_retrieve_last_used_multiplayer_map(map_name))
@@ -3071,6 +3121,16 @@ static boolean multiplayer_level_list_initialize(
 		if (widget->data3C.selected_index == level_count)
 			widget->data3C.selected_index = 0;
 	}
+#ifdef HALO_N3DS
+	/* Completing a co-op mission selects the next installed mission on the
+	 * host. Do not replace that selection with the older competitive history. */
+	if(n3ds_network_coop_selected())
+	{
+		for(short i=0;i<level_count;++i)
+			if(!_stricmp(main_get_multiplayer_map_name(),native_multiplayer_maps[i]))
+			{ widget->data3C.selected_index=i; break; }
+	}
+#endif
 	return TRUE;
 }
 
@@ -3393,6 +3453,16 @@ static boolean multiplayer_profiles_list_initialize(
 	widget->generated_list = ui_widget_realloc(widget->generated_list, 0x190,
 		"c:\\halo\\SOURCE\\interface\\ui_widget_event_handler_functions.c", 1390);
 	profile_indices = widget->generated_list;
+#ifdef HALO_N3DS
+	if(profile_indices && n3ds_network_coop_selected())
+	{
+		for(short i=0;i<4;++i) profile_indices[i]=i;
+		widget->generated_count=4;
+		widget->data3C.selected_index=n3ds_network_server_coop_current_difficulty(
+			global_network_game_server_get());
+		return TRUE;
+	}
+#endif
 	if (profile_indices)
 	{
 		word profile_count;
@@ -3481,7 +3551,12 @@ static boolean network_game_start_new_server(
 	boolean result = TRUE;
 
 	dispose_global_network_game_client();
-	player_ui_clear_multiplayer_variant();
+	#ifdef HALO_N3DS
+    if(!n3ds_wireless_host() || transport_initialize()!=0) {
+        display_error(5,event->controller_index,TRUE,TRUE);return FALSE;
+    }
+#endif
+    player_ui_clear_multiplayer_variant();
 	network_game_accept_remote_connections(TRUE);
 	if (!global_network_game_server_get())
 	{
@@ -5738,6 +5813,16 @@ static boolean multiplayer_profile_set_for_game(
 		profile_list->data3C.selected_index < (unsigned short)profile_list->generated_count,
 		"invalid multiplayer profile specified from 'multiplayer profile list' list widget");
 	profile_index = ((long *)profile_list->generated_list)[profile_list->data3C.selected_index];
+#ifdef HALO_N3DS
+	if(n3ds_network_coop_selected())
+	{
+		memset(&profile,0,sizeof(profile));
+		if(!n3ds_network_server_coop_difficulty(global_network_game_server_get(),profile_index))
+			return FALSE;
+		player_ui_set_game_variant(&profile);
+		return TRUE;
+	}
+#endif
 	if (profile_index == NONE)
 	{
 		ui_play_audio_feedback_sound(4);

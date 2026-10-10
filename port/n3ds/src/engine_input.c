@@ -1,6 +1,6 @@
 /* Built-in 3DS-family controller, exposed through Halo's original gamepad ABI.
- * There are no detachable controllers, Xbox memory units, keyboard, mouse, or
- * rumble motors. No Xbox service shims or input worker thread are necessary. */
+ * The optional Circle Pad Pro feeds the same right-stick sample as IRRST.
+ * Xbox memory units, keyboard, mouse and rumble motors remain absent. */
 #include "cseries.h"
 #include "input/input.h"
 #include "engine_input.h"

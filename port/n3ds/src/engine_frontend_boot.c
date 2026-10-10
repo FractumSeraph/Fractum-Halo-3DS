@@ -1,6 +1,9 @@
 #include "engine_checkpoint.h"
+#include "engine_wireless.h"
+
 /* Original main-menu widgets and lifecycle on the native renderer. */
 #include "cseries.h"
+#include "networking/network_game_globals.h"
 #include "sound/sound_manager.h"
 #include "cache/sound_cache.h"
 #include "units/units.h"
@@ -12,6 +15,7 @@
 #include "errors.h"
 #include "game_state.h"
 #include "game.h"
+#include "game/game_engine.h"
 #include "players.h"
 #include "input/input.h"
 #include "input/input_abstraction.h"
@@ -281,13 +285,28 @@ int halo_engine_boot(void)
             snprintf(message,sizeof(message),"FRONTEND INPUT: frame=%ld held=%08x circle=%d,%d look=%d,%d enabled=%d cinematic=%d skip=%d touch=%u,%u",frame+1,sample.held,sample.circle_x,sample.circle_y,sample.cstick_x,sample.cstick_y,player_input_enabled(),cinematic_in_progress(),cinematic_can_be_skipped(),sample.touch_x,sample.touch_y);n3ds_log(message);prior=sample;
         }
         event_manager_update();n3ds_frontend_trace("widgets");process_ui_widgets();bink_playback_update();
+        /* The original main loop services clients and hosts before simulation.
+         * Render pacing must never substitute for network action availability. */
+        if(global_network_game_client_get()) {
+            if(!network_game_client_start_frame() ||
+               (global_network_game_client_get() && !n3ds_wireless_active()) ||
+               (global_network_game_server_get() && !network_game_server_start_frame()))
+                network_game_abort();
+        }
         n3ds_frontend_trace("simulation");
         long long simulation_start=n3ds_engine_ticks();
         if(game_in_progress()) {
             player_control_update(1.f/30.f);game_time_update(1.f/30.f);
-            director_update(1.f/30.f);observer_update(1.f/30.f);
-            n3ds_main_mission_save_step(FALSE);
+            extern int n3ds_network_coop_active(void);
+            if(!n3ds_network_coop_active()) {
+                director_update(1.f/30.f);observer_update(1.f/30.f);
+                n3ds_main_mission_save_step(FALSE);
+            }
+            /* The post-game report stops simulation ticks. Its delay and
+             * exit/rematch buttons still need the original per-frame update. */
+            game_engine_update_non_deterministic(1.f/30.f);
         }
+        if(global_network_game_client_get() && !network_game_client_end_frame())network_game_abort();
         local=local_player_get_next(NONE);
         if(local!=NONE) {player=local_player_get_player_index(local);if(player!=NONE) unit=player_get(player)->unit_index;}
         if(unit!=NONE && n3ds_main_is_solo_multiplayer()) {
@@ -459,6 +478,7 @@ int halo_engine_boot(void)
     }
     #endif
     snprintf(message,sizeof(message),"FRONTEND END: frames=%ld menu=%d time=%ld",frame,main_menu_is_active(),game_time_get());n3ds_log(message);
+    dispose_global_network_game_client();dispose_global_network_game_server();n3ds_wireless_stop();
     game_time_end();game_dispose_from_old_map();game_unload();game_dispose();
     sound_dispose();
     /* The finished targets survive map teardown until rasterizer_dispose.

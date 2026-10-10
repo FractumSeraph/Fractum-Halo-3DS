@@ -22,6 +22,9 @@ int n3ds_input_platform_original_model(void);
 void n3ds_input_gameplay_controls(int enabled);
 void n3ds_input_platform_dispose(void);
 void n3ds_input_platform_poll(struct native_input_sample *sample);
+/* Optional infrared right stick. No service work in poll. */
+void n3ds_cpp_poll(struct native_input_sample *sample, int enabled);
+void n3ds_cpp_dispose(void);
 /* Used by the hardware polling path and deterministic input sequence tests. */
 void n3ds_engine_input_sample(const struct native_input_sample *sample);
 enum { NATIVE_TOUCH_GRENADE=1, NATIVE_TOUCH_FLASHLIGHT=2, NATIVE_TOUCH_AIM=4,

@@ -40,6 +40,45 @@ You can also replace `3ds/Halo3DS/Halo3DS.3dsx` on the SD card yourself.
 These updates keep your maps and saved files. Unless a release says otherwise,
 you don't need to run the full setup again.
 
+## Local wireless multiplayer (experimental)
+
+Use the same wireless-test build and matching maps on every console, and turn
+wireless communication on. No router or internet connection is needed.
+
+1. Choose **Multiplayer > System Link** for competitive play, or
+   **Multiplayer > Co-op** for campaign, then select a player profile.
+2. On the host, choose **Create Game**, then select the map and game type.
+3. On the other consoles, select the host's game and join the lobby.
+4. Once everyone is listed, the host can start the match.
+
+Competitive multiplayer supports up to four consoles, with one player each.
+**Co-op** lists campaign missions with their preview images and a difficulty
+selection. **System Link** lists multiplayer maps only. Co-op checkpoints last for the
+current session; leaving ends the game for both players. Completing a mission
+returns to the lobby with the next mission selected.
+
+Keep the consoles awake during a match;
+closing the lid or suspending the game disconnects that console. The first
+version searches for one nearby compatible host at a time.
+
+Paired-emulator matches have been tested, including an Original/New model pair.
+Wireless reliability on real consoles and full campaign progression still need
+testing before this should be treated as a stable release. The stable setup
+tools do not include this experimental wireless build.
+
+## Circle Pad Pro (experimental)
+
+Turn on **Circle Pad Pro** in Controller
+Settings to use the accessory's stick for aiming. **Right-stick aim** adjusts
+its sensitivity. Touch aiming and the existing button layout still work.
+Press an accessory shoulder button to wake it if necessary.
+
+It was designed to fit the original **3DS or 3DS XL**. The option is also
+available experimentally on other models, but physical fit and infrared
+alignment are not guaranteed. On New models, the built-in C-stick remains
+available when there is no fresh accessory input. Accessory support still
+needs hardware testing.
+
 ## Reporting problems
 
 Include your console model, build version, mission/map, difficulty, whether 3D

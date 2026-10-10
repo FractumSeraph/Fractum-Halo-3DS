@@ -10,6 +10,8 @@ Commands below run from the repository root unless stated otherwise.
 - [Engine and platform boundary](#engine-and-platform-boundary)
 - [Rendering rules](#rendering-rules)
 - [Stability and timing rules](#stability-and-timing-rules)
+- [Circle Pad Pro input](#circle-pad-pro-input)
+- [Local wireless multiplayer](#local-wireless-multiplayer)
 - [Verification](#verification)
 - [Setup and repository maintenance](#setup-and-repository-maintenance)
 
@@ -318,7 +320,211 @@ authored mesh LODs, thins disconnected foliage islands and limits decorative
 particles. Base textures, cutouts, team colors, emission and native lighting
 remain. These reductions do not change collision meshes or AI update rates.
 
+## Circle Pad Pro input
+
+The optional accessory driver is `engine_circle_pad_pro.c`. Enable it in
+Controller Settings; it defaults off so normal play does not open `ir:USER` or
+allocate a worker. New models retain the built-in IRRST C-stick as a fallback;
+fresh CPP data takes priority when the option is enabled. CPP axes
+use the same dead zone and Right-stick aim sensitivity as the C-stick; button
+mapping and touch aiming are unchanged. The software option is available on
+all models, but physical cradle fit and IR alignment on New models and the
+Original 2DS are not assured. Nintendo only supports Original 3DS/XL cradles.
+
+The worker owns IR IPC, one 4 KiB shared page and an 8 KiB stack. The game thread
+only copies a locked sample. Calibration reads are checked for CRC, response
+length/offset and finite scales; frames are decoded without unaligned loads.
+Receive metadata and ring boundaries are validated before access. A missing
+accessory retries after a one-second wait; unavailable IR does not fail boot.
+Samples older than 200 ms are ignored. HOME/sleep clears input, invalidates the
+session and reconnects after restore. Shutdown signals and joins the worker
+before freeing its resources. No calibration-write commands are sent.
+
+Controller settings version 2 adds the opt-in field and reads version 1 without
+losing existing sensitivity/layout preferences. `circle_pad_pro_tests.c` runs
+on a host compiler and covers calibration, CRC, packed axes and corrupt/wrapped
+packets. Controller settings tests also cover version 1 migration and version 2
+validation. A bounded Azahar test covers menu boot, emulated CPP calibration,
+disable/re-enable and worker shutdown on both Original and New models. Hardware
+calibration, reconnection, sleep/HOME and simultaneous UDS play still require an
+actual accessory; emulator checks cannot validate the physical IR connection.
+
+Protocol references: [Circle Pad Pro](https://3dbrew.org/wiki/Circle_Pad_Pro),
+[IR shared memory](https://3dbrew.org/wiki/IRUSER_Shared_Memory) and
+[initialization](https://3dbrew.org/wiki/IRUSER:InitializeIrnopShared).
+The calibration field layout was cross-checked against the
+[Red Viper driver](https://github.com/skyfloogle/red-viper/blob/master/source/3ds/cpp.c).
+The driver here is a separate implementation with a bounded parser and explicit
+thread/resource ownership.
+
+## Local wireless multiplayer
+
+System Link uses libctru UDS for nearby 3DS-to-3DS communication. It does not
+use internet sockets or connect to Xbox consoles. The original Halo menus,
+host/client managers, game variants, action updates and synchronization checks
+remain in use. Native frame servicing runs the original network callbacks
+before simulation and sends local updates afterward. Solo play does not
+initialize the radio or allocate its queues.
+
+The adapter has three parts:
+
+- `engine_network.c` implements the original transport interface with
+  session-local node addresses and nonblocking endpoints.
+- `engine_wireless_protocol.c` implements bounded datagram queues and reliable
+  byte streams, including fragmentation, acknowledgments, retries and timeouts.
+  The explicit little-endian wire header is versioned and validated before use.
+- `engine_wireless_platform.c` owns UDS discovery, connections and the radio
+  worker. Game objects remain on the main thread; endpoint state is locked.
+  The worker continues servicing packets while a map loads and has a bounded
+  receive batch so it cannot monopolize the CPU.
+
+The radio advertises an application ID, protocol marker and build fingerprint.
+Only matching builds connect. Halo map settings carry an identity derived from
+the validated prepared-map relocation header; clients check it before loading.
+Normal map loading still performs the full relocation validation. These are
+compatibility checks, not cryptographic authentication. The UDS passphrase is
+a public application namespace, not a user password.
+
+The initial limit is four consoles, one local player each. Discovery attaches
+to the first compatible non-full radio host; the original game browser then
+lists that host's session. It does not merge listings from multiple radio hosts.
+Campaign co-op, online play and joining a match already in progress have not
+been validated. Sleep/HOME suspension ends the local connection. Client and
+server loading allowances are longer than Xbox defaults to accommodate slow
+SD cards, while transport heartbeats still detect a silent peer.
+
+Do not restore the original per-packet traffic spreadsheets: their synchronous
+flushes cause SD I/O during gameplay. Session events use the existing engine log.
+
+The asset-free protocol test can be built with a host C11 compiler, for example
+from a shell configured for Clang and its system C runtime:
+
+```sh
+clang -std=c11 -Wall -Wextra -Werror -Iport/n3ds/include \
+  port/n3ds/src/engine_wireless_protocol.c \
+  port/n3ds/tests/src/wireless_protocol_tests.c -o build/wireless-tests
+```
+
+Run the resulting executable. Add `-fsanitize=address` when supported. Tests
+cover packet loss, duplicate/reordered delivery, fragmentation, full/wrapped
+queues, malformed packets, discovery before connection, loopback, reconnect,
+peer loss and four-console stream isolation.
+
+Integration testing uses separate emulator SD folders and a private local
+Azahar room to carry emulated UDS traffic. Test-only controller injection and
+simulation-state sampling must not be linked into the distributed executable.
+Two New-model emulators have completed discovery, lobby join and Blood Gulch
+loading, movement and charged plasma fire, with matching random-state samples
+at 127 shared simulation ticks. Host disappearance and client menu exit were
+also checked. A mixed New/Original-model emulator match loaded Blood Gulch,
+rendered the other player and exercised movement and firing, with matching
+random-state samples at 207 shared ticks. The Original-model client used
+24 MiB ordinary and 32 MiB linear heap limits. These samples are not full
+game-state checksums. That client also returned to the menu, released its
+wireless buffers and loaded Pillar of Autumn's opening cinematic offline.
+This is not proof of radio reliability, four-console gameplay,
+all game variants, or performance on physical consoles. Keep the wireless build
+separate from the stable installers until hardware testing is complete.
+
 ## Verification
+
+### Multiplayer post-game lifecycle
+
+The native frontend must call `game_engine_update_non_deterministic` once per
+frame while a game is loaded, even when simulation ticks have stopped. This
+advances the carnage report's five-second delay and handles the original
+buttons: A/Start returns the host to match setup, B/Back leaves the session.
+Leaving this call out strands the host on the report after the match ends.
+Keep it outside the tick loop; it must not depend on incoming player actions.
+Regression checks should cover the last guest leaving, a normal match end,
+returning to match setup, and leaving for the main menu on both model families.
+
+### Campaign co-op development
+
+Campaign co-op is under development and is not part of the stable installers.
+The target is two consoles, with one player on each. Multiplayer > Co-op opens
+the wireless profile/browser flow with installed campaign maps and their
+original preview images; the following selection chooses difficulty. System
+Link retains competitive maps only. Both peers must use the same build and
+map data.
+
+Menu intent is separate from the selected map: it must survive profile and
+lobby navigation, even before a host exists. Co-op and competitive rooms use
+different UDS sub-IDs, so discovery cannot attach to a room from the other
+menu. The radio worker uses a session-fixed sub-ID. Campaign thumbnails reuse
+the existing `sp_levels` bitmap at render time without modifying map files.
+Lobby machine names default to the CFG-reported model, including Original
+3DS/XL and 2DS, with a neutral fallback when the model query fails.
+The menu update was checked with an Original-model emulator hosting and a New
+model joining: campaign previews matched the installed missions, the lobby
+identified the host as Nintendo 3DS XL, and 169 shared simulation-state samples
+matched through tick 1,232 after entering Assault on the Control Room. System
+Link separately showed only the two installed competitive maps and their
+previews. The Original peer also switched from Co-op to competitive discovery
+without restarting. Physical model naming and wireless behavior still need
+the corresponding hardware check.
+
+The design reference is [OpenCE's networking notes](https://github.com/OpenCommunityEdition/OpenCE/blob/07302a866f8b36c162203fe58dcf632d4708d65c/port/linux/NETCODE.md)
+(the project formerly called halo-ce-universal). OpenCE replaces Xbox lockstep
+with host-authoritative AI, scripting and object replication. This prototype
+retains the existing lockstep transport: both peers simulate campaign logic.
+Camera timing and campaign services therefore follow shared simulation ticks,
+and distance-based simulation shortcuts that depend on the local view are
+disabled in co-op. Rendering optimizations remain local.
+
+Audio-driven mouth animation is omitted in co-op. Its local playback timing
+otherwise changes simulation bones and weapon attachment markers, allowing
+combat to diverge even when player inputs match. Speech still plays, and solo
+lip animation is unchanged. Fallen-body settling also uses a common tick
+schedule on Original and New models.
+
+Checkpoint snapshots stay local to each running session and do not overwrite
+solo disk saves. Network update numbers must remain monotonic across a campaign
+clock rewind. Skip and revert requests travel in reserved player-action bits,
+which are stripped before applying unit controls. A pause menu does not pause
+the other console. Restart returns the pair to the lobby; mission completion
+selects the next campaign map there. These lifecycle paths require integration
+validation before promoting a co-op build to stable.
+
+The client must wait for a validated settings packet before reporting map
+readiness. The pregame loop can run between the join acknowledgement and that
+packet; using the menu's previous map at that point could enter the legacy
+damaged-media loop.
+
+Paired-emulator checks exercised PoA movement, shared cutscene skipping,
+manual checkpoint restore and restarting through the lobby. A Silent
+Cartographer combat run matched random-state and object-state samples through
+5,700 network ticks, individual respawn, all-player death/checkpoint recovery,
+and a forced mission-completion handoff to Assault on the Control Room.
+An Original/New configuration pair, with 24 MiB ordinary and 32 MiB linear
+heaps on the Original client, matched through another 3,300-tick run including
+combat and all-player recovery. The detailed combat trace compared more than
+540,000 object records, including weapon attachment bounds. Forced deaths and
+completion exercise the real lifecycle functions but are not a campaign
+playthrough. These tests do not establish physical-console performance.
+
+A mixed-model Assault on the Control Room test crossed a loading zone from
+BSP 3 to BSP 0, bringing the remote player across, with 691 matching state
+samples through 3,330 network ticks and 265,478 matching detailed object records.
+The probe used a collision-validated position inside the loading volume;
+placing a player at the raw volume center was outside valid destination geometry
+and correctly hit the original engine's missing-player assertion. Campaign maps
+must open their campaign pause widget, since the competitive pause widget is
+not included in their tag data.
+The final mixed-model check opened that menu while both simulations continued,
+matched 646 state samples through 1,980 ticks, and used the client's Save and
+Quit entry to return both peers to the main menu without a fatal or sync error.
+The original widget still says Save and Quit (and briefly shows its saving
+message), but co-op exits without writing a persistent solo checkpoint.
+
+Compare random-state and object-state samples at the same **network update
+number**, not just campaign time: checkpoint reverts repeat campaign ticks.
+Test independent movement, combat, doors, one-player respawn, all-player death,
+manual checkpoint restore, BSP transitions, cutscene skips, mission completion,
+leaving and mixed Original/New hardware. Idle cutscene synchronization alone
+does not establish playable co-op. Never ship the input-injection fixture.
+
+### Regression checklist
 
 Test these paths after changes to memory, rendering, loading or controls:
 

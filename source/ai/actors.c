@@ -4202,6 +4202,8 @@ static long long native_actor_cost[7];
 static unsigned int native_decisions_deferred;
 static boolean native_decision_due(long index,const struct actor_datum *a)
 {
+ extern int n3ds_network_coop_active(void);
+ if(n3ds_network_coop_active())return TRUE;
  static const struct actor_stimulus_data no_stimuli={0};
  extern boolean cinematic_in_progress(void);
  if(!((game_time_get()+DATUM_INDEX_TO_ABSOLUTE_INDEX(index))&1) || cinematic_in_progress() ||
