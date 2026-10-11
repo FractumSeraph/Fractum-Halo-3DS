@@ -12,5 +12,9 @@ int n3ds_pc_preview_backfaces_enabled(void);
 void n3ds_pc_preview_close(void);
 void n3ds_xbox_preview_draw(int map);
 int n3ds_preview_available(void);
+int n3ds_preview_loading(void);
+/* Main thread: update after GPU queue completion; dispose at map teardown. */
+void n3ds_preview_update(void);
+void n3ds_preview_dispose(void);
 
 #endif

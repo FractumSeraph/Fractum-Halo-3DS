@@ -6,7 +6,19 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+/* Kevin Boggs: cancel_after_chunk - deterministic cancellation during a large read. */
+static int cancel_after_chunk(void *context){return ++*(unsigned int *)context>1;}
 int main(int argc,char **argv){
+ {
+  FILE *f=tmpfile();assert(f);unsigned char bytes[32768]={0};
+  assert(fwrite(bytes,1,sizeof(bytes),f)==sizeof(bytes));rewind(f);
+  unsigned int calls=0;struct halo_cache c={0};c.cancelled=cancel_after_chunk;c.cancel_context=&calls;
+  assert(halo_cache_read_chunks(&c,f,bytes,sizeof(bytes))==16384);
+  assert(ftell(f)==16384 && calls==2);
+  c.cancelled=NULL;rewind(f);assert(halo_cache_read_chunks(&c,f,bytes,sizeof(bytes))==sizeof(bytes));
+  fclose(f);
+ }
+
  for(int i=1;i<argc;++i)for(int streamed=0;streamed<2;++streamed){
   struct halo_cache c={0};struct halo_pc_bsp b={0};char error[160];
   if(!(streamed?halo_cache_open_preview(&c,argv[i],error,sizeof(error)):halo_cache_open(&c,argv[i],error,sizeof(error)))){printf("FAIL open %s: %s\n",argv[i],error);return 1;}

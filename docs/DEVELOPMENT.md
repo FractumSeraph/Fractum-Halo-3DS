@@ -136,15 +136,27 @@ After a local multiplayer match ends, the upper part of the bottom screen
 shows Return to Lobby. Tap it or press B to reopen the Local Multiplayer
 selector with the previous map, mode and bot choices.
 
-The Local Multiplayer selector reads the owner's selected PC cache for a
+The multiplayer map browser reads the owner's selected Xbox or PC cache for a
 disposable 3D preview. The map page samples broad BSP render surfaces and
 the original collision BSP's walkable surfaces (pathfinding flag `0x40`),
 with a blue alpha-blended overlay that the bottom-screen NAV button toggles.
 The gear page previews a selected weapon or vehicle model. Touch dragging
 rotates the camera, L/R adjusts distance, and idle frames advance a slow
-turntable. The preview caps render geometry at 2,048 triangles and the nav
-overlay at 1,024, so it is an overview rather than a complete path graph.
-It releases the copied cache and geometry when the selector closes.
+turntable. Render geometry is capped at 21,840 triangles (8,192 for Xbox maps
+on Original models), with up to 9,600 navigation triangles.
+
+After selection settles, a low-priority worker reads and decodes the preview.
+Scrolling cancels obsolete work; it never joins the worker or reads map data
+inside the draw call. Large BSP and bitmap reads check cancellation every
+16 KiB. The renderer publishes only the current selection, flushing at most
+64 KiB of geometry or uploading one 64-by-64 texture per frame. Low-memory
+or missing-data failures leave the map selectable without a preview.
+Worker completion and GPU frame completion both precede resource disposal;
+map teardown drains any remaining cancelled worker. The preview camera clears
+only the bottom target, preserving the top-screen menu background.
+`test_preview_jobs.py` covers cancellation, coalescing, publication, bounded
+uploads and failure handling; `test_preview_reader.py` covers both cache
+formats, truncated data and chunk cancellation.
 Isolated Azahar captures showed Blood Gulch with the nav overlay on and off,
 plus a pistol and vehicle preview on the gear page. A separate selector sweep
 loaded geometry and walkable overlays on all 19 stock PC multiplayer maps

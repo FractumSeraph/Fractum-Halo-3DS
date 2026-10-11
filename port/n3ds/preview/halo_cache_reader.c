@@ -26,6 +26,19 @@ static int fail(char *error, size_t size, const char *message) {
     return 0;
 }
 
+/* Kevin Boggs: halo_cache_read_chunks - allow cancelled previews to abandon large reads. */
+size_t halo_cache_read_chunks(const struct halo_cache *cache,FILE *file,void *output,size_t bytes)
+{
+    size_t done=0;
+    while(done<bytes){
+        if(cache->cancelled && cache->cancelled(cache->cancel_context))break;
+        size_t count=bytes-done;if(count>16384u)count=16384u;
+        size_t got=fread((unsigned char *)output+done,1,count,file);
+        done+=got;if(got!=count)break;
+    }
+    return done;
+}
+
 void halo_cache_close(struct halo_cache *cache) {
     if (cache == NULL) return;
     if (cache->file != NULL) fclose(cache->file);
@@ -47,7 +60,7 @@ const uint8_t *halo_cache_resolve(const struct halo_cache *cache, uint32_t addre
             mutable_cache->scratch = scratch;mutable_cache->scratch_size = bytes;
         }
         if (fseek(cache->file, (long)(cache->tag_file_offset+offset), SEEK_SET) ||
-            fread(cache->scratch, 1, bytes, cache->file) != bytes) return NULL;
+            halo_cache_read_chunks(cache,cache->file,cache->scratch,bytes) != bytes) return NULL;
         return cache->scratch;
     }
     return cache->tags + offset;
@@ -218,7 +231,7 @@ int halo_cache_read_bitmap(struct halo_cache *cache, const struct halo_cache_bit
         (size_t)bitmap->pixel_offset > (size_t)length ||
         bitmap->first_mip_bytes > (size_t)length - bitmap->pixel_offset ||
         fseek(source, (long)bitmap->pixel_offset, SEEK_SET) != 0 ||
-        fread(output, 1, bitmap->first_mip_bytes, source) != bitmap->first_mip_bytes) {
+        halo_cache_read_chunks(cache,source,output,bitmap->first_mip_bytes) != bitmap->first_mip_bytes) {
         if (close_source) fclose(source);
         return fail(error, error_size, "Bitmap pixels are outside resource file");
     }

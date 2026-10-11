@@ -27,6 +27,7 @@
 #include "engine_chicago.h"
 #include "engine_glass.h"
 #include "engine_controls.h"
+#include "engine_pc_preview.h"
 void n3ds_log(const char *message);
 
 /* Temporary hardware diagnosis: retain the normal rendering path and flush
@@ -636,6 +637,7 @@ void n3ds_gpu_model_cache_release(void)
     /* Map transitions occur between frames. Retire every queued GPU reference
      * before releasing the cached blocks, including loading-overlay vertices. */
     if(frame_active || !n3ds_gpu_texture_barrier()) svcBreak(USERBREAK_PANIC);
+    n3ds_preview_dispose();
     for(unsigned int i=0;i<MODEL_BLOCKS;++i) linearFree(model_blocks[i].data);
     memset(model_blocks,0,sizeof(model_blocks));model_reserved=model_used=0;
     if(resident_hits || resident_misses) {
@@ -680,6 +682,7 @@ void n3ds_gpu_renderer_dispose(void)
     if(loading_art) n3ds_gpu_texture_destroy(loading_art);loading_art=NULL;loading_art_tried=0;}
     /* The caller must have submitted the current frame before freeing resources. */
     if (frame_active || !n3ds_gpu_texture_barrier()) svcBreak(USERBREAK_PANIC);
+    n3ds_preview_dispose();
     if(index_draws) {
         char message[128];snprintf(message,sizeof(message),"INDEX TRANSFERS: draws=%u frame_flushes=%u",index_draws,index_flushes);
         n3ds_log(message);index_draws=index_flushes=0;
@@ -895,6 +898,7 @@ int n3ds_gpu_frame_begin(void)
         svcSleepThread(250000LL);
     }
     BOOT_TRACE("frame begin: GPU queue ready");
+    n3ds_preview_update();
     /* Queue has completed: read the previous submission, not an in-flight
      * timer. Queue time includes transfers; it is not a GPU busy percentage.
      * Read CPU time saved at previous FrameEnd because FrameBegin resets it. */
@@ -1039,7 +1043,8 @@ static void window_state_begin(const struct native_render_camera *camera)
     C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD, GPU_ONE, GPU_ZERO, GPU_ONE, GPU_ZERO);
     n3ds_gpu_model_stencil_apply();
     n3ds_gpu_texture_bind(1, NULL); n3ds_gpu_texture_bind(2, NULL);
-    if (!camera->suppress_clear) C3D_RenderTargetClear(world_target(), C3D_CLEAR_ALL, world_clear_color(camera->clear_color), 0);
+    if (!camera->suppress_clear) C3D_RenderTargetClear(bottom_selected?bottom_target:world_target(),
+        C3D_CLEAR_ALL,bottom_selected?camera->clear_color:world_clear_color(camera->clear_color),0);
     world_target_bind();
     C3D_SetScissor(diagnostic_mode==1 && !bottom_selected?GPU_SCISSOR_NORMAL:GPU_SCISSOR_DISABLE,0,0,120,200);
 }

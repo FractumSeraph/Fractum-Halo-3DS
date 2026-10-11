@@ -238,7 +238,7 @@ void n3ds_gpu_map_browser(int map,int pc,int ready)
     controls_quad(152,26,89,25,0xff674826,0);controls_text(160,35,n3ds_pc_preview_backfaces_enabled()?"BACKS ON":"BACKS OFF",0xffffffff,0);
     controls_quad(248,26,63,25,0xff674826,0);controls_text(255,35,n3ds_pc_preview_nav_enabled()?"NAV ON":"NAV OFF",0xffffffff,0);
     controls_quad(0,180,320,60,0xff24150c,0);
-    if(!ready)controls_text(72,112,"Loading preview...",0xffffffff,0);
+    if(!ready || n3ds_preview_loading())controls_text(72,112,"Loading preview...",0xffffffff,0);
     else if(!n3ds_preview_available())controls_text(64,112,"Preview unavailable",0xffffffff,0);
     controls_text(24,189,"Drag: rotate    L/R: zoom",0xffe9d6aa,0);
     controls_text(24,210,"D-pad: map   A: select   B: back",0xffffffff,0);

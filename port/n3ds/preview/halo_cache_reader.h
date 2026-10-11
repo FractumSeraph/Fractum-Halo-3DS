@@ -24,6 +24,8 @@ struct halo_cache {
     /* Preview reads keep only the directory resident. Metadata and resolve
        pointers remain valid until the next call of the same kind. */
     int streamed;
+    int (*cancelled)(void *context);
+    void *cancel_context;
     uint8_t *scratch;
     size_t scratch_size;
     uint8_t metadata[2048];
@@ -56,6 +58,7 @@ int halo_cache_bitmap_at(const struct halo_cache *cache, const struct halo_cache
 int halo_cache_read_bitmap(struct halo_cache *cache, const struct halo_cache_bitmap *bitmap,
                            const char *resource_map, void *output, size_t output_size,
                            char *error, size_t error_size);
+size_t halo_cache_read_chunks(const struct halo_cache *cache,FILE *file,void *output,size_t bytes);
 void halo_cache_close(struct halo_cache *cache);
 
 #endif

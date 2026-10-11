@@ -155,7 +155,7 @@ int halo_pc_bsp_open(struct halo_pc_bsp *bsp, const struct halo_cache *cache,
     bsp->address = address;
     bsp->kind = cache->kind;
     if (fseek(cache->file, (long)file_offset, SEEK_SET) ||
-        fread(bsp->bytes, 1, size, cache->file) != size ||
+        halo_cache_read_chunks(cache,cache->file,bsp->bytes,size) != size ||
         u32(bsp->bytes + 0x14u) != BSP_SIGNATURE ||
         u32(bsp->bytes) < address ||
         (structure = u32(bsp->bytes) - address) > size || size - structure < BSP_BYTES ||
