@@ -239,8 +239,14 @@ and physical New 3DS XL performance are still in the verification queue.
 
 ## Building the setup tools
 
-Both setup interfaces prepare 3DS game data using the shared converter in
+The setup interfaces prepare 3DS game data using the shared converter in
 `port/n3ds/setup/Core/`.
+
+The cross-platform command-line interface in `port/n3ds/setup/Cli/` also uses
+this converter. See the [CLI guide](SETUP-CLI.md) for guided setup, commands,
+tests and self-contained Windows/Linux/macOS packaging. It requires .NET SDK 10
+for development, without the Windows UI workloads. Run both `Tests` and
+`Cli.Tests` after changing shared setup code.
 
 ### Visual Studio
 
