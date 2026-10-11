@@ -37,7 +37,11 @@ HUD data, pass `-XboxCompatibilityFile` pointing to a verified HUD file from
 your own prior installation. ISO extraction needs 7-Zip; pass `-SevenZipPath`
 if it is not found. The Xbox converter uses .NET Framework 3.5.
 
-The Xbox main menu starts Campaign and Xbox multiplayer. Press **SELECT** for
+The Xbox main menu starts Campaign and Xbox multiplayer. After selecting a local
+multiplayer gametype, the bottom screen offers bots, difficulty, weapons and
+vehicles. Choose **Start** to play or **Back** to return to gametype selection.
+No bot configuration file is required. These options are for local matches only.
+Press **SELECT** for
 PC Local Multiplayer. The lower screen is the map preview: tap the map name
 to advance through maps, or select it with the D-pad and press left/right.
 Mode, bot count, difficulty, and on New 3DS the PC texture option appear on

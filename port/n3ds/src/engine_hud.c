@@ -78,7 +78,7 @@ static long touch_unit(void)
 void n3ds_postgame_return_to_lobby(void)
 {
 #ifdef HALO_N3DS_PC_LOCAL_MENU
-    n3ds_pc_local_menu_queue_reopen();
+    {extern int n3ds_pc_tags_active(void);if(n3ds_pc_tags_active())n3ds_pc_local_menu_queue_reopen();}
 #endif
     main_goto_main_menu();
 }
@@ -342,6 +342,7 @@ void n3ds_menu_draw_screen(void)
         if(main_menu_is_active()) {extern void n3ds_gpu_campaign_help(void);n3ds_gpu_campaign_help();}
     }
     n3ds_controls_draw();
+    n3ds_local_match_menu_draw();
 #ifdef HALO_N3DS_PC_LOCAL_MENU
     n3ds_pc_local_menu_draw();
 #endif

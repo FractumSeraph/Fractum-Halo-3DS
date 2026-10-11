@@ -235,3 +235,10 @@ port/n3ds/src/engine_controls.c|pc_menu_next_map
 port/n3ds/pc/engine_pc_runtime.c|n3ds_pc_map_identity
 port/n3ds/pc/engine_pc_runtime.c|n3ds_pc_maps_present
 port/n3ds/src/engine_network.c|n3ds_campaign_network_blocked
+port/n3ds/src/engine_controls.c|n3ds_local_match_menu_active
+port/n3ds/src/engine_controls.c|n3ds_local_match_menu_open
+port/n3ds/src/engine_controls.c|local_match_adjust
+port/n3ds/src/engine_controls.c|n3ds_local_match_menu_filter
+port/n3ds/src/engine_controls.c|n3ds_local_match_menu_draw
+port/n3ds/src/engine_bots.c|n3ds_bots_menu_difficulty
+port/n3ds/include/engine_controls_draw.inl|n3ds_gpu_local_match_menu

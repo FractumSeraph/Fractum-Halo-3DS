@@ -5,10 +5,10 @@
 #include "engine_wireless.h"
 #include "engine_files.h"
 #include "interface/ui_widget.h"
-#ifdef HALO_N3DS_PC_LOCAL_MENU
 #include "main/main.h"
 #include "game/game_engine.h"
 #include "engine_bots.h"
+#ifdef HALO_N3DS_PC_LOCAL_MENU
 #include "pc_diagnostic_maps.h"
 #include "engine_pc_preview.h"
 int n3ds_pc_tags_active(void);
@@ -206,7 +206,7 @@ static const char *const pc_menu_modes[]={"slayer","ctf","oddball","king","race"
 /* Kevin Boggs: pc_menu_available - New3DS integration. */
 static int pc_menu_available(void)
 {
- if(!n3ds_pc_maps_present() || n3ds_wireless_active())return 0;
+ if(!n3ds_pc_maps_present() || n3ds_wireless_active() || n3ds_local_match_menu_active())return 0;
 #ifdef HALO_N3DS_UNIFIED_UI
  return main_menu_is_active();
 #else
@@ -249,14 +249,14 @@ void n3ds_pc_local_menu_filter(struct native_input_sample *sample)
  pc_menu_previous=held;
  if(pc_menu_reopen_pending && pc_menu_available()){
   pc_menu_reopen_pending=0;pc_menu_open=1;pc_menu_page=0;pc_menu_field=0;pc_menu_error=0;
-  pc_menu_bots=n3ds_bots_requested_count();pc_menu_map=pc_menu_next_map(pc_menu_map,0);pc_menu_swallow=1;
+  pc_menu_bots=n3ds_bots_requested_count();pc_menu_difficulty=n3ds_bots_menu_difficulty();pc_menu_map=pc_menu_next_map(pc_menu_map,0);pc_menu_swallow=1;
   n3ds_log("PC LOCAL MENU: reopened after postgame");memset(sample,0,sizeof(*sample));return;
  }
  if(pc_menu_swallow){if(!held)pc_menu_swallow=0;memset(sample,0,sizeof(*sample));return;}
  if(!pc_menu_open){
   if((fresh&NATIVE_KEY_SELECT) && pc_menu_available() && !n3ds_controls_active()){
    pc_menu_open=1;pc_menu_page=0;pc_menu_field=0;pc_menu_error=0;
-   pc_menu_bots=n3ds_bots_requested_count();pc_menu_map=pc_menu_next_map(pc_menu_map,0);
+   pc_menu_bots=n3ds_bots_requested_count();pc_menu_difficulty=n3ds_bots_menu_difficulty();pc_menu_map=pc_menu_next_map(pc_menu_map,0);
    pc_menu_swallow=1;n3ds_log("PC LOCAL MENU: opened");memset(sample,0,sizeof(*sample));
   }
   return;
@@ -330,6 +330,92 @@ void n3ds_pc_local_menu_draw(void)
  pc_menu_weapon_set,pc_menu_vehicle_choice,pc_menu_page,pc_menu_field,pc_menu_error,
  n3ds_controls_high_textures(),n3ds_input_platform_original_model());}
 #endif
+
+/* Local match choices are copied from the chosen playlist, so changing bots or
+ * equipment never replaces custom scoring, teams or mode-specific rules. */
+static struct game_variant local_match_variant;
+static char local_match_map[96],local_match_title[13];
+static int local_match_open,local_match_swallow,local_match_row,local_match_error;
+static int local_match_bots,local_match_difficulty;
+static unsigned int local_match_previous;
+/* Kevin Boggs: n3ds_local_match_menu_active - native match options modal. */
+int n3ds_local_match_menu_active(void) { return local_match_open; }
+/* Kevin Boggs: n3ds_local_match_menu_open - keep the selected Xbox or PC map and playlist. */
+int n3ds_local_match_menu_open(const char *map,const struct game_variant *variant,int controller)
+{
+ if(local_match_open || n3ds_controls_active() || n3ds_wireless_active() ||
+    !main_menu_is_active() || !map || !*map || strlen(map)>=sizeof(local_match_map) ||
+    !variant || variant->game_engine_index<1 || variant->game_engine_index>5 || controller!=0)return 0;
+#ifdef HALO_N3DS_PC_LOCAL_MENU
+ if(n3ds_pc_local_menu_active())return 0;
+#endif
+ strcpy(local_match_map,map);local_match_variant=*variant;
+ for(int i=0;i<12;++i){unsigned int c=variant->human_readable_game_description[i];
+  local_match_title[i]=c>=32 && c<=126?(char)c:c?'?':0;}
+ local_match_title[12]=0;
+ local_match_variant.universal_variant.weapon_set=PIN(variant->universal_variant.weapon_set,0,10);
+ local_match_variant.universal_variant.vehicle_set=PIN(variant->universal_variant.vehicle_set,0,4);
+ local_match_bots=n3ds_bots_requested_count();local_match_difficulty=n3ds_bots_menu_difficulty();
+ local_match_open=local_match_swallow=1;local_match_row=local_match_error=0;
+ n3ds_log("LOCAL MATCH: bottom-screen options opened after gametype selection");return 1;
+}
+/* Kevin Boggs: local_match_adjust - change only the requested match option. */
+static void local_match_adjust(int delta)
+{
+ if(local_match_row==0)local_match_bots=(local_match_bots+16+delta)%16;
+ else if(local_match_row==1)local_match_difficulty=(local_match_difficulty+3+delta)%3;
+ else if(local_match_row==2)local_match_variant.universal_variant.weapon_set=
+  (local_match_variant.universal_variant.weapon_set+11+delta)%11;
+ else local_match_variant.universal_variant.vehicle_set=(local_match_variant.universal_variant.vehicle_set+5+delta)%5;
+ local_match_error=0;
+}
+/* Kevin Boggs: n3ds_local_match_menu_filter - consume touch and keys until Start or Back. */
+void n3ds_local_match_menu_filter(struct native_input_sample *sample)
+{
+ unsigned int held=sample->held,fresh=held&~local_match_previous;local_match_previous=held;
+ if(local_match_swallow){if(!held)local_match_swallow=0;memset(sample,0,sizeof(*sample));return;}
+ if(!local_match_open)return;
+ if(!main_menu_is_active() || !ui_widgets_active() || n3ds_wireless_active()){
+  local_match_open=0;local_match_swallow=1;memset(sample,0,sizeof(*sample));return;
+ }
+ int start=!!(fresh&(NATIVE_KEY_A|NATIVE_KEY_START)),back=!!(fresh&NATIVE_KEY_B);
+ if(fresh&NATIVE_KEY_DUP)local_match_row=(local_match_row+3)%4;
+ if(fresh&NATIVE_KEY_DDOWN)local_match_row=(local_match_row+1)%4;
+ if(fresh&NATIVE_KEY_DLEFT)local_match_adjust(-1);
+ if(fresh&NATIVE_KEY_DRIGHT)local_match_adjust(1);
+ if(fresh&NATIVE_KEY_TOUCH){
+  unsigned x=sample->touch_x,y=sample->touch_y;
+  if(x>=12 && x<308 && y>=48 && y<160){
+   local_match_row=(y-48)/28;
+   if(x>=240)local_match_adjust(x<272?-1:1);
+  }
+  if(y>=202 && y<234){if(x>=16 && x<152)back=1;else if(x>=168 && x<304)start=1;}
+ }
+ if(back){local_match_open=0;local_match_swallow=1;n3ds_log("LOCAL MATCH: returned to gametype selection");}
+ else if(start){
+  if(!n3ds_main_queue_solo_multiplayer(local_match_map,&local_match_variant,0)){
+   local_match_error=1;n3ds_log("LOCAL MATCH: map unavailable or match could not be queued");
+  }else{
+   n3ds_bots_set_menu_count((short)local_match_bots);
+   n3ds_bots_set_menu_difficulty((short)local_match_difficulty);
+#ifdef HALO_N3DS_PC_LOCAL_MENU
+   pc_match_weapon_override=0;
+#endif
+   char message[192];snprintf(message,sizeof(message),"LOCAL MATCH: queued %s mode=%ld bots=%d difficulty=%d weapons=%ld vehicles=%ld",
+    local_match_map,local_match_variant.game_engine_index,local_match_bots,local_match_difficulty,
+    local_match_variant.universal_variant.weapon_set,local_match_variant.universal_variant.vehicle_set);n3ds_log(message);
+   local_match_open=0;local_match_swallow=1;
+  }
+ }
+ memset(sample,0,sizeof(*sample));
+}
+/* Kevin Boggs: n3ds_local_match_menu_draw - present shared local bot/equipment settings. */
+void n3ds_local_match_menu_draw(void)
+{
+ if(local_match_open)n3ds_gpu_local_match_menu(local_match_title,local_match_bots,local_match_difficulty,
+  local_match_variant.universal_variant.weapon_set,local_match_variant.universal_variant.vehicle_set,local_match_row,local_match_error);
+}
+
 int n3ds_controls_tests(void)
 {
  n3ds_controls_initialize();

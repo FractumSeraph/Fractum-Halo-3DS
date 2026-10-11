@@ -1,6 +1,8 @@
 # Local solo multiplayer bots
 
-The New 3DS runtime can add 0 to 15 local AI players to a solo multiplayer match. The local player uses one of the engine's 16 player slots. Put a decimal number from `0` to `15` in `sdmc:/halo-source/bots.txt`, or pass `-BotCount` to the PC installer. Invalid settings disable bots. The multiplayer menu selects the map and variant.
+Local multiplayer supports 0 to 15 bots on Xbox and PC maps. After choosing a map and gametype in the original multiplayer menu, use the bottom screen to set bots, difficulty, weapons and vehicles, then select **Start**. Use the touch buttons or D-pad; **B: Back** returns to gametype selection. Other gametype rules stay unchanged. Choices are remembered for the current session. Bots are not available in wireless matches.
+
+No text file is required. An optional decimal number from `0` to `15` in `sdmc:/halo-source/bots.txt` (or the installer's `-BotCount` option) sets the initial bot count; invalid settings default to zero. The local player uses one of the engine's 16 player slots.
 
 Bots are local players in the original engine's player and action queues. There is no network bot process. The controller in `src/engine_bots.c` looks for enemies, weapons, grenades, vehicles, and mode objectives; uses BSP routes and short detours; and submits movement, aim, melee, grenade, and weapon actions. The game's pickup, damage, and scoring code remains in charge. Team bots leave a flag or ball held by an ally alone and select the nearest eligible one. A disappearing ground weapon target is checked before use.
 
@@ -16,7 +18,7 @@ Mode goals:
 - King: move toward the active hill and fight nearby enemies.
 - Race: pursue the next eligible checkpoint, preferring a vehicle.
 
-The PC and Xbox launchers use the same bot controller. The PC runtime lets the menu select the bot count; `bots.txt` supplies a default. Bots are created only for a solo multiplayer match. Test builds can queue a match directly with `build.py --diagnostic-pc-play MAP --diagnostic-pc-mode MODE --diagnostic-pc-bots N` or `--probe-solo-bots N --probe-solo-mode MODE` for Xbox format Blood Gulch.
+The PC and Xbox launchers use the same bot controller. Both local menus select the bot count; `bots.txt` supplies a default. Bots are created only for a solo multiplayer match. Test builds can queue a match directly with `build.py --diagnostic-pc-play MAP --diagnostic-pc-mode MODE --diagnostic-pc-bots N` or `--probe-solo-bots N --probe-solo-mode MODE` for Xbox format Blood Gulch.
 
 ## Checks and limits
 

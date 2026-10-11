@@ -193,6 +193,34 @@ void n3ds_gpu_controls_draw(const struct native_control_settings *s,int selected
  controls_text(35,214,"Reset defaults",0xffffffff,0);controls_text(190,214,"Save + back",0xffffffff,0);
  n3ds_gpu_hud_screen(0);n3ds_gpu_texture_bind(0,saved);n3ds_gpu_world_state_restore();
 }
+
+/* Kevin Boggs: n3ds_gpu_local_match_menu - bottom-screen local match options. */
+void n3ds_gpu_local_match_menu(const char *title,int bots,int difficulty,int weapons,int vehicles,int selected,int error)
+{
+ static const char *const labels[]={"Bots","Difficulty","Weapons","Vehicles"};
+ static const char *const difficulties[]={"Easy","Normal","Hard"};
+ static const char *const weapon_sets[]={"Normal","Pistols","Rifles","Plasma","Snipers","No sniping","Rockets","Shotguns","Short range","Human","None"};
+ static const char *const vehicle_sets[]={"All","None","Warthogs","Ghosts","Scorpions"};
+ void *saved=n3ds_gpu_texture_bound(0);n3ds_gpu_hud_layout(0);n3ds_gpu_hud_screen(1);
+ controls_quad(0,0,320,240,0xff24150c,0);
+ controls_text(64,12,"LOCAL MATCH SETTINGS",0xffffffff,0);
+ controls_text(16,30,title && *title?title:"Selected gametype",0xffe9d6aa,0);
+ for(int row=0;row<4;++row){float y=48+row*28;char value[24];
+  controls_quad(12,y,296,25,row==selected?0xff674826:0xff35251a,0);
+  controls_text(20,y+9,labels[row],0xffffffff,0);
+  if(row==0)snprintf(value,sizeof(value),"%d",bots);
+  else snprintf(value,sizeof(value),"%s",row==1?difficulties[difficulty]:row==2?weapon_sets[weapons]:vehicle_sets[vehicles]);
+  controls_text(116,y+9,value,0xffe9d6aa,0);
+  controls_quad(240,y+2,30,21,0xff735333,0);controls_quad(274,y+2,30,21,0xff735333,0);
+  controls_text(251,y+9,"-",0xffffffff,0);controls_text(285,y+9,"+",0xffffffff,0);
+ }
+ controls_text(16,172,"D-pad or touch: change options",0xffe9d6aa,0);
+ controls_text(16,187,error?"Could not start. Retry or go back.":"Other gametype rules are preserved.",error?0xff70a0ff:0xffe9d6aa,0);
+ controls_quad(16,202,136,30,0xff53391a,0);controls_quad(168,202,136,30,0xff674826,0);
+ controls_text(48,214,"B: Back",0xffffffff,0);controls_text(204,214,"A: Start",0xffffffff,0);
+ n3ds_gpu_hud_screen(0);n3ds_gpu_texture_bind(0,saved);n3ds_gpu_world_state_restore();
+}
+
 #ifdef HALO_N3DS_PC_LOCAL_MENU
 #include "engine_pc_preview.h"
 static void controls_text_center(float width,float y,const char *message,unsigned int color,int top)

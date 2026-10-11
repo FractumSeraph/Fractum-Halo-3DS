@@ -937,6 +937,7 @@ int n3ds_pc_tags_active(void);
 #include "engine_cache.h"
 #include "engine_network.h"
 #include "engine_map_format.h"
+#include "engine_controls.h"
 #include "tag_files/tag_files.h"
 #include "tag_files/files.h"
 #ifdef HALO_N3DS_EXPERIMENTAL_PC_ALL_MAPS
@@ -5942,13 +5943,9 @@ static boolean multiplayer_profile_set_for_game(
 #ifdef HALO_N3DS
 		if(strstr(tag_get_name(widget->definition_tag_index),"\\split_screen\\"))
 		{
-			if(!event || !n3ds_main_queue_solo_multiplayer(main_get_multiplayer_map_name(),&profile,event->controller_index)) return FALSE;
-			/* Actually delete the caller, using the dispatcher's existing
-			 * contract, so its Xbox-only pregame replacement is not opened. */
-			ui_widget_delete(widget_instance_get_topmost_parent(widget));
-			*widget_deleted=TRUE;
-			n3ds_log("SOLO MULTIPLAYER: selected map/rules queued; one local player, no network lobby");
-			return TRUE;
+			/* Retain this screen so Back from the native options restores the
+			 * selected gametype. The dispatcher stops the Xbox pregame action. */
+			return event && n3ds_local_match_menu_open(main_get_multiplayer_map_name(),&profile,event->controller_index);
 		}
 #endif
 		if (server)

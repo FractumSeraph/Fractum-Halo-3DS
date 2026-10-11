@@ -1446,7 +1446,6 @@ static boolean n3ds_bots_is_registered(short queue_index, short identifier)
 		(short)((unsigned long)player_index >> 16) == identifier;
 }
 
-#ifdef HALO_N3DS_PC_LOCAL_MENU
 static short n3ds_menu_bot_count=-1;
 /* Kevin Boggs: n3ds_bots_set_menu_count - New3DS integration. */
 void n3ds_bots_set_menu_count(short count)
@@ -1454,13 +1453,12 @@ void n3ds_bots_set_menu_count(short count)
 /* Kevin Boggs: n3ds_bots_set_menu_difficulty - New3DS integration. */
 void n3ds_bots_set_menu_difficulty(short difficulty)
 { if(difficulty>=0 && difficulty<=2)n3ds_bot_difficulty=difficulty; }
-#endif
+/* Kevin Boggs: n3ds_bots_menu_difficulty - share difficulty across local menus. */
+short n3ds_bots_menu_difficulty(void) { return n3ds_bot_difficulty; }
 /* Kevin Boggs: n3ds_bots_requested_count - New3DS integration. */
 short n3ds_bots_requested_count(void)
 {
-#ifdef HALO_N3DS_PC_LOCAL_MENU
 	if(n3ds_menu_bot_count>=0) return n3ds_menu_bot_count;
-#endif
 #ifdef HALO_N3DS_BOT_TEST_COUNT
 	return HALO_N3DS_BOT_TEST_COUNT;
 #else

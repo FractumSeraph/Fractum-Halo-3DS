@@ -654,6 +654,9 @@ struct widget_instance;
 #include "interface/progress_bar.h"
 #include "interface/ui_widget_game_data_input_functions.h"
 #include "interface/ui_widget_event_handler_functions.h"
+#ifdef HALO_N3DS
+#include "engine_controls.h"
+#endif
 #include "interface/ui_widget_text_search_and_replace_functions.h"
 #include "interface/virtual_keyboard.h"
 #include "main/main.h"
@@ -3174,6 +3177,9 @@ static void event_handler_dispatch(
 	struct ui_widget_event_handler_reference *handler,
 	boolean *calling_widget_deleted)
 {
+#ifdef HALO_N3DS
+	int local_options_were_open=n3ds_local_match_menu_active();
+#endif
 	boolean widget_deleted = FALSE;
 	boolean success = TRUE;
 	boolean function_failed = FALSE;
@@ -3201,6 +3207,13 @@ static void event_handler_dispatch(
 	}
 	else
 	{
+#ifdef HALO_N3DS
+		/* A native match modal replaces this event's Xbox pregame transition.
+		 * Keep the calling widgets alive for Back; no fake deletion flag. */
+		if(!local_options_were_open && n3ds_local_match_menu_active()) {
+			*calling_widget_deleted=widget_deleted;return;
+		}
+#endif
 		if (TEST_FLAG(handler->flags, _event_handler_give_focus_to_widget_bit) &&
 			!widget_deleted)
 		{
