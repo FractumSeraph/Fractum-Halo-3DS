@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /* Native PICA resource allocation. These handles are C3D_Tex, never D3D objects. */
 #include <3ds.h>
 #include <citro3d.h>
@@ -270,6 +271,58 @@ static void *texture_create(const void *pixels, unsigned int width, unsigned int
 }
 void *n3ds_gpu_texture_create(const unsigned int *pixels, unsigned int width, unsigned int height)
 { return texture_create(pixels,width,height,GPU_RGBA8); }
+/* Kevin Boggs: mip_texel - New3DS integration. */
+static unsigned int mip_texel(unsigned int width,unsigned int x,unsigned int y)
+{
+    static const unsigned int spread[8]={0,1,4,5,16,17,20,21};
+    return ((y/8)*(width/8)+x/8)*64+spread[x&7]+2*spread[y&7];
+}
+void *n3ds_gpu_texture_create_mips(const unsigned int *pixels,unsigned int width,unsigned int height,unsigned int levels)
+{
+    if(!initialized || !pixels || width<16 || height<16 || width>512 || height>512 ||
+       (width&(width-1)) || (height&(height-1)) || levels<1 || levels>2 ||
+       width<(8u<<levels) || height<(8u<<levels)) return NULL;
+    C3D_Tex *texture=calloc(1,sizeof(*texture));if(!texture) return NULL;
+    if(!C3D_TexInitWithParams(texture,NULL,(C3D_TexInitParams){width,height,levels,GPU_RGBA8,GPU_TEX_2D,false})) {
+        free(texture);return NULL;
+    }
+    memcpy(texture->data,pixels,texture->size);
+    for(unsigned int level=1;level<=levels;++level) {
+        unsigned int parent_width=width>>(level-1),parent_height=height>>(level-1);
+        const unsigned int *parent=C3D_Tex2DGetImagePtr(texture,level-1,NULL);
+        unsigned int *child=C3D_Tex2DGetImagePtr(texture,level,NULL);
+        if(!parent || !child) {C3D_TexDelete(texture);free(texture);return NULL;}
+        for(unsigned int y=0;y<parent_height/2;++y) for(unsigned int x=0;x<parent_width/2;++x) {
+            unsigned int a=parent[mip_texel(parent_width,2*x,2*y)];
+            unsigned int b=parent[mip_texel(parent_width,2*x+1,2*y)];
+            unsigned int c=parent[mip_texel(parent_width,2*x,2*y+1)];
+            unsigned int d=parent[mip_texel(parent_width,2*x+1,2*y+1)];
+            unsigned int color=0;
+            for(unsigned int shift=0;shift<32;shift+=8)
+                color|=((((a>>shift)&255)+((b>>shift)&255)+((c>>shift)&255)+((d>>shift)&255)+2)/4)<<shift;
+            child[mip_texel(parent_width/2,x,y)]=color;
+        }
+    }
+    C3D_TexSetFilter(texture,GPU_LINEAR,GPU_LINEAR);
+    C3D_TexSetFilterMipmap(texture,GPU_LINEAR);
+    C3D_TexSetWrap(texture,GPU_REPEAT,GPU_REPEAT);
+    unsigned int total=C3D_TexCalcTotalSize(texture->size,texture->maxLevel);
+    if(R_FAILED(GSPGPU_FlushDataCache(texture->data,total))) {
+        C3D_TexDelete(texture);free(texture);return NULL;
+    }
+    return texture;
+}
+void *n3ds_gpu_texture_create_two_mips(const unsigned int *pixels,unsigned int width,unsigned int height)
+{ return n3ds_gpu_texture_create_mips(pixels,width,height,1); }
+/* Kevin Boggs: n3ds_gpu_texture_set_lod_bias - New3DS integration. */
+int n3ds_gpu_texture_set_lod_bias(void *resource,float bias)
+{
+    if(!resource || bias<0.f || bias>2.f) return 0;
+    C3D_Tex *texture=resource;
+    if(C3D_TexGetType(texture)!=GPU_TEX_2D || texture->maxLevel<(unsigned int)bias) return 0;
+    C3D_TexSetLodBias(texture,bias);
+    return 1;
+}
 void *n3ds_gpu_texture_create_rgba4(const void *pixels, unsigned int width, unsigned int height)
 { return texture_create(pixels,width,height,GPU_RGBA4); }
 void *n3ds_gpu_texture_create_cube(const unsigned char *rgba,unsigned int side)

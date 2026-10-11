@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 #ifdef HALO_N3DS
 #include "engine_hud.h"
 #endif
@@ -1689,9 +1690,16 @@ static void render_weapon_hud(
 			TEST_FLAG(map_type_flags, element->header.use_on_map_type))
 		{
 			byte value;
-
 			state_index = element->header.state_type;
 			value = (byte)number_values[state_index];
+			#ifdef HALO_N3DS
+			/* The authored bitmap meter aliases into speckles at 320x240.
+			 * Keep its value and authored scale for the compact lower-screen bar. */
+			n3ds_hud_record_weapon_meter(state_index,value,
+				element->meter_element.alpha_multiplier,
+				element->meter_element.alpha_bias,
+				element->meter_element.minimum_value);
+			#else
 			hud_draw_meter(
 				local_player_index,
 				&definition->absolute_placement,
@@ -1701,6 +1709,7 @@ static void render_weapon_hud(
 				state_flags[state_index],
 				(real)hud_state->last_weapon_flash_time[state_index],
 				0.0f);
+			#endif
 		}
 	}
 

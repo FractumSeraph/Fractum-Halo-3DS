@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 MAIN.C
 
@@ -393,6 +394,7 @@ symbols in this file:
 #ifdef HALO_N3DS
 #include "engine_cache.h"
 #include "engine_network.h"
+#include "engine_bots.h"
 #endif
 
 /* ---------- constants */
@@ -1118,6 +1120,7 @@ void main_menu_load(
 	void)
 {
 #ifdef HALO_N3DS
+	n3ds_bots_reset();
 	native_solo_multiplayer_active=FALSE;
 	native_solo_multiplayer_pending=FALSE;
 #endif
@@ -1466,7 +1469,14 @@ static void main_new_map(
 
 	if (!errors_handle())
 	{
+#ifdef HALO_N3DS
+		n3ds_bots_reset();
+#endif
 		create_local_players();
+#ifdef HALO_N3DS
+		if(native_solo_multiplayer_active && game_engine_running())
+			n3ds_bots_create(n3ds_bots_requested_count());
+#endif
 		game_time_start();
 	}
 	else

@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 PARTICLES.C
 
@@ -94,6 +95,10 @@ symbols in this file:
 #include "scenario/scenario.h"
 #include "sound/game_sound.h"
 #include "sound/sound_definitions.h"
+#ifdef HALO_N3DS
+#include "engine_combat_fx.h"
+#include "tag_files/tag_groups.h"
+#endif
 
 /* ---------- constants */
 
@@ -1005,6 +1010,25 @@ static boolean native_particle_cosmetic(const struct particle_datum *p,const str
  return p->object_index==NONE && !TEST_FLAG(p->flags,_particle_datum_attached_to_local_player_bit) &&
   p->lifespan>.20f && d->effect.index==NONE && d->collision_effect.index==NONE && d->collision_material_effects.index==NONE;
 }
+/* Kevin Boggs: native_particle_combat_tag - New3DS integration.
+ * Reuse the combat classification for particles of the same definition.
+ * A match can update hundreds of particles sharing a few tags. */
+static int native_particle_combat_tag(long tag_index)
+{
+ extern unsigned int n3ds_engine_cache_generation(void);
+ struct combat_slot { long tag; unsigned char valid,combat; };
+ static struct combat_slot slots[256];
+ static unsigned int generation;
+ static int quality=-1;
+ int active_quality=n3ds_controls_quality();
+ unsigned int active_generation=n3ds_engine_cache_generation();
+ if(generation!=active_generation || quality!=active_quality) { memset(slots,0,sizeof(slots));generation=active_generation;quality=active_quality; }
+ struct combat_slot *slot=&slots[(unsigned int)tag_index&255U];
+ if(!slot->valid || slot->tag!=tag_index) {
+  slot->tag=tag_index;slot->combat=!!n3ds_combat_fx_name(tag_get_name(tag_index));slot->valid=1;
+ }
+ return slot->combat;
+}
 int n3ds_particle_budget_tests(void)
 {
  struct particle_datum p={0};struct particle_definition d={0};p.object_index=NONE;p.lifespan=1;
@@ -1048,7 +1072,8 @@ void particles_update(
 		struct particle_definition *definition = particle_definition_get(particle->definition_index);
 		boolean was_new = (particle->age == 0.0f);
 #ifdef HALO_N3DS
-  if(native_particle_cosmetic(particle,definition) && ++cosmetic_count>cosmetic_cap) {
+  if(native_particle_cosmetic(particle,definition) && ++cosmetic_count>cosmetic_cap &&
+     !native_particle_combat_tag(particle->definition_index)) {
    datum_delete(particle_data,particle_index);++native_removed;continue;
   }
 #endif

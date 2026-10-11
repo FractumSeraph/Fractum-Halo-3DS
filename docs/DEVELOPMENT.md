@@ -1,7 +1,7 @@
 # Developer notes
 
-Build instructions, testing and maintenance notes for contributors, including
-coding agents. Player instructions are in the [main README](../README.md).
+Build instructions, testing and maintenance notes for contributors. Player
+instructions are in the [main README](../README.md).
 Commands below run from the repository root unless stated otherwise.
 
 - [Building the game](#building-the-game)
@@ -50,8 +50,10 @@ response files, logs, ELF/map and the build/hash manifest stay in the output
 directory. Retain the matching ELF/map for crash diagnosis.
 
 Incremental builds track source/header content. Choose a new `--output` directory
-for clean verification. Player releases must use the default options, without
-diagnostics, a frame limit or a test heap.
+for clean verification. The Xbox-only release uses default options. The unified
+New 3DS release adds `--experimental-pc-runtime --unified-ui` and emits
+`unified-runtime.json` bound to the built 3DSX hash. Neither release uses
+diagnostic flags, a frame limit or a test heap.
 
 ### Diagnostic builds
 
@@ -63,10 +65,203 @@ writes `RESULT: PASS` to the game log. This build exits automatically.
 Also select an Original model in the emulator; neither setting replaces a
 test on actual Original 3DS/2DS hardware.
 
+### PC retail multiplayer status
+
+PC retail v7 support is opt-in with `--experimental-pc-runtime`; the default
+launcher still uses the original Xbox cache path. The opt-in build reads PC
+maps from `halo-source/pc-retail`. Xbox and PC maps are explicit choices:
+an unqualified map path means Xbox, while `pc\levels\test\name\name` means
+PC. Clients must load the format selected by the host, with no silent fallback
+to a different version. Missing or mismatched map identities prevent joining.
+The `--unified-ui` flag keeps the original Xbox main menu and campaign while
+exposing PC Local Multiplayer through SELECT when PC maps are installed. This is the combined launcher
+used by `setup/Unified/`; an isolated emulator replay entered Xbox a10 from
+the original campaign menu and selected PC Beaver Creek from the same 3DSX.
+The build keeps the Xbox UI cache so the PC-only difficulty widget mismatch
+does not affect Campaign. The PC-only launcher remains available for separate
+testing.
+
+For the PC-only UI build, original PC `ui.map` supplies the six expansion map
+names, descriptions and graphics. The map-list adapter exposes an expansion
+entry only when its UI assets and cache are present. The original thirteen Xbox entries stay defined;
+the PC menu's Create Game action still does not launch a local match.
+
+The System Link map selector lists installed Xbox and PC maps separately, with
+PC entries labelled `(PC)`. Without PC maps, PC map choices, the local selector,
+PC textures and campaign extras controls are hidden. The local PC selector is
+also unavailable during a wireless session. PC wireless matches still need
+paired hardware testing; compiling the unified build does not establish
+compatibility for every PC map.
+
+On the PC opt-in build, press **SELECT** while the main menu is open to show
+the native Local Multiplayer selector. Up/down chooses Map, Mode, Bots,
+Difficulty or, on New 3DS, PC textures. Left/right changes the selected value;
+A starts and B returns. Touching Difficulty cycles Easy, Normal and Hard for
+ordinary bots. Touching the PC textures row changes and saves it before launch.
+X or the bottom right Gear button opens the weapon and vehicle set page.
+Normal preserves the stock PC map item collections; PC-only Flamethrowers and
+Fuel Rods sets replace weapon pickups. Vehicle choices include the original
+mode default and All PC vehicles. PC maps with stock Flamethrower collections
+now keep those weapons instead of applying the Xbox Flamethrower to Rocket
+Launcher remap. The stock PC maps choose their own placements; Beaver Creek
+does not place a Flamethrower, while the special PC-only set can add one there.
+The choice applies on the next map load. It lists all nineteen
+stock PC multiplayer maps, the five original modes and zero to fifteen bots.
+It uses the original local game queue and map loader. The selector supplies
+the bot count for that match; `bots.txt` remains the fallback for other launch
+paths. The PC `Create Game → LAN` widget does not currently start a local
+match. An isolated emulator input replay selected Blood Gulch CTF with two
+bots from the selector, loaded the PC cache, registered both bots and captured
+an active gameplay frame. This is a local single-console match, not LAN play.
+The same replay succeeded with the isolated emulator's player profile set aside,
+so a saved profile is not required to enter this local match.
+ChaoticSPARTAN1 and KodeBreaker16 are independent named bot rolls, each with
+a 50% match chance when at least two AI slots are available. Both can appear
+together. KodeBreaker16 has a 25% chance on each spawn to receive the game's
+timed active camouflage powerup for 60 seconds. His armor uses the original
+teal profile color. ChaoticSPARTAN1 keeps the green profile color and has a
+10% active camouflage chance per spawn.
+
+During a solo PC match, hold SELECT or the lower-right SCORE touch panel to
+display the player scoreboard on the top screen. Three other panels surround
+the motion tracker; they show press feedback but have no action yet. The
+Controller Settings screen offers a saved X/Y button swap and an optional
+bottom-screen FPS readout. Switch X/Y starts on for new profiles; FPS starts
+off. Saved profiles keep their chosen values. The Decals switch starts on and
+controls creation and drawing of surface marks without changing their authored
+lifetimes. Weapon meters use compact bars below the ammo count to remain
+legible at the 3DS resolution. Magazine weapons read loaded and reserve rounds
+from the live original weapon datum for the lower-screen ammo label.
+After a local multiplayer match ends, the upper part of the bottom screen
+shows Return to Lobby. Tap it or press B to reopen the Local Multiplayer
+selector with the previous map, mode and bot choices.
+
+The Local Multiplayer selector reads the owner's selected PC cache for a
+disposable 3D preview. The map page samples broad BSP render surfaces and
+the original collision BSP's walkable surfaces (pathfinding flag `0x40`),
+with a blue alpha-blended overlay that the bottom-screen NAV button toggles.
+The gear page previews a selected weapon or vehicle model. Touch dragging
+rotates the camera, L/R adjusts distance, and idle frames advance a slow
+turntable. The preview caps render geometry at 2,048 triangles and the nav
+overlay at 1,024, so it is an overview rather than a complete path graph.
+It releases the copied cache and geometry when the selector closes.
+Isolated Azahar captures showed Blood Gulch with the nav overlay on and off,
+plus a pistol and vehicle preview on the gear page. A separate selector sweep
+loaded geometry and walkable overlays on all 19 stock PC multiplayer maps
+without a fatal error. An arsenal match capture showed the
+assault rifle's lower-screen ammo label at 44 loaded and 180 reserve rounds.
+Preview responsiveness and readability still need device checks.
+
+For bounded local probes, `--diagnostic-pc-play MAP` accepts the nineteen stock
+PC multiplayer maps. `--diagnostic-pc-mode` selects Slayer, CTF, Oddball, King
+or Race; `--diagnostic-pc-bots N` adds one to fifteen local bots. The isolated
+Azahar smoke sweep entered active Slayer matches with two bots on all nineteen
+stock PC multiplayer maps. Short runs also exercised the five modes on Blood
+Gulch and Timberland, including bot routes and a Warthog driver. A runtime
+matrix fixture additionally reached frame 300 with two bots and routes on
+Gephyrophobia CTF, Death Island Oddball, Ice Fields King, Infinity Race and
+Timberland Slayer. PC Blood Gulch CTF registered fifteen of fifteen bots,
+maintained sixteen active bipeds through frame 600, and generated routes.
+An Xbox Blood Gulch CTF diagnostic likewise registered fifteen of fifteen
+bots, generated routes and reached frame 1591 without a fatal error. These
+checks do not establish full match completion, scoring, every mode and map
+combination, or New 3DS hardware performance.
+
+PC retail sound samples can reside in `sounds.map`. The sound cache validates
+the offset against the active PC resource file before allocating a sample;
+the Xbox path still uses its map bounds. A diagnostic Timberland run changed
+from zero DSP submissions to queued and submitted audio in Azahar 2126.2.
+Listening and frame timing on the physical New 3DS XL remain to be checked.
+
+PC retail model streams use uncompressed vertices. The native model cache now
+borrows checked map-owned streams and prepares GPU inputs once, while dynamic
+streams keep their existing path. In identical two-bot Timberland emulator
+scenes, steady render time fell from about 67.6 to 19.5 ms per frame and world
+object draw from about 43.5 to 3.1 ms. A six-bot run measured about 19.8 ms
+render and 9.6 ms simulation at match time 180 and continued past frame 1700.
+The static upper portion of the captured scene matched the earlier build
+pixel for pixel. Blood Gulch with two bots and a scripted plasma pistol shot
+queued weapon and impact audio, and measured about 29 ms render and 9 ms
+simulation at match time 180. Map costs differ; hardware results are still
+required.
+
+The New3DS particle budget now caches each particle definition's combat
+classification for the current map generation. In the same six-bot Timberland
+Azahar fixture, the late 300-frame window measured 33.66 ms before and
+33.13 ms after this change; bot state at match time 1200 matched. The
+`--diagnostic-particle-profile` build option traces animation and physics
+timing without changing the release behavior. These emulator timings do not
+establish 30 FPS on hardware.
+
+`--diagnostic-pc-matrix` builds the runtime matrix fixture. In a private test
+SD, `halo-source/pc-matrix.txt` contains one stock map name and one mode, such
+as `gephyrophobia ctf`. The fixture rejects unknown names and runs with two
+bots. It is meant for repeated emulator checks with one identical binary; the
+normal launcher does not read this file.
+
+`--diagnostic-pc-arsenal` exercises ten map-owned Blood Gulch weapons through
+the original input path, then the PC Rocket Warthog gunner seat. The isolated
+emulator recorded an advanced `game_time_last_fired` for the Assault Rifle,
+Pistol, Shotgun, Plasma Rifle, Plasma Pistol, Needler, Sniper Rifle,
+Flamethrower, multiplayer Fuel Rod Gun, Rocket Launcher and the Rocket Warthog
+mounted gun. Captures showed their visible effects, but effect fidelity and
+damage behavior have not been compared exhaustively with the retail game.
+`--diagnostic-pc-rocket-warthog` isolates the vehicle stage. These flags build
+test executables and are not player release options.
+
+The source for the original game rules remains in `source/`. The PC vehicle
+filter is conditional on a PC cache: PC globals list six multiplayer vehicles,
+including the Rocket Warthog, while the original Xbox filter only accepts the
+first three. Xbox caches continue to use the original rule. PC runtime and
+setup packaging remain experimental until broader gameplay, saved-state and
+hardware validation are complete.
+
+### Campaign additions in the unified build
+
+The difficulty page draws a bottom-screen touch switch for optional PC weapons
+and vehicles. `engine_campaign_options.c` starts enabled for testing and stores
+the choice in the title save archive with a version and checksum. The switch
+persists between levels and emulator restarts until the player changes it.
+Co-op lobbies and network games suppress the control, object spawning and PC
+tag imports regardless of the saved preference. Returning to offline play
+restores the preference without rewriting it.
+The Xbox scenario files and original object placements stay intact. At runtime,
+`engine_campaign_extras.c` creates a Flamethrower beside the c20 shotgun, a
+Fuel Rod Gun beside c40 pickups, and both weapons beside d20 pickups. The
+module waits for the player to approach and for the active BSP to contain each
+point. Its placed state is registered with game-state checkpoints; disabling
+the switch removes only an uncollected extra pickup.
+
+Xbox campaign tags already contain those hidden weapon definitions. The
+Rocket Warthog does not occur in any campaign cache. For b30 only,
+`engine_campaign_overlay.c` reads the owner's PC retail Blood Gulch cache,
+imports the 16 missing Rocket Warthog definitions, remaps references to Xbox
+definitions where possible, and uses the PC HUD reticle bitmap because its
+17 sequences include the Rocket Warthog crosshair. The original Xbox b30 cache
+is not written. If PC Blood Gulch or a dependency check fails, b30 continues
+without the extra vehicle. The b30 overlay currently retains a full converted
+PC tag arena and model buffer; profile its memory and load time on hardware
+before broadening this mechanism to other campaign maps.
+
+The isolated Azahar check created all four campaign pickups in valid clusters.
+In b30, the Rocket Warthog appeared beside the original vehicle. After the
+opening transport released the player, the player entered its gunner seat and
+its mounted gun advanced `game_time_last_fired` under the normal input path.
+A separate emulator replay exited a resumed vehicle checkpoint and used the
+normal X-button action to enter its driver seat; the parent vehicle datum
+matched the extra Warthog. Longer mission play, checkpoint restore edge cases,
+and physical New 3DS XL performance are still in the verification queue.
+
 ## Building the setup tools
 
-Both setup interfaces prepare 3DS game data using the shared converter in
+The setup interfaces prepare 3DS game data using the shared converter in
 `port/n3ds/setup/Core/`.
+
+The cross-platform command-line interface in `port/n3ds/setup/Cli/` also uses
+this converter. See the [CLI guide](SETUP-CLI.md) for guided setup, commands,
+tests and self-contained Windows/Linux/macOS packaging. It requires .NET SDK 10
+for development, without the Windows UI workloads. Run both `Tests` and
+`Cli.Tests` after changing shared setup code.
 
 ### Visual Studio
 
@@ -150,6 +345,38 @@ minimum and a DPI-aware manifest.
 
 ### Setup source and release checks
 
+The public unified release ZIP is ready to install with a player's own supported
+Xbox and PC retail sources. It includes the 3DSX, the Xbox installer, the PC
+installer, the unified entry script, the runtime hash manifest, corresponding
+source archives, and license notices. Players do not need a game compiler or
+Xbox SDK to use it. The game files themselves are never bundled.
+
+To make a new asset-free package from a checked-out commit and the binaries in
+an existing release ZIP, extract that ZIP to a temporary folder and run:
+
+```powershell
+$release = 'C:/Downloads/Halo3DS-Unified.zip'
+$stage = 'build/unified-repack'
+New-Item -ItemType Directory -Path $stage -Force | Out-Null
+Expand-Archive -LiteralPath $release -DestinationPath "$stage/input"
+git archive --format=zip "--output=$stage/Halo3DS-Source.zip" HEAD
+./port/n3ds/setup/Unified/Package-Halo3DS-Unified.ps1 `
+  -XboxInstallerPath "$stage/input/Halo3DS-Xbox-Install.exe" `
+  -XboxSourceZip "$stage/input/Xbox-Setup-Source.zip" `
+  -SourceSnapshotZip "$stage/Halo3DS-Source.zip" `
+  -UnifiedLauncherPath "$stage/input/Halo3DS.3dsx" `
+  -RuntimeManifest "$stage/input/unified-runtime.json" `
+  -OutputZip "$stage/Halo3DS-Unified.zip"
+```
+
+The package script checks both executable signatures,
+the launcher-manifest hash, required source files, and its fixed output list;
+it refuses an existing output ZIP. This repacks the supplied binaries and the
+current tracked source. To rebuild the binaries, use the game build instructions
+above and the Windows 7 setup build command below. That development path needs
+the documented toolchains and locally supplied XDK declarations; no restricted
+SDK files are included in the repository or release.
+
 The setup source is organized as follows:
 
 | Directory under `port/n3ds/setup/` | Purpose |
@@ -165,6 +392,21 @@ The setup source is organized as follows:
 Packaged sources preserve repository-relative paths and include this document
 and the main README. They contain the setup utility, not the complete game
 source; use the repository to build the game. Python is never needed at runtime.
+
+The local dual-ISO package uses `Dual/Install-Halo3DS-Both.ps1` as one entry
+point. `Dual/Package-Halo3DS-Both.ps1` builds a fixed-file ZIP containing the
+Xbox console setup tool with its embedded normal launcher, the experimental PC
+launcher and hash manifest, the PC extraction scripts, corresponding Xbox setup
+source, and notices. The user supplies both ISOs at install time. Package
+round trips must inspect the ZIP allowlist, exercise `-WhatIf` from an extracted
+copy, and verify both launcher hashes in an isolated output folder. The current
+local test used the supported Xbox XISO and a small PC retail-format ISO
+fixture. The dual installer also accepts a complete owner PC retail `maps`
+folder with `-PcMapsFolder`. An installation from the supported Xbox ISO and
+a complete extracted PC retail map set verified 24 existing Xbox maps and
+32 PC map/resource files on a FAT32 SD card. Both launcher hashes matched
+the release candidates; existing saves and demo folders remained.
+The physical New 3DS XL runtime test and a full PC ISO extraction remain open.
 
 Verify the game hash extracted from both final EXEs. Check that source archives
 contain the converter, adapters, solutions, scripts, schemas and notices, but no
@@ -248,6 +490,35 @@ build directory, replaces three x86-only shift helpers with C, and generates
 the forward declarations/weak-inline annotations required by the original C
 linkage rules. It does not ship SDK headers or invoke Xbox code.
 
+### Keeping upstream fixes
+
+Keep the GitHub `main` branch as the base of the local integration branch. Put
+PC cache conversion, device backends, and diagnostics under `port/n3ds/`.
+Changes to `source/` should be small, conditional access points for port
+features; use the original game code for its match rules, weapons, vehicles,
+collision and scoring. Check that boundary with
+`git diff --name-only origin/main -- source` before integrating a release.
+
+For a new upstream revision, fetch `origin/main`, review its commits and the
+`source/` diff, merge it into the integration branch, then rebuild the normal
+launcher and rerun the PC map probes and multiplayer diagnostics. Resolve any
+overlap in the small integration hooks in favor of the upstream behavior.
+Keep generated binaries and owner supplied game files outside Git. This source
+merge workflow lets the PC port receive upstream fixes without replacing the
+original engine with a parallel gameplay implementation.
+
+Run `port/n3ds/tools/prepare_upstream_update.ps1` from `local-integration` to
+fetch and compare upstream. When new commits exist, it creates a sibling
+`Halo3DS-Upstream-Review-<commit>` worktree and merges there. The working branch
+is untouched, including if there are merge conflicts. In the review worktree,
+inspect `git diff origin/main -- source`, build both the default Xbox and
+`--experimental-pc-runtime` launchers, and repeat the relevant emulator and
+installer checks. Only after those pass, return to `local-integration` and run
+`git merge --ff-only upstream-review-<commit>`. If that fast-forward fails,
+new local work has appeared; refresh the review branch and test again. Never
+use `reset --hard`, force push, or rebase the integration branch to pick up
+upstream changes.
+
 ## Where to make changes
 
 | Area | Main owners |
@@ -266,6 +537,19 @@ sharing private renderer state. They are not independent libraries. Consolidate
 only when responsibilities match; combining unrelated material paths into a
 larger file does not simplify their state and memory contracts.
 
+### Captured screenshots
+
+The `halo-native-*-front.rgb` diagnostic files contain libctru's sideways
+`GSP_BGR8_OES` framebuffer bytes. Decode the bytes as BGR and rotate 90 degrees
+when making a PNG, for example:
+
+```sh
+python port/n3ds/tools/decode_front_capture.py halo-native-front.rgb screenshot.png
+```
+
+Pass `--bottom` for a bottom screen capture. Reading these bytes as RGB swaps
+red and blue, making ordinary Blood Gulch terrain appear blue and its sky pink.
+
 ## Rendering rules
 
 - PICA200 arithmetic has less precision than CPU floats. Model palettes, CPU
@@ -282,6 +566,11 @@ larger file does not simplify their state and memory contracts.
 - Restore material/sampler state and invalidate the submission caches when a
   different path changes their assumptions. Native combiners and lighting can
   avoid passes, but hardware limits still constrain each material.
+- Flag cloth and King hill geometry can open a model scope inside the object
+  renderer's scope. Keep the outer GPU batch active, flush queued scenery
+  before the inner draw, and restore batching afterward. A long Timberland
+  CTF emulator run caught the earlier assertion when a bot carried a flag;
+  the nested-scope path continued past that frame after the fix.
 - Original models have smaller memory and rendering budgets. Use model checks;
   do not lower New-model quality to fix an Original-model allocation failure.
 
@@ -340,8 +629,10 @@ Samples older than 200 ms are ignored. HOME/sleep clears input, invalidates the
 session and reconnects after restore. Shutdown signals and joins the worker
 before freeing its resources. No calibration-write commands are sent.
 
-Controller settings version 2 adds the opt-in field and reads version 1 without
-losing existing sensitivity/layout preferences. `circle_pad_pro_tests.c` runs
+Circle Pad Pro originally used the extra field in controller settings version
+2. The combined format is now version 6, with separate fields for Circle Pad
+Pro, PC textures and effects quality; it reads older versions without changing
+their effective face-button mapping. `circle_pad_pro_tests.c` runs
 on a host compiler and covers calibration, CRC, packed axes and corrupt/wrapped
 packets. Controller settings tests also cover version 1 migration and version 2
 validation. A bounded Azahar test covers menu boot, emulated CPP calibration,
@@ -425,6 +716,12 @@ wireless buffers and loaded Pillar of Autumn's opening cinematic offline.
 This is not proof of radio reliability, four-console gameplay,
 all game variants, or performance on physical consoles. Keep the wireless build
 separate from the stable installers until hardware testing is complete.
+The texture loader currently uploads one selected mip level per bitmap. On
+Timberland the New-model 64-pixel world setting used about 2 MB of its 4 MB
+gameplay texture cache after loading 123 textures. Citro3D supports mipmapped
+textures, so a near/high and far/low experiment can use a bounded mip chain.
+Measure cache occupancy, loading hitches, steady frame time and close-range
+clarity before changing the release setting.
 
 ## Verification
 
@@ -570,3 +867,128 @@ then run it again without that flag after staging. `--git`
 selects a Git executable if needed. This checks known exclusions and common
 secret formats in the current tree/index, not all possible secrets or licensing
 requirements. Only the current working tree or index is scanned.
+
+The PC retail `ui.map` references event function indices beyond the original
+Xbox table of 102 entries. `port/n3ds/tools/inspect_pc_ui_exit.py` can inspect
+an owner's read-only PC `ui.map`; its Quit OK widget uniquely uses index 107.
+The 3DS port maps that confirmed PC action to normal application shutdown.
+Other PC-only menu actions need individual mapping and testing before relying
+on them; the SELECT Local Multiplayer menu remains the tested PC match path.
+
+On New 3DS, the bottom-screen Controller Settings page has a **PC high
+textures** switch. It defaults OFF and saves with the other controller
+settings. Turn it ON, save, then reload the PC map to compare 128-pixel
+texture bases, a generated 64-pixel mip level, and an 8 MiB gameplay cache
+against the standard 64-pixel profile. The original 3DS and Xbox maps keep
+their established profile. Version 6 reads settings versions 1 through 5, then
+upgrades on save. New independent X/Y and A/B swaps default OFF so they do not
+cancel an existing Xbox-layout choice. Explicit swaps in versions 3 through 5
+are retained. The experimental PC version 2 and dev version 2 used the same
+bytes for different settings; that file cannot distinguish them. Migration
+preserves dev's Circle Pad Pro value and leaves PC high textures OFF.
+
+The **Effects** setting defaults to **Balanced**, retaining dev's particle
+budgets and tracer behavior. **Quality** enables the contributor's fuller
+combat particles, longer/more visible rifle trails and optional decals.
+**Performance** is displayed as unavailable and cannot be selected or loaded
+from a settings file yet. Both console generations default to Balanced; this
+setting does not replace their separate texture and resolution budgets.
+
+`python port/n3ds/tests/test_integration.py -- clang` runs host regressions for
+settings versions 1 through 6, effective button mappings, independent fields,
+quality policies, PC menu availability, format-qualified maps and co-op
+blocking. On Windows, supply the compiler's SDK include and library paths if
+not running from its developer command prompt.
+
+`--diagnostic-high-textures` still
+forces the experimental profile in a PC match fixture; `--diagnostic-texture-clip`
+captures a repeatable Timberland walk for visual comparison.
+PC lightmap atlases are linear RGB565 data, unlike the swizzled Xbox atlases.
+The upload filter reads each layout correctly and removes red/yellow checker
+padding each time a lightmap is loaded, including after texture cache eviction.
+
+In the earlier opt-in six-bot Timberland experiment, Azahar reached 900 frames
+without a fatal error, with about 7.7 MiB cached and a steady 18.6 ms render
+interval at game time 900. Initial loading cost increased. New 3DS XL frame
+time and memory headroom need physical measurement before considering a new
+default.
+
+For New-model PC multiplayer maps, the native cache now prepares seven small
+gameplay HUD bitmap groups before the match. Damage arrows and reticle warnings
+remain resident; other HUD images retain normal eviction. This adds about
+340 KiB in the Timberland emulator fixture and removes a first-hit damage
+arrow decode, but did not reduce the overall outdoor hitch count. Texture
+eviction gives recently used actors, weapons, vehicles and effects a small
+priority over scenery without evicting a visible surface to hold an old effect.
+
+The native portal traversal caches a projected portal hull only for the
+current visibility pass. It copies at most 24 used vertices and leaves larger
+portals on the original path. Sampled cluster hashes matched the uncached
+Xbox traversal at several Timberland camera positions. In the seven-bot
+uncaptured Azahar route, outdoor visibility work fell by roughly 2.5–3.5 ms
+per frame, while busy total frame work remained above 33 ms. This is an
+emulator result, not a New 3DS XL frame-rate measurement. Conservative PVS
+and rectangle traversal experiments were rejected: PVS increased object and
+effect work, and the rectangle path omitted clusters found by the original.
+
+An uncaptured seven-bot Timberland trace split the remaining simulation work.
+The game update averaged about 15–20 ms in the outdoor route. Object updates
+accounted for roughly 10–13 ms of the game tick, with moving vehicles,
+projectiles and short corpse-physics spikes the largest type costs; 168 static
+scenery objects together took about 0.3 ms in the sampled ticks. Particle
+simulation added roughly 2–4 ms per frame. These are Azahar host timings and
+do not establish physical New 3DS frame rate. The r35 build is staged for a
+New 3DS XL frame-pacing log with the 128-pixel+mip texture profile.
+
+A diagnostic single-ground-material 512-pixel test required a downgrade on
+far respawn to avoid cache exhaustion and did not sustain the 30 FPS target.
+The ordinary launcher retains the bounded texture profile. The guarded
+near-world and smooth-promotion build options remain experiments, not a
+replacement for the release texture policy.
+
+In the unified PC match selector, **All PC vehicles** enables every authored
+vehicle type and adds two Banshees each to Danger Canyon, Ice Fields and
+Timberland. The added vehicles use assets already present in those retail PC
+caches. The native runtime checks ground slope, nearby terrain, player starts
+and existing vehicles before placing them. The isolated Azahar menu fixture
+spawned both Banshees on all three maps without a fatal error. A Timberland
+driver-entry check succeeded and a later capture showed the player seated in
+the vehicle. A further scripted Timberland run stayed seated and moved about
+26 m, briefly rising about 4 m. Danger Canyon moved more than 13 m and rose
+about 4 m in its first 120 frames. Straight-ahead replay then met terrain;
+the Ice Fields first placement met nearby scenery. These emulator checks show
+the original driver and motion paths advance, but do not establish open-air
+steering or physical New 3DS XL handling.
+
+In a separate Danger Canyon driver-seat replay, the Banshee's authored
+`mp_banshee gun` had two triggers. The primary trigger advanced its original
+last-fired time from 0 to 299. After its cooldown, the secondary trigger
+advanced that time to 379 and referenced a valid projectile tag. Both were
+driven through the native controller and original player/vehicle weapon code.
+
+The native flamethrower renderer now uses the first-person model's animated
+`spawn fire` nozzle marker. It aims a short world-space sprite history from
+that marker toward the camera reticle's collision point, then applies a
+20-frame lifetime, downward acceleration, and fading alpha. The original
+projectiles still determine gameplay; their displaced world-weapon sprite
+positions are hidden for the local first-person view. A turn leaves older
+flame behind instead of rotating the whole jet with the camera. In the
+isolated Azahar arsenal replay, the marker resolved and all 11 weapon and
+mounted-gun paths fired without a fatal error. Captured turn and Fuel Rod
+frames showed flame lag and blast decay. The native game tick also advances
+authored decal decay, and additive particles apply vertex alpha to their
+light contribution so explosions fade. The
+physical display and sustained frame rate still need checking.
+
+An isolated Blood Gulch sniper fixture used a map-authored 136.84 m clear
+sightline. At the shot's visible contrail sample, the original trail held 36
+points whose first and last positions were 136.28 m apart. A six-frame contact
+sheet also showed the long shot over the open field. This measures emulator
+geometry and visuals; the device display still needs a distant-range check.
+
+A moving six-bot Sidewinder Race fixture reached an authored transparent
+effect that combines a screen-anchored secondary bitmap with premultiplied
+alpha. The native two-map effect renderer now carries both texture alphas into
+the framebuffer blend. The replay completed 241 captured frames without a
+fatal error. GPU readback checks compare 50 secondary-effect cases, including
+the premultiplied mode, against independently calculated pixels.

@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 GAME.C
 
@@ -516,6 +517,11 @@ void game_tick(
 	recorded_animations_update();
     NATIVE_GAME_STAMP(3);
 	objects_update();
+#ifdef HALO_N3DS
+	/* The native renderer consumes the original decal list every frame. Advance
+	 * its authored lifetime and decay values on the simulation clock. */
+	{extern int n3ds_controls_decals(void);if(n3ds_controls_decals())decals_update();}
+#endif
     NATIVE_GAME_STAMP(4);
 	players_update_after_game();
 	hud_update();
@@ -778,6 +784,9 @@ void game_initialize_for_new_map(
 	real_math_reset_precision();
 	rasterizer_initialize_for_new_map();
 	game_state_initialize_for_new_map();
+#ifdef HALO_N3DS_UNIFIED_UI
+	{extern void n3ds_campaign_extras_for_new_map(void);n3ds_campaign_extras_for_new_map();}
+#endif
 	game_time_initialize_for_new_map();
 	interface_initialize_for_new_map();
 	game_allegiance_initialize_for_new_map();

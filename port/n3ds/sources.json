@@ -503,6 +503,24 @@
       ]
     },
     {
+      "source": "port/n3ds/pc/cache_file_formats.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "port/n3ds/pc/engine_pc_probe.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "port/n3ds/pc/engine_pc_runtime.c",
+      "compiler": "clang",
+      "defines": ["HALO_N3DS_FRONTEND=1"]
+    },
+    {
+      "source": "port/n3ds/pc/engine_pc_models.c",
+      "compiler": "clang",
+      "defines": ["HALO_N3DS_FRONTEND=1"]
+    },
+    {
       "source": "port/n3ds/src/engine_cache.c",
       "compiler": "clang",
       "defines": [
@@ -597,6 +615,11 @@
         "HALO_N3DS_MISSION_DIFFICULTY=1",
         "HALO_N3DS_FRONTEND=1"
       ]
+    },
+    {
+      "source": "port/n3ds/src/engine_bots.c",
+      "compiler": "clang",
+      "defines": ["HALO_N3DS_FRONTEND=1"]
     },
     {
       "source": "port/n3ds/compat/src/engine_common.c",
@@ -1144,6 +1167,43 @@
       ]
     },
     {
+      "source": "port/n3ds/preview/halo_cache_reader.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/n3ds/preview/halo_pc_bsp.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/n3ds/preview/halo_pc_model.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/n3ds/preview/engine_pc_preview.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "port/n3ds/src/engine_campaign_options.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/src/engine_campaign_overlay.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/src/engine_campaign_extras.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_N3DS_FRONTEND=1"
+      ]
+    },
+    {
       "source": "port/n3ds/src/engine_save_codec.c",
       "compiler": "gcc"
     },
@@ -1205,6 +1265,14 @@
     {
       "source": "port/n3ds/src/engine_audio_platform.c",
       "compiler": "gcc"
+    },
+    {
+      "source": "port/n3ds/vendor/stb_vorbis.c",
+      "compiler": "gcc",
+      "defines": [
+        "STB_VORBIS_NO_STDIO=1",
+        "STB_VORBIS_NO_PUSHDATA_API=1"
+      ]
     },
     {
       "source": "port/n3ds/src/engine_audio_codec.c",

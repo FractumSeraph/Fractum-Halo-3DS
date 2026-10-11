@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /* Original HUD owners; screen postprocessing remains an explicit capability
  * boundary. The game's HUD, inventory and motion tracking stay authoritative. */
 #include "cseries.h"
@@ -12,9 +13,14 @@
 #include "game/player_control.h"
 #include "game/game.h"
 #include "game/game_engine.h"
+#include "input/input.h"
+#include "main/main.h"
 #include "cutscene/cinematics.h"
 #include "units/units.h"
+#include "items/weapons.h"
+#include "items/weapon_definitions.h"
 #include "engine_input.h"
+#include "engine_controls.h"
 #include "render/render.h"
 #include "engine_renderer.h"
 #include "engine_textures.h"
@@ -30,10 +36,54 @@ void n3ds_log(const char *);
 boolean rasterizer_set_texture_bitmap_data(short,const struct bitmap_data *);
 struct bitmap_data *bitmap_group_try_and_get_bitmap(long,short);
 static int hud_active,sensor_active,split_hud,hud_visible;
+struct native_medal_tally { long player_index; unsigned short count; };
+static struct native_medal_tally medal_tallies[16];
+/* Kevin Boggs: n3ds_hud_medals_reset - New3DS integration. */
+void n3ds_hud_medals_reset(void)
+{
+    for(int i=0;i<16;++i){medal_tallies[i].player_index=NONE;medal_tallies[i].count=0;}
+}
+/* Kevin Boggs: n3ds_hud_medal_record - New3DS integration. */
+void n3ds_hud_medal_record(long player_index,short multiple_kills,short kills_in_a_row)
+{
+    /* Count the original announcer's multi-kill and five-kill-streak events.
+     * The extra roster reads this per-match sidecar without changing ABI. */
+    if(multiple_kills<2 && (kills_in_a_row<5 || kills_in_a_row%5))return;
+    for(int i=0;i<16;++i)if(medal_tallies[i].player_index==player_index ||
+       medal_tallies[i].player_index==NONE){
+        medal_tallies[i].player_index=player_index;
+        if(medal_tallies[i].count<999)++medal_tallies[i].count;
+        return;
+    }
+}
+/* Kevin Boggs: n3ds_hud_medal_count - New3DS integration. */
+int n3ds_hud_medal_count(long player_index)
+{
+    for(int i=0;i<16;++i)if(medal_tallies[i].player_index==player_index)
+        return medal_tallies[i].count;
+    return 0;
+}
 static long control_unit=NONE;
 static unsigned int control_generation;
 static unsigned int panel_pixels[512*64],panel_revision;
 static int panel_state=-1;
+static struct native_touch_meter weapon_meters[6];
+static unsigned int weapon_meter_mask;
+static long weapon_meter_tick=NONE;
+/* Kevin Boggs: n3ds_hud_record_weapon_meter - New3DS integration. */
+void n3ds_hud_record_weapon_meter(int state,int value,float multiplier,float bias,int minimum)
+{
+    long tick=game_time_get();
+    if(weapon_meter_tick!=tick){weapon_meter_tick=tick;weapon_meter_mask=0;}
+    if(state<0 || state>=6 || !isfinite(multiplier) || !isfinite(bias))return;
+    float alpha=multiplier*value+bias;
+    if(alpha<minimum)alpha=minimum;
+    if(alpha<0)alpha=0;
+    if(alpha>255)alpha=255;
+    weapon_meters[state].fill=alpha/255.f;
+    weapon_meters[state].state=state;
+    weapon_meter_mask|=1u<<state;
+}
 static long touch_unit(void)
 {
     if(!game_in_progress() || main_menu_is_active() || game_time_get_paused() || ui_widgets_active_for_local_player(0) ||
@@ -43,10 +93,41 @@ static long touch_unit(void)
     long unit=player_get(player)->unit_index;
     return unit!=NONE && unit==control_unit && !TEST_FLAG(unit_get(unit)->object.damage_flags,_object_dead_bit)?unit:NONE;
 }
+/* Kevin Boggs: n3ds_postgame_return_to_lobby - New3DS integration. */
+void n3ds_postgame_return_to_lobby(void)
+{
+#ifdef HALO_N3DS_PC_LOCAL_MENU
+    n3ds_pc_local_menu_queue_reopen();
+#endif
+    main_goto_main_menu();
+}
+/* Kevin Boggs: halo_touch_zone - New3DS integration. */
+static int halo_touch_zone(unsigned int x,unsigned int y)
+{
+    if(x<8 || x>=312 || !((y>=64 && y<114) || (y>=122 && y<164)))return 0;
+    float dy=(float)y+.5f-116.f;
+    float left=160.f-sqrtf(80.f*80.f-dy*dy);
+    if(x<left)return y<114?1:3;
+    if(x>=320.f-left)return y<114?2:4;
+    return 0;
+}
 static unsigned int touch_action(unsigned int x,unsigned int y)
 {
+    if(n3ds_main_is_solo_multiplayer() && !game_engine_allow_pause()) {
+        if(x>=8 && x<312 && y>=8 && y<60 && !n3ds_controls_active()) {
+            n3ds_postgame_return_to_lobby();n3ds_log("POSTGAME: return to lobby requested by bottom-screen touch");
+        }
+        return 0;
+    }
     long unit=touch_unit();
     if(unit==NONE || x>=320) return 0;
+    if(hud_visible && !cinematic_in_progress() && player_input_enabled()) {
+        int zone=halo_touch_zone(x,y);
+        if(zone==1)return NATIVE_TOUCH_STUB_1;
+        if(zone==2)return NATIVE_TOUCH_STUB_2;
+        if(zone==3)return NATIVE_TOUCH_STUB_3;
+        if(zone==4)return n3ds_main_is_solo_multiplayer()?NATIVE_TOUCH_SCOREBOARD:NATIVE_TOUCH_STUB_4;
+    }
     if(y<NATIVE_TOUCH_AIM_BOTTOM) {
         if(!player_control_camera_control_is_active()) return 0;
         /* A10's calibration/tutorial can hide every HUD element while the
@@ -223,6 +304,64 @@ void n3ds_hud_draw_screen(void)
     control_unit=player==NONE?NONE:player_get(player)->unit_index;
     control_generation=n3ds_engine_cache_generation();
     n3ds_input_touch_handler(touch_action);draw_touch_panel();
+    if(hud_visible && !cinematic_in_progress() && player_input_enabled() && touch_unit()!=NONE) {
+        static long long fps_start;static unsigned int fps_frames;static int fps_value=30;
+        extern long long n3ds_engine_ticks(void),n3ds_engine_tick_frequency(void);
+        long long now=n3ds_engine_ticks();if(!fps_start)fps_start=now;
+        else if(++fps_frames>=15){long long elapsed=now-fps_start;
+            if(elapsed>0){int measured=(int)((long long)fps_frames*n3ds_engine_tick_frequency()/elapsed);
+                fps_value=measured<0?0:measured>99?99:measured;}
+            fps_start=now;fps_frames=0;
+        }
+        struct native_touch_meter visible_meters[3];int meter_count=0;
+        static const unsigned char priority[6]={1,0,2,3,5,4};
+        if(weapon_meter_tick==game_time_get())for(int i=0;i<6 && meter_count<3;++i){
+            int state=priority[i];if(weapon_meter_mask&(1u<<state))
+                visible_meters[meter_count++]=weapon_meters[state];
+        }
+        int loaded=-1,reserve=0;
+        long unit_index=touch_unit();
+        const struct unit_datum *unit=unit_index==NONE?NULL:unit_get(unit_index);
+        if(unit && unit->unit.current_weapon_index>=0 &&
+           unit->unit.current_weapon_index<MAXIMUM_WEAPONS_PER_UNIT){
+            long weapon_index=unit->unit.weapon_object_indices[unit->unit.current_weapon_index];
+            const struct weapon_datum *weapon=weapon_index==NONE?NULL:weapon_try_and_get(weapon_index);
+            const struct weapon_definition *definition=weapon?weapon_definition_get(weapon->definition_index):NULL;
+            if(definition && definition->weapon.magazines.count>0){
+                loaded=MAX(0,weapon->weapon.magazines[0].rounds_loaded);
+                reserve=MAX(0,weapon->weapon.magazines[0].rounds_total);
+            }
+        }
+        n3ds_gpu_match_touch_overlay(fps_value,n3ds_controls_show_fps(),
+            n3ds_main_is_solo_multiplayer(),n3ds_input_touch_panel_pressed(),visible_meters,meter_count,loaded,reserve);
+    }
+    if(hud_visible && !cinematic_in_progress() && n3ds_main_is_solo_multiplayer()) {
+        const struct gamepad_state *pad=input_get_gamepad_state(0);
+        if(pad && pad->buttons[_gamepad_binary_button_back] &&
+           n3ds_input_touch_scoreboard_active()) {
+            struct native_score_row rows[16];int count=0;
+            struct data_iterator iterator;struct player_datum *entry;
+            data_iterator_new(&iterator,player_data);
+            while(count<16 && (entry=data_iterator_next(&iterator))!=NULL) {
+                if(entry->quit_out_of_game)continue;
+                struct native_score_row row={0};
+                const wchar_t *name=n3ds_bots_display_name(entry);
+                for(int c=0;c<15 && name[c];++c)
+                    row.name[c]=name[c]>=32 && name[c]<=126?(char)name[c]:'?';
+                if(!row.name[0])snprintf(row.name,sizeof(row.name),"Player %d",count+1);
+                row.score=game_engine && game_engine->get_player_score?
+                    game_engine->get_player_score(iterator.datum_index,_get_score_individual):0;
+                for(int k=0;k<4;++k)row.kills+=entry->statistics.kills[k];
+                row.deaths=entry->statistics.deaths;
+                row.medals=n3ds_hud_medal_count(iterator.datum_index);
+                row.local=iterator.datum_index==player;
+                int at=count++;
+                while(at>0 && row.score>rows[at-1].score){rows[at]=rows[at-1];--at;}
+                rows[at]=row;
+            }
+            n3ds_gpu_match_scoreboard(rows,count);
+        }
+    }
     n3ds_hud_screen(0);split_hud=0;
     for(int i=0;i<4;++i) *rects[i]=saved[i];
 }
@@ -241,6 +380,11 @@ void n3ds_menu_draw_screen(void)
         if(main_menu_is_active()) {extern void n3ds_gpu_campaign_help(void);n3ds_gpu_campaign_help();}
     }
     n3ds_controls_draw();
+#ifdef HALO_N3DS_PC_LOCAL_MENU
+    n3ds_pc_local_menu_draw();
+#endif
+    if(n3ds_main_is_solo_multiplayer() && !game_engine_allow_pause() &&
+       !n3ds_controls_active()) n3ds_gpu_match_postgame_lobby();
     for(int i=0;i<4;++i) *rects[i]=saved[i];
 }
 void n3ds_cinematic_draw_screen(void)
