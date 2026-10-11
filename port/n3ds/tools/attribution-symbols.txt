@@ -180,7 +180,6 @@ port/n3ds/src/engine_hud.c|halo_touch_zone
 port/n3ds/src/engine_hud.c|n3ds_hud_medal_count
 port/n3ds/src/engine_hud.c|n3ds_hud_medal_record
 port/n3ds/src/engine_hud.c|n3ds_hud_medals_reset
-port/n3ds/src/engine_hud.c|n3ds_hud_record_weapon_meter
 port/n3ds/src/engine_hud.c|n3ds_postgame_return_to_lobby
 port/n3ds/src/engine_input.c|n3ds_input_touch_panel_pressed
 port/n3ds/src/engine_input.c|n3ds_input_touch_scoreboard_active

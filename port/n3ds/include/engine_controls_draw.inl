@@ -85,29 +85,14 @@ static void controls_halo_touch_panel(int right,int lower,int pressed,int blank)
  }
 }
 /* Kevin Boggs: n3ds_gpu_match_touch_overlay - New3DS integration. */
-void n3ds_gpu_match_touch_overlay(int fps,int show_fps,int show_score,int pressed,
- const struct native_touch_meter *meters,int meter_count,int loaded,int reserve)
+void n3ds_gpu_match_touch_overlay(int fps,int show_fps,int show_score,int pressed)
 {
  void *saved=n3ds_gpu_texture_bound(0);n3ds_gpu_hud_screen(1);n3ds_gpu_hud_layout(0);
- if(meter_count>0 || loaded>=0){
-  controls_panel_rect(8,27,104,loaded>=0?36:28,0xff281808);
-  controls_panel_rect(11,29,98,1,0xffe5be63);
-  for(int i=0;i<meter_count && i<3;++i){
-   float y=loaded>=0?(meter_count==1?51.f:meter_count==2?47.f+8.f*i:44.f+7.f*i):
-       meter_count==1?39.f:meter_count==2?35.f+10.f*i:33.f+8.f*i;
-   float fill=fmaxf(0.f,fminf(1.f,meters[i].fill));
-   unsigned int color=meters[i].state==2?0xff329bfa:meters[i].state>=4?0xffe47db4:0xfff4da64;
-   controls_panel_rect(12,y,96,5,0xff4d381d);
-   if(fill>0)controls_panel_rect(12,y,96.f*fill,5,color);
-  }
- }
  controls_halo_touch_panel(0,0,pressed==1,1);
  controls_halo_touch_panel(1,0,pressed==2,1);
  controls_halo_touch_panel(0,1,pressed==3,1);
  controls_halo_touch_panel(1,1,pressed==4,show_score?0:1);
  controls_panel_flush();
- if(loaded>=0){char ammo[24];snprintf(ammo,sizeof(ammo),"AMMO %d/%d",loaded,reserve);
-  controls_text(15,33,ammo,0xfff6dcaa,0);}
  if(show_score){controls_text(253,132,"SCORE",0xfffff5e9,0);controls_text(257,146,"HOLD",0xffe9cf9a,0);}
  if(show_fps){char label[20];snprintf(label,sizeof(label),"FPS %02d",fps);
   controls_text(232,47,label,fps>=28?0xff7eecd7:fps>=20?0xffaad6e9:0xff7070ff,0);

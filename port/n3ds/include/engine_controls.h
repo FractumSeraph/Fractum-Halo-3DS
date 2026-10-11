@@ -25,9 +25,7 @@ int n3ds_controls_tests(void);
 int n3ds_ui_pause_menu_active(void);
 void n3ds_gpu_controls_draw(const struct native_control_settings *settings,int selected,int original,int save_error);
 void n3ds_gpu_controls_entry(void);
-struct native_touch_meter { float fill; int state; };
-void n3ds_gpu_match_touch_overlay(int fps,int show_fps,int show_score,int pressed,
-    const struct native_touch_meter *meters,int meter_count,int loaded,int reserve);
+void n3ds_gpu_match_touch_overlay(int fps,int show_fps,int show_score,int pressed);
 struct native_score_row { char name[16]; long score; short kills,deaths,medals; int local; };
 void n3ds_gpu_match_scoreboard(const struct native_score_row *rows,int count);
 void n3ds_gpu_match_postgame_lobby(void);

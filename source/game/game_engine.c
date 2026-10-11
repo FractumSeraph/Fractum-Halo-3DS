@@ -6035,12 +6035,19 @@ boolean game_engine_allow_dynamic_lighting(
 boolean game_engine_allow_integrated_lights(
 	long object_index)
 {
+#ifdef HALO_N3DS
+	/* Keep the bottom-screen flashlight usable in every multiplayer variant.
+	 * The existing unit/input path still owns toggling, battery and networking. */
+	(void)object_index;
+	return TRUE;
+#else
 	boolean allow_integrated_lights = TRUE;
 
 	if (game_engine)
 		allow_integrated_lights = !TEST_FLAG(game_engine_globals.flags, _game_engine_allow_integrated_lights_bit);
 
 	return allow_integrated_lights;
+#endif
 }
 
 void game_engine_variant_cleanup(
