@@ -21,6 +21,13 @@ struct halo_cache {
     uint32_t virtual_base;
     uint32_t tag_count;
     enum halo_cache_kind kind;
+    /* Preview reads keep only the directory resident. Metadata and resolve
+       pointers remain valid until the next call of the same kind. */
+    int streamed;
+    uint8_t *scratch;
+    size_t scratch_size;
+    uint8_t metadata[2048];
+    char name[256];
 };
 
 struct halo_cache_tag {
@@ -39,6 +46,7 @@ struct halo_cache_bitmap {
 };
 
 int halo_cache_open(struct halo_cache *cache, const char *path, char *error, size_t error_size);
+int halo_cache_open_preview(struct halo_cache *cache, const char *path, char *error, size_t error_size);
 int halo_cache_tag_at(const struct halo_cache *cache, uint32_t index,
                       struct halo_cache_tag *out, char *error, size_t error_size);
 const uint8_t *halo_cache_resolve(const struct halo_cache *cache, uint32_t address, size_t bytes);

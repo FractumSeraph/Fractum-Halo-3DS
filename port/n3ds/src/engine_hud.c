@@ -342,6 +342,7 @@ void n3ds_menu_draw_screen(void)
         if(main_menu_is_active()) {extern void n3ds_gpu_campaign_help(void);n3ds_gpu_campaign_help();}
     }
     n3ds_controls_draw();
+    n3ds_map_browser_draw();
     n3ds_local_match_menu_draw();
 #ifdef HALO_N3DS_PC_LOCAL_MENU
     n3ds_pc_local_menu_draw();

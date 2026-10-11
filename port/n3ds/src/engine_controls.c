@@ -8,9 +8,9 @@
 #include "main/main.h"
 #include "game/game_engine.h"
 #include "engine_bots.h"
+#include "engine_pc_preview.h"
 #ifdef HALO_N3DS_PC_LOCAL_MENU
 #include "pc_diagnostic_maps.h"
-#include "engine_pc_preview.h"
 int n3ds_pc_tags_active(void);
 int n3ds_pc_map_available(const char *);
 #endif
@@ -330,6 +330,40 @@ void n3ds_pc_local_menu_draw(void)
  pc_menu_weapon_set,pc_menu_vehicle_choice,pc_menu_page,pc_menu_field,pc_menu_error,
  n3ds_controls_high_textures(),n3ds_input_platform_original_model());}
 #endif
+
+/* A preview owns no live engine tags and is released on leaving the browser. */
+static int browser_map=-1,browser_pc,browser_settle,browser_owned;
+/* Kevin Boggs: n3ds_map_browser_filter - preview gestures never reach the game widgets. */
+void n3ds_map_browser_filter(struct native_input_sample *sample)
+{
+    extern int n3ds_ui_map_browser_selection(void);
+    static const unsigned char xbox_order[]={0,16,5,15,13,9,4,3,2,1,18,14,12};
+    int selection=n3ds_controls_active() || n3ds_local_match_menu_active()?-1:n3ds_ui_map_browser_selection();
+#ifdef HALO_N3DS_PC_LOCAL_MENU
+    if(n3ds_pc_local_menu_active())selection=-1;
+#endif
+    int pc=selection>=32 && selection<51;
+    int map=pc?selection-32:selection>=0 && selection<13?xbox_order[selection]:-1;
+    if(map!=browser_map || pc!=browser_pc){
+        if(browser_owned)n3ds_pc_preview_close();
+        browser_owned=0;browser_map=map;browser_pc=pc;browser_settle=0;
+    }
+    if(map<0)return;
+    if(browser_settle<12)++browser_settle;
+    if(browser_owned)n3ds_pc_preview_input(sample);
+    sample->held&=~(NATIVE_KEY_TOUCH|NATIVE_KEY_L|NATIVE_KEY_R);
+}
+/* Kevin Boggs: n3ds_map_browser_draw - debounce map changes before reading preview data. */
+void n3ds_map_browser_draw(void)
+{
+    if(browser_map<0 || n3ds_local_match_menu_active() || n3ds_controls_active())return;
+#ifdef HALO_N3DS_PC_LOCAL_MENU
+    if(n3ds_pc_local_menu_active())return;
+#endif
+    int ready=browser_settle>=12;
+    if(ready)browser_owned=1;
+    n3ds_gpu_map_browser(browser_map,browser_pc,ready);
+}
 
 /* Local match choices are copied from the chosen playlist, so changing bots or
  * equipment never replaces custom scoring, teams or mode-specific rules. */

@@ -30,6 +30,7 @@ void halo_cache_close(struct halo_cache *cache) {
     if (cache == NULL) return;
     if (cache->file != NULL) fclose(cache->file);
     free(cache->tags);
+    free(cache->scratch);
     memset(cache, 0, sizeof(*cache));
 }
 
@@ -37,10 +38,23 @@ const uint8_t *halo_cache_resolve(const struct halo_cache *cache, uint32_t addre
     if (cache == NULL || cache->tags == NULL || address < cache->virtual_base) return NULL;
     size_t offset = (size_t)(address - cache->virtual_base);
     if (bytes > cache->tag_size || offset > cache->tag_size - bytes) return NULL;
+    if (cache->streamed) {
+        struct halo_cache *mutable_cache = (struct halo_cache *)cache;
+        if (bytes > 1024u*1024u) return NULL;
+        if (bytes > cache->scratch_size) {
+            uint8_t *scratch = realloc(cache->scratch, bytes);
+            if (!scratch) return NULL;
+            mutable_cache->scratch = scratch;mutable_cache->scratch_size = bytes;
+        }
+        if (fseek(cache->file, (long)(cache->tag_file_offset+offset), SEEK_SET) ||
+            fread(cache->scratch, 1, bytes, cache->file) != bytes) return NULL;
+        return cache->scratch;
+    }
     return cache->tags + offset;
 }
 
-int halo_cache_open(struct halo_cache *cache, const char *path, char *error, size_t error_size) {
+/* Kevin Boggs: cache_open - bounded directory-only reads for map previews. */
+static int cache_open(struct halo_cache *cache, const char *path, char *error, size_t error_size, int streamed) {
     uint8_t header[HEADER_BYTES];
     uint32_t tag_offset, tag_size, directory_address, count, signature_offset;
     long end;
@@ -68,21 +82,22 @@ int halo_cache_open(struct halo_cache *cache, const char *path, char *error, siz
     cache->tag_file_offset = tag_offset;
     cache->tag_size = tag_size;
     cache->virtual_base = cache->kind == HALO_CACHE_XBOX_V5 ? 0x803a6000u : 0x40440000u;
-    cache->tags = (uint8_t *)malloc(tag_size);
-    if (cache->tags == NULL) goto no_memory;
-    if (fseek(cache->file, (long)tag_offset, SEEK_SET) != 0 ||
-        fread(cache->tags, 1, tag_size, cache->file) != tag_size)
-        goto invalid_file;
+    uint8_t tag_header[40];
+    if (fseek(cache->file, (long)tag_offset, SEEK_SET) ||
+        fread(tag_header,1,sizeof(tag_header),cache->file)!=sizeof(tag_header)) goto invalid_file;
     signature_offset = cache->kind == HALO_CACHE_XBOX_V5 ? 32u : 36u;
-    if (memcmp(cache->tags + signature_offset, "sgat", 4) != 0) goto invalid_file;
-    directory_address = read_u32(cache->tags);
-    count = read_u32(cache->tags + 12);
-    if (count == 0 || count > MAX_TAGS || directory_address < cache->virtual_base)
-        goto invalid_file;
-    cache->directory_offset = (size_t)(directory_address - cache->virtual_base);
-    if (cache->directory_offset > cache->tag_size ||
-        (size_t)count * 32u > cache->tag_size - cache->directory_offset)
-        goto invalid_file;
+    if (memcmp(tag_header + signature_offset, "sgat", 4) != 0) goto invalid_file;
+    directory_address = read_u32(tag_header);count = read_u32(tag_header+12);
+    if (!count || count>MAX_TAGS || directory_address<cache->virtual_base) goto invalid_file;
+    cache->directory_offset=directory_address-cache->virtual_base;
+    if (cache->directory_offset>cache->tag_size ||
+        (size_t)count*32u>cache->tag_size-cache->directory_offset) goto invalid_file;
+    cache->streamed=streamed;
+    size_t resident=streamed?cache->directory_offset+(size_t)count*32u:tag_size;
+    cache->tags=malloc(resident);
+    if (!cache->tags) goto no_memory;
+    if (fseek(cache->file,(long)tag_offset,SEEK_SET) ||
+        fread(cache->tags,1,resident,cache->file)!=resident) goto invalid_file;
     cache->tag_count = count;
     if (error != NULL && error_size != 0) error[0] = '\0';
     return 1;
@@ -94,6 +109,12 @@ no_memory:
     return fail(error, error_size, "Not enough memory for tag data");
 }
 
+int halo_cache_open(struct halo_cache *cache,const char *path,char *error,size_t size)
+{return cache_open(cache,path,error,size,0);}
+/* Kevin Boggs: halo_cache_open_preview - avoid retaining an entire second map's tags. */
+int halo_cache_open_preview(struct halo_cache *cache,const char *path,char *error,size_t size)
+{return cache_open(cache,path,error,size,1);}
+
 int halo_cache_tag_at(const struct halo_cache *cache, uint32_t index,
                       struct halo_cache_tag *out, char *error, size_t error_size) {
     const uint8_t *entry, *name, *meta;
@@ -101,6 +122,26 @@ int halo_cache_tag_at(const struct halo_cache *cache, uint32_t index,
     if (cache == NULL || out == NULL || cache->tags == NULL || index >= cache->tag_count)
         return fail(error, error_size, "Tag index is out of range");
     entry = cache->tags + cache->directory_offset + (size_t)index * 32u;
+    if (cache->streamed) {
+        struct halo_cache *mutable_cache=(struct halo_cache *)cache;
+        uint32_t name_address=read_u32(entry+16),meta_address=read_u32(entry+20);
+        if(name_address<cache->virtual_base || meta_address<cache->virtual_base)
+            return fail(error,error_size,"Tag addresses invalid");
+        size_t no=name_address-cache->virtual_base,mo=meta_address-cache->virtual_base;
+        if(no>=cache->tag_size || mo>=cache->tag_size)return fail(error,error_size,"Tag range invalid");
+        size_t ns=cache->tag_size-no,ms=cache->tag_size-mo;
+        if(ns>sizeof(cache->name))ns=sizeof(cache->name);
+        if(ms>sizeof(cache->metadata))ms=sizeof(cache->metadata);
+        if(fseek(cache->file,(long)(cache->tag_file_offset+no),SEEK_SET) ||
+           fread(mutable_cache->name,1,ns,cache->file)!=ns || !memchr(cache->name,0,ns) ||
+           fseek(cache->file,(long)(cache->tag_file_offset+mo),SEEK_SET) ||
+           fread(mutable_cache->metadata,1,ms,cache->file)!=ms)
+            return fail(error,error_size,"Tag read failed");
+        out->group=read_u32(entry);out->datum=read_u32(entry+12);
+        out->name=cache->name;out->metadata=cache->metadata;out->metadata_available=ms;
+        if(error && error_size)error[0]=0;
+        return 1;
+    }
     name = halo_cache_resolve(cache, read_u32(entry + 16), 1);
     if (name == NULL) return fail(error, error_size, "Tag name is out of range");
     available = cache->tag_size - (size_t)(name - cache->tags);

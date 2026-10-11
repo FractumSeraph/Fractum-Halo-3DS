@@ -11,6 +11,7 @@ struct halo_pc_bsp {
     uint8_t *bytes;
     uint32_t size;
     uint32_t address;
+    enum halo_cache_kind kind;
     uint32_t surface_count;
     uint32_t surfaces_offset;
     uint32_t lightmap_count;
@@ -28,6 +29,7 @@ struct halo_pc_bsp {
 
 struct halo_pc_bsp_material {
     uint32_t vertices_offset;
+    uint32_t vertex_stride,uv_offset;
     uint32_t vertex_count;
     uint32_t first_surface;
     uint32_t surface_count;

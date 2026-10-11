@@ -49,7 +49,8 @@ static struct native_widget_vertex *nav_vertices;
 static unsigned int nav_triangles;
 static int nav_visible=0,backfaces_enabled=1,view_mode=VIEW_LIT,touch_held,touch_owner;
 static int selected_map=-1,selected_page=-1,selected_field=-1,selected_weapon=-1,selected_vehicle=-1;
-static int state_loaded;
+static int state_loaded,selected_xbox,requested_xbox;
+static unsigned int triangle_limit=PREVIEW_TRIANGLES;
 static int uv_mode;
 static int model_detail;static unsigned int model_geometries;
 static float yaw=.65f,elevation=.72f,zoom=2.7f;
@@ -77,14 +78,14 @@ void n3ds_pc_preview_close(void)
 
 static int allocate_mesh(void)
 {
-    vertices=n3ds_gpu_geometry_optional_allocate(PREVIEW_VERTICES*sizeof(*vertices));
-    indices=n3ds_gpu_geometry_optional_allocate(PREVIEW_VERTICES*sizeof(*indices));
+    vertices=n3ds_gpu_geometry_optional_allocate(triangle_limit*3u*sizeof(*vertices));
+    indices=n3ds_gpu_geometry_optional_allocate(triangle_limit*3u*sizeof(*indices));
     return vertices && indices;
 }
 static void emit_triangle(const float *a,const float *b,const float *c,int kind,
     const float *uv,const float *const *smooth_normals)
 {
-    if(triangles>=PREVIEW_TRIANGLES)return;
+    if(triangles>=triangle_limit)return;
     float e0[3],e1[3],n[3];
     for(int i=0;i<3;++i){e0[i]=b[i]-a[i];e1[i]=c[i]-a[i];}
     n[0]=e0[1]*e1[2]-e0[2]*e1[1];n[1]=e0[2]*e1[0]-e0[0]*e1[2];
@@ -280,7 +281,7 @@ static int load_bsp(struct halo_cache *cache)
                 map_files[selected_map],(unsigned long)main_count);n3ds_log(message);}
         }
     }
-    struct preview_face *heap=malloc(PREVIEW_TRIANGLES*sizeof(*heap));
+    struct preview_face *heap=malloc(triangle_limit*sizeof(*heap));
     if(!heap){free(main_component);halo_pc_bsp_close(&bsp);return 0;}
     unsigned int kept=0;
     for(unsigned int lm=0;lm<bsp.lightmap_count;++lm){
@@ -307,7 +308,7 @@ static int load_bsp(struct halo_cache *cache)
                     float uv[6]={a[3],a[4],b[3],b[4],c[3],c[4]};
                     for(int channel=0;channel<6;++channel)
                         if(!isfinite(uv[channel]) || fabsf(uv[channel])>100000.f)uv[channel]=0.f;
-                    face_keep(heap,&kept,PREVIEW_TRIANGLES,a,b,c,uv,
+                    face_keep(heap,&kept,triangle_limit,a,b,c,uv,
                         m.shader_group==0x73656e76u?m.shader_datum:0xffffffffu,water);
                 }
             }
@@ -381,13 +382,14 @@ static int load_bsp(struct halo_cache *cache)
     if(material_uv)for(unsigned int i=0;i<triangles*3u;++i){
         material_uv[i*2]=vertices[i].uv[0];material_uv[i*2+1]=vertices[i].uv[1];
     }
+    free(heap);
     for(unsigned int i=0;i<batch_count && texture_count<PREVIEW_TEXTURE_LIMIT;++i){
         if(!batches[i].count)continue;
         batches[i].texture=load_material_texture(cache,batches[i].shader_datum,0);
         if(batches[i].texture)++texture_count;
     }
     load_nav(&bsp,main_component);
-    free(main_component);free(heap);halo_pc_bsp_close(&bsp);return triangles>0;
+    free(main_component);halo_pc_bsp_close(&bsp);return triangles>0;
 }
 static int load_model(struct halo_cache *cache,const char *wanted,int kind)
 {
@@ -495,14 +497,16 @@ static void load_selection(int map,int page,int field,int weapon_set,int vehicle
     long long begun=n3ds_engine_ticks();
     n3ds_pc_preview_close();state_loaded=1;
     if(map==8 && !page){yaw=1.57f;elevation=1.28f;zoom=2.65f;}
+    selected_xbox=requested_xbox;
+    triangle_limit=selected_xbox && n3ds_input_platform_original_model()?8192u:PREVIEW_TRIANGLES;
     selected_map=map;selected_page=page;selected_field=field;
     selected_weapon=weapon_set;selected_vehicle=vehicle_choice;
     if(map<0 || map>=19 || (page && ((field==0 && weapon_set==10) ||
        (field==1 && vehicle_choice==2))) || !allocate_mesh())return;
     char path[128],message[180],error[128];
-    snprintf(path,sizeof(path),"sdmc:/halo-source/pc-retail/%s.map",map_files[map]);
+    snprintf(path,sizeof(path),selected_xbox?"sdmc:/halo-source/%s.map":"sdmc:/halo-source/pc-retail/%s.map",map_files[map]);
     struct halo_cache cache={0};
-    if(!halo_cache_open(&cache,path,error,sizeof(error))){
+    if(!(selected_xbox?halo_cache_open_preview(&cache,path,error,sizeof(error)):halo_cache_open(&cache,path,error,sizeof(error)))){
         snprintf(message,sizeof(message),"PC PREVIEW: %s: %s",map_files[map],error);n3ds_log(message);return;
     }
     int kind=page?(field==1?2:1):0;
@@ -623,9 +627,10 @@ static void preview_set_wire_uv(int wire)
     }
     n3ds_gpu_geometry_flush(vertices,triangles*3u*sizeof(*vertices));uv_mode=wire;
 }
-void n3ds_pc_preview_draw(int map,int page,int field,int weapon_set,int vehicle_choice)
+/* Kevin Boggs: preview_draw - shared map rendering for Xbox and PC caches. */
+static void preview_draw(int map,int page,int field,int weapon_set,int vehicle_choice)
 {
-    if(!state_loaded || map!=selected_map || page!=selected_page ||
+    if(!state_loaded || selected_xbox!=requested_xbox || map!=selected_map || page!=selected_page ||
        (page && field!=selected_field) || weapon_set!=selected_weapon || vehicle_choice!=selected_vehicle)
         load_selection(map,page,field,weapon_set,vehicle_choice);
     if(!triangles)return;
@@ -684,3 +689,12 @@ void n3ds_pc_preview_draw(int map,int page,int field,int weapon_set,int vehicle_
     }
     n3ds_gpu_world_state_restore();
 }
+
+void n3ds_pc_preview_draw(int map,int page,int field,int weapons,int vehicles)
+{requested_xbox=0;preview_draw(map,page,field,weapons,vehicles);}
+/* Kevin Boggs: n3ds_xbox_preview_draw - reuse the interactive view with Xbox geometry. */
+void n3ds_xbox_preview_draw(int map)
+{requested_xbox=1;preview_draw(map,0,0,0,0);}
+
+/* Kevin Boggs: n3ds_preview_available - allow a readable low-memory or missing-data fallback. */
+int n3ds_preview_available(void){return triangles!=0;}

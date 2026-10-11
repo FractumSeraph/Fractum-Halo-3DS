@@ -2081,6 +2081,26 @@ boolean ui_widgets_active(
 	return result;
 }
 
+#ifdef HALO_N3DS
+/* Kevin Boggs: n3ds_ui_map_browser_selection - follow only the active focus chain. */
+int n3ds_ui_map_browser_selection(void)
+{
+    extern short n3ds_ui_multiplayer_map_original_index(short);
+    if(!widget_globals.initialized || !we_are_at_the_main_menu)return -1;
+    struct widget_instance *widget=widget_globals.active_widgets[0];
+    for(int depth=0;widget && depth<32;++depth,widget=widget->focused_child){
+        if(!widget->visible)return -1;
+        const char *path=tag_get_name(widget->definition_tag_index);
+        if(widget->type==_ui_widget_type_spinner_list && path &&
+           strstr(path,"\\mp_map_select\\mp_map_select_list") &&
+           widget->parameters.list.selected_index>=0 &&
+           widget->parameters.list.selected_index<widget->parameters.list.number_of_items)
+            return n3ds_ui_multiplayer_map_original_index((short)widget->parameters.list.selected_index);
+    }
+    return -1;
+}
+#endif
+
 boolean main_menu_screen_is_active(
 	void)
 {

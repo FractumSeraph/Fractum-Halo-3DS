@@ -242,3 +242,12 @@ port/n3ds/src/engine_controls.c|n3ds_local_match_menu_filter
 port/n3ds/src/engine_controls.c|n3ds_local_match_menu_draw
 port/n3ds/src/engine_bots.c|n3ds_bots_menu_difficulty
 port/n3ds/include/engine_controls_draw.inl|n3ds_gpu_local_match_menu
+port/n3ds/preview/halo_cache_reader.c|cache_open
+port/n3ds/preview/halo_cache_reader.c|halo_cache_open_preview
+port/n3ds/preview/engine_pc_preview.c|preview_draw
+port/n3ds/preview/engine_pc_preview.c|n3ds_xbox_preview_draw
+port/n3ds/preview/engine_pc_preview.c|n3ds_preview_available
+source/interface/ui_widget.c|n3ds_ui_map_browser_selection
+port/n3ds/src/engine_controls.c|n3ds_map_browser_filter
+port/n3ds/src/engine_controls.c|n3ds_map_browser_draw
+port/n3ds/include/engine_controls_draw.inl|n3ds_gpu_map_browser

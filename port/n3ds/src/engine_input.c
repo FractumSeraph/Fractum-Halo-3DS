@@ -110,6 +110,7 @@ void n3ds_engine_input_sample(const struct native_input_sample *sample)
     assert(initialized && sample);
     last_sample=*sample;
     struct native_input_sample filtered=*sample;
+    n3ds_map_browser_filter(&filtered);
     n3ds_local_match_menu_filter(&filtered);
 #ifdef HALO_N3DS_UNIFIED_UI
     extern void n3ds_campaign_options_filter(struct native_input_sample *);

@@ -221,6 +221,30 @@ void n3ds_gpu_local_match_menu(const char *title,int bots,int difficulty,int wea
  n3ds_gpu_hud_screen(0);n3ds_gpu_texture_bind(0,saved);n3ds_gpu_world_state_restore();
 }
 
+#include "engine_pc_preview.h"
+/* Kevin Boggs: n3ds_gpu_map_browser - keep preview controls on the lower display. */
+void n3ds_gpu_map_browser(int map,int pc,int ready)
+{
+    static const char *const names[]={"Battle Creek","Blood Gulch","Boarding Action","Derelict","Chill Out",
+        "Damnation","Danger Canyon","Death Island","Gephyrophobia","Hang 'Em High","Ice Fields",
+        "Infinity","Longest","Prisoner","Chiron TL-34","Rat Race","Sidewinder","Timberland","Wizard"};
+    static const char *const views[]={"TEXTURED LIT","X-RAY","WIREFRAME","X-RAY + WIRE"};
+    void *saved=n3ds_gpu_texture_bound(0);n3ds_gpu_hud_layout(0);n3ds_gpu_hud_screen(1);
+    controls_quad(0,0,320,240,0xff24150c,0);
+    if(ready){if(pc)n3ds_pc_preview_draw(map,0,0,0,0);else n3ds_xbox_preview_draw(map);}
+    n3ds_gpu_hud_screen(1);
+    controls_quad(0,0,320,24,0xff24150c,0);controls_text(16,8,names[map],0xffffffff,0);
+    controls_quad(12,26,133,25,0xff674826,0);controls_text(20,35,views[n3ds_pc_preview_view_mode()],0xffffffff,0);
+    controls_quad(152,26,89,25,0xff674826,0);controls_text(160,35,n3ds_pc_preview_backfaces_enabled()?"BACKS ON":"BACKS OFF",0xffffffff,0);
+    controls_quad(248,26,63,25,0xff674826,0);controls_text(255,35,n3ds_pc_preview_nav_enabled()?"NAV ON":"NAV OFF",0xffffffff,0);
+    controls_quad(0,180,320,60,0xff24150c,0);
+    if(!ready)controls_text(72,112,"Loading preview...",0xffffffff,0);
+    else if(!n3ds_preview_available())controls_text(64,112,"Preview unavailable",0xffffffff,0);
+    controls_text(24,189,"Drag: rotate    L/R: zoom",0xffe9d6aa,0);
+    controls_text(24,210,"D-pad: map   A: select   B: back",0xffffffff,0);
+    n3ds_gpu_hud_screen(0);n3ds_gpu_texture_bind(0,saved);n3ds_gpu_world_state_restore();
+}
+
 #ifdef HALO_N3DS_PC_LOCAL_MENU
 #include "engine_pc_preview.h"
 static void controls_text_center(float width,float y,const char *message,unsigned int color,int top)

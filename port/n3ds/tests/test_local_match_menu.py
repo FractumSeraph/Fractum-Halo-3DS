@@ -5,7 +5,7 @@ import sys
 import tempfile
 ROOT = Path(__file__).resolve().parents[3]
 source = (ROOT / "port/n3ds/src/engine_controls.c").read_text()
-body = source[source.index("/* Local match choices"):source.index("int n3ds_controls_tests(void)")]
+body = source[source.index("/* A preview owns"):source.index("int n3ds_controls_tests(void)")]
 prefix = r'''
 #include <assert.h>
 #include <stdio.h>
@@ -22,6 +22,12 @@ static int wireless,menu=1,widgets=1,controls,pc,queue_ok=1,queues,bot_count,bot
 static int pc_match_weapon_override=12;
 static struct game_variant queued;
 static char queued_map[96];
+static int browser_selection=-1,preview_closes,preview_draws,preview_map,preview_pc,preview_ready;
+int n3ds_ui_map_browser_selection(void){return browser_selection;}
+void n3ds_pc_preview_close(void){++preview_closes;}
+void n3ds_pc_preview_input(const struct native_input_sample *sample){(void)sample;}
+void n3ds_gpu_map_browser(int map,int pc_map,int ready){++preview_draws;preview_map=map;preview_pc=pc_map;preview_ready=ready;}
+
 int n3ds_controls_active(void){return controls;}
 int n3ds_pc_local_menu_active(void){return pc;}
 int n3ds_wireless_active(void){return wireless;}
@@ -77,6 +83,20 @@ int main(void){
  assert(!n3ds_local_match_menu_active() && bot_count==2 && queues==2);
  assert(n3ds_local_match_menu_open(map,&variant,0));input(0,0,0);wireless=1;input(NATIVE_KEY_A,0,0);
  assert(!n3ds_local_match_menu_active() && queues==2);
+ wireless=0;browser_selection=9;
+ struct native_input_sample sample={0};sample.held=NATIVE_KEY_DRIGHT|NATIVE_KEY_TOUCH|NATIVE_KEY_R;
+ n3ds_map_browser_filter(&sample);assert(sample.held==NATIVE_KEY_DRIGHT);
+ n3ds_map_browser_draw();assert(preview_map==1 && !preview_pc && !preview_ready);
+ for(int i=0;i<12;++i)n3ds_map_browser_filter(&sample);
+ n3ds_map_browser_draw();assert(preview_ready);
+ browser_selection=10;n3ds_map_browser_filter(&sample);assert(preview_closes==1);
+ n3ds_map_browser_draw();assert(preview_map==18 && !preview_ready);
+ for(int i=0;i<12;++i)n3ds_map_browser_filter(&sample);
+ n3ds_map_browser_draw();controls=1;n3ds_map_browser_filter(&sample);assert(preview_closes==2);
+ int drawn=preview_draws;n3ds_map_browser_draw();assert(preview_draws==drawn);controls=0;
+ browser_selection=33;n3ds_map_browser_filter(&sample);n3ds_map_browser_draw();assert(preview_map==1 && preview_pc);
+ browser_selection=13;n3ds_map_browser_filter(&sample);drawn=preview_draws;n3ds_map_browser_draw();assert(preview_draws==drawn);
+ puts("PASS: browser map identities, debounce, gesture isolation and cleanup on leaving the browser");
  puts("PASS: local settings, preserved gametype, touch/keys, opening debounce, Back, failed launch, wireless exclusion");
  return 0;
 }

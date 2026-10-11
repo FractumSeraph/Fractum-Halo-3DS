@@ -82,14 +82,16 @@ int halo_pc_bsp_material_at(const struct halo_pc_bsp *bsp,
     out->first_surface = u32(bsp->bytes + material + 0x14u);
     out->surface_count = u32(bsp->bytes + material + 0x18u);
     out->vertex_count = u32(bsp->bytes + material + 0xb4u);
-    bytes = u32(bsp->bytes + material + 0xd8u);
-    address = u32(bsp->bytes + material + 0xe4u);
+    int xbox=bsp->kind==HALO_CACHE_XBOX_V5;
+    bytes = u32(bsp->bytes + material + (xbox?0xecu:0xd8u));
+    address = u32(bsp->bytes + material + (xbox?0xf8u:0xe4u));
+    out->vertex_stride=xbox?32u:56u;out->uv_offset=xbox?24u:48u;
     lightmap_vertices = u32(bsp->bytes + material + 0xc8u);
     if (out->first_surface > bsp->surface_count ||
         out->surface_count > bsp->surface_count - out->first_surface ||
         out->vertex_count > 65535u ||
         lightmap_vertices != (u16(bsp->bytes + lightmap) == 0xffffu ? 0u : out->vertex_count) ||
-        (size_t)out->vertex_count * 56u + (size_t)lightmap_vertices * 20u != bytes ||
+        (size_t)out->vertex_count * out->vertex_stride + (size_t)lightmap_vertices * (xbox?8u:20u) != bytes ||
         (bytes && (address < bsp->address || address - bsp->address > bsp->size ||
                    bytes > bsp->size - (address - bsp->address))))
         return fail(error, error_size, "BSP material geometry invalid");
@@ -103,8 +105,8 @@ static int scenario_refs(const struct halo_cache *cache,
                          char *error, size_t error_size) {
     struct halo_cache_tag scenario;
     uint32_t i;
-    if (!cache || cache->kind != HALO_CACHE_PC_V7 || !count || !offset)
-        return fail(error, error_size, "Expected PC retail scenario");
+    if (!cache || (cache->kind != HALO_CACHE_PC_V7 && cache->kind != HALO_CACHE_XBOX_V5) || !count || !offset)
+        return fail(error, error_size, "Expected retail scenario");
     for (i = 0; i < cache->tag_count; i++) {
         if (halo_cache_tag_at(cache, i, &scenario, error, error_size) &&
             scenario.group == SCENARIO_GROUP) break;
@@ -132,8 +134,8 @@ int halo_pc_bsp_open(struct halo_pc_bsp *bsp, const struct halo_cache *cache,
     uint32_t count, offset, ref, file_offset, size, address, structure;
     uint32_t lm, mat_count, materials, mat;
     struct halo_pc_bsp_material material;
-    if (!bsp || !cache || cache->kind != HALO_CACHE_PC_V7)
-        return fail(error, error_size, "Expected a PC retail cache");
+    if (!bsp || !cache || (cache->kind != HALO_CACHE_PC_V7 && cache->kind != HALO_CACHE_XBOX_V5))
+        return fail(error, error_size, "Expected a retail cache");
     memset(bsp, 0, sizeof(*bsp));
     if (!scenario_refs(cache, &count, &offset, error, error_size)) return 0;
     if (!count || bsp_index >= count)
@@ -151,6 +153,7 @@ int halo_pc_bsp_open(struct halo_pc_bsp *bsp, const struct halo_cache *cache,
     if (!bsp->bytes) return fail(error, error_size, "BSP allocation failed");
     bsp->size = size;
     bsp->address = address;
+    bsp->kind = cache->kind;
     if (fseek(cache->file, (long)file_offset, SEEK_SET) ||
         fread(bsp->bytes, 1, size, cache->file) != size ||
         u32(bsp->bytes + 0x14u) != BSP_SIGNATURE ||
@@ -293,7 +296,7 @@ int halo_pc_bsp_read_material(const struct halo_pc_bsp *bsp,
         return fail(error, error_size, "BSP output buffers too small");
     for (i = 0; i < material->vertex_count; i++)
         memcpy(positions + (size_t)i * 3u,
-               bsp->bytes + material->vertices_offset + (size_t)i * 56u, 12u);
+               bsp->bytes + material->vertices_offset + (size_t)i * material->vertex_stride, 12u);
     for (i = 0; i < material->surface_count; i++) {
         const uint8_t *surface = bsp->bytes + bsp->surfaces_offset +
                                  (material->first_surface + i) * 6u;
@@ -314,9 +317,9 @@ int halo_pc_bsp_read_material_uv(const struct halo_pc_bsp *bsp,
         index_count < (size_t)material->surface_count * 3u)
         return fail(error, error_size, "BSP UV output buffers too small");
     for (i = 0; i < material->vertex_count; i++) {
-        const uint8_t *source = bsp->bytes + material->vertices_offset + (size_t)i * 56u;
+        const uint8_t *source = bsp->bytes + material->vertices_offset + (size_t)i * material->vertex_stride;
         memcpy(vertices + (size_t)i * 5u, source, 12u);
-        memcpy(vertices + (size_t)i * 5u + 3u, source + 48u, 8u);
+        memcpy(vertices + (size_t)i * 5u + 3u, source + material->uv_offset, 8u);
     }
     for (i = 0; i < material->surface_count; i++) {
         const uint8_t *surface = bsp->bytes + bsp->surfaces_offset +

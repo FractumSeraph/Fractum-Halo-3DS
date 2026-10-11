@@ -41,6 +41,12 @@ The Xbox main menu starts Campaign and Xbox multiplayer. After selecting a local
 multiplayer gametype, the bottom screen offers bots, difficulty, weapons and
 vehicles. Choose **Start** to play or **Back** to return to gametype selection.
 No bot configuration file is required. These options are for local matches only.
+
+While browsing Xbox multiplayer maps, the lower screen shows a 3D preview
+from the installed map. Drag to rotate, use L/R to zoom, or tap the view,
+backface and navigation-overlay buttons. PC maps in the original browser
+use the same controls. Preview data is released when leaving the map browser;
+no new game assets or setup conversion are required.
 Press **SELECT** for
 PC Local Multiplayer. The lower screen is the map preview: tap the map name
 to advance through maps, or select it with the D-pad and press left/right.
