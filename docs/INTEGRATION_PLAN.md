@@ -138,3 +138,30 @@ build with the command in [developer notes](DEVELOPMENT.md), and run the
 installer from a freshly extracted package with `-WhatIf` before any SD write.
 Do not attach retail files, SD logs that contain private paths, or SDK files to
 an upstream pull request.
+
+
+## Deferred follow-up after the dev merge (October 11, 2026)
+
+The pre-merge review's setup-tool item (#3) is addressed by optional retail PC
+maps-folder import in both graphical setup tools, packaged with the integrated
+launcher. The other review items remain outstanding by request; they are not
+part of this installer change:
+
+- Unify **Return to Lobby** behavior. Xbox local matches return to the main
+  menu; PC matches started through the shared menu can reopen the separate PC
+  selector with different retained map/mode choices. Preserve the selected
+  format, map and game type when returning.
+- Bring the separate PC gear-preview page and Flamethrower/Fuel Rod presets
+  into the shared Xbox/PC setup flow where applicable.
+- Bots and the expanded touch scoreboard remain solo/local features. Wireless
+  support for these features is a separate task.
+- Add top-screen thumbnails for PC-only maps. Their bottom-screen geometry
+  previews already work.
+- Reconcile older branch, release-status and New-3DS-only wording in the docs
+  after the merge. Those passages describe earlier integration stages.
+- Test the current merged launcher on two physical consoles: Xbox/PC map
+  identity, missing-map rejection, match completion, disconnects and disabled
+  campaign extras in co-op. Repeat quality/performance checks on both model
+  families. Prior emulator or older-build results do not replace these checks.
+
+No dev or main merge is performed as part of the setup-tool update.

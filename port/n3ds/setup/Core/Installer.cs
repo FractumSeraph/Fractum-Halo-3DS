@@ -7,7 +7,7 @@ using System.Text.Json;
 namespace HaloSetup;
 
 public sealed record SetupOptions(string Source, string Destination, string Executable, string? CompatibilityFile = null,
-    bool LauncherOnly = false);
+    bool LauncherOnly = false, string? PcMapsFolder = null);
 
 public static class Installer
 {
@@ -72,7 +72,7 @@ public static class Installer
         byte[] header = entry.Head(2048);
         Data.Require(header.Length == 2048 && header.AsSpan(0, 4).SequenceEqual("daeh"u8) &&
             header.AsSpan(2044, 4).SequenceEqual("toof"u8) && Data.U32(header, 4) == 5,
-            $"{name}.map is not an original Xbox Halo map. PC/MCC maps are not supported.");
+            $"{name}.map is not an original Xbox Halo map. Select PC maps in the optional PC folder field instead. MCC is not supported.");
         string build = Encoding.ASCII.GetString(header, 64, 32).Split('\0')[0];
         Data.Require(build == Data.Build, $"{name}.map is from an unsupported release. Use the English North American retail release of Halo: Combat Evolved for the original Xbox. No prototype or debug version is needed. Technical details: found build {build}; supported build {Data.Build}.");
         Data.Require(Encoding.ASCII.GetString(header, 32, 32).Split('\0')[0] == name && Data.U32(header, 8) == expected.Bytes,
@@ -210,8 +210,9 @@ public static class Installer
         else
         {
             Data.Require(File.Exists(Path.Combine(game, "ui.map")) && File.Exists(hudPath),
-                "Prepare the game files first. Launcher-only updates need an existing installation.");
+                "Prepare the Xbox game files first. Updating the launcher or adding PC maps requires an existing Xbox installation.");
         }
+        var pcFiles = PcMaps.Inspect(options.PcMapsFolder, destination, ct, text => Report(text, 0));
         Directory.CreateDirectory(game);
         // Only one setup process may alter this output at once.
         using var destinationLock = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None, 1, FileOptions.DeleteOnClose);
@@ -226,6 +227,7 @@ public static class Installer
         }
         // Conservative space check retains existing data until each replacement is verified.
         long required = pending.Sum(n => Data.Catalog[n].Bytes) + 128 * (long)Data.Chunk;
+        required += pcFiles.Where(f => !File.Exists(SafePath(destination, "halo-source/pc-retail/" + f.Name))).Sum(f => f.Bytes);
         // Every texture archive in the hash-verified 24-map catalog is below
         // 64 MiB. Reserve a complete replacement while retaining the old file.
         var texturePending = names.Where(n => pending.Contains(n) || !Textures.Current(
@@ -292,6 +294,7 @@ public static class Installer
         }
         ct.ThrowIfCancellationRequested();
         Report("Installing the game launcher…", 97);
+        PcMaps.Install(pcFiles, destination, ct, text => Report(text, 97));
         if (hud != null) AtomicWrite(hudPath, hud);
         if (loading != null) AtomicWrite(loadingPath, loading);
         AtomicWrite(launcher, executable);
@@ -302,6 +305,6 @@ public static class Installer
             AtomicWrite(manifestPath, JsonSerializer.SerializeToUtf8Bytes(new { SetupVersion = 1, MapBuild = Data.Build,
                 Maps = names, LauncherSha256 = Data.Hash(executable), DspPresent = dspPresent }, new JsonSerializerOptions { WriteIndented = true }));
         Report("Ready to play", 100);
-        return new(names.Count, pending.Count, names.Count - pending.Count, dspPresent, destination);
+        return new(names.Count, pending.Count, names.Count - pending.Count, dspPresent, destination, pcFiles.Count);
     }
 }

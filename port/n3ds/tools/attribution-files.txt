@@ -92,3 +92,5 @@ source/sound/sound_manager.c
 source/structures/structure_visibility.c
 source/structures/structures.c
 port/n3ds/include/engine_map_format.h
+port/n3ds/setup/Core/PcMaps.cs
+port/n3ds/setup/Tests/PcMapsTests.cs

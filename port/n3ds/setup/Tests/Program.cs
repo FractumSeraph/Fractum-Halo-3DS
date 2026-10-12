@@ -107,6 +107,7 @@ string root = Path.Combine(Path.GetTempPath(), "halo-setup-tests-" + Guid.NewGui
 Directory.CreateDirectory(root);
 try
 {
+    PcMapsTests.Run(root);
     ExpectFailure("path traversal", () => Installer.SafePath(root, "../escape"));
     string legacyLauncher = Path.Combine(root, "3ds", "HaloSourceEngine", "HaloSourceEngine.3dsx");
     Directory.CreateDirectory(Path.GetDirectoryName(legacyLauncher)!);

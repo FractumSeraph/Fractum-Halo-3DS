@@ -98,6 +98,7 @@ static class Tests
     }
     static void Safety(string root)
     {
+        PcMapsTests.Run(root);
         Check(Data.Catalog.Count==24,"embedded catalog loads");
         Reject("path traversal",delegate { Installer.SafePath(root,"../escape"); });
         Reject("sibling prefix escape",delegate { Installer.SafePath(root,"../"+Path.GetFileName(root)+"-other/file"); });

@@ -8,7 +8,7 @@ public sealed class SetupException(string message) : Exception(message);
 public sealed record MapInfo(string Title, long Bytes, string Sha256, long SourceBytes,
     string SourceSha256, Dictionary<string, string> Sidecars);
 public sealed record SetupProgress(string Message, double Percent);
-public sealed record SetupResult(int Maps, int Prepared, int AlreadyCorrect, bool DspPresent, string Destination);
+public sealed record SetupResult(int Maps, int Prepared, int AlreadyCorrect, bool DspPresent, string Destination, int PcFiles = 0);
 
 public static class Data
 {

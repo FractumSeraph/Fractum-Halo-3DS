@@ -261,3 +261,13 @@ port/n3ds/preview/engine_pc_preview.c|preview_request
 port/n3ds/preview/engine_pc_preview.c|n3ds_preview_loading
 port/n3ds/preview/halo_cache_reader.c|halo_cache_read_chunks
 port/n3ds/tests/preview_reader_test.c|cancel_after_chunk
+port/n3ds/setup/Core/PcMaps.cs|PcMapFile
+port/n3ds/setup/Core/PcMaps.cs|PcMaps
+port/n3ds/setup/Core/PcMaps.cs|Inspect
+port/n3ds/setup/Core/PcMaps.cs|Check
+port/n3ds/setup/Core/PcMaps.cs|Install
+port/n3ds/setup/Tests/PcMapsTests.cs|PcMapsTests
+port/n3ds/setup/Tests/PcMapsTests.cs|Check
+port/n3ds/setup/Tests/PcMapsTests.cs|Reject
+port/n3ds/setup/Tests/PcMapsTests.cs|Fixture
+port/n3ds/setup/Tests/PcMapsTests.cs|Run

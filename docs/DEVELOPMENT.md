@@ -275,6 +275,27 @@ tests and self-contained Windows/Linux/macOS packaging. It requires .NET SDK 10
 for development, without the Windows UI workloads. Run both `Tests` and
 `Cli.Tests` after changing shared setup code.
 
+The integration GUI builds (1.18.1) can optionally copy an installed retail Halo PC
+`maps` folder, or a game folder containing `maps`, through `Core/PcMaps.cs`.
+Both Windows interfaces use the same native C# importer; no PowerShell or external
+extractor is needed for this folder path. PC ISO extraction remains available in
+the separate Unified/PC scripts. The general cross-platform CLI is unchanged.
+
+A fresh installation still needs Xbox data. The optional PC import copies the
+supported retail v7 multiplayer maps plus `ui.map`, `bitmaps.map`, `sounds.map`
+and optional `loc.map` to `halo-source/pc-retail`. It checks headers, names and
+bounds, then hashes each source and verifies its copied bytes. These checks do
+not certify that every supplied PC map is an unmodified retail asset. No PC game
+data or executables are bundled. Xbox files and saves are kept; identical PC
+files are skipped and conflicting installed PC files are rejected. Cancellation
+removes the active partial copy; rerunning completes any remaining files.
+
+The single EXEs built for this integration include the unified game launcher.
+When packaging locally, pass `build/integration-unified/Halo3DS.3dsx` as
+`-GameBuild` to retain PC and Xbox support. An Xbox-only build override cannot
+use the optional PC data. `Tests/PcMapsTests.cs` runs on both installer runtimes;
+run the core tests, CLI tests and Windows 7 safety/package tests after changes.
+
 ### Visual Studio
 
 Open **File > Open > Project/Solution** and choose the solution for the edition

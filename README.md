@@ -40,13 +40,19 @@ folder, keep its matching `default.xbe` in the parent folder. If setup can't
 find it, select it under **Additional options > HUD compatibility file**.
 No debug executable is needed.
 
+The updated integration setup tools also have an optional **PC multiplayer maps**
+folder field. Choose the `maps` folder from your installed retail Halo PC game
+(not Custom Edition or MCC). To add it to an existing SD installation, leave
+the Xbox source empty. PC files are optional; Xbox-only setup still works.
+
 If setup asks you to dump DSP firmware for sound, do this once on your console:
 press **L + D-pad Down + SELECT**, then choose
 **Miscellaneous options > Dump DSP firmware** in Rosalina.
 
 ## Updating
 
-In the setup tool, select your SD card and choose **Update the launcher only**.
+In the updated setup tool, select your SD card and choose **Keep installed Xbox maps**
+(**Update the launcher only** in older tools). Leave the PC folder blank for a launcher-only update.
 You can select a newer `Halo3DS.3dsx` under **Additional options** if you want
 to keep using an older setup tool.
 
