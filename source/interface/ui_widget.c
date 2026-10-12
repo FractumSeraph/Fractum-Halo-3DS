@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 UI_WIDGET.C
 
@@ -653,6 +654,9 @@ struct widget_instance;
 #include "interface/progress_bar.h"
 #include "interface/ui_widget_game_data_input_functions.h"
 #include "interface/ui_widget_event_handler_functions.h"
+#ifdef HALO_N3DS
+#include "engine_controls.h"
+#endif
 #include "interface/ui_widget_text_search_and_replace_functions.h"
 #include "interface/virtual_keyboard.h"
 #include "main/main.h"
@@ -2077,6 +2081,26 @@ boolean ui_widgets_active(
 	return result;
 }
 
+#ifdef HALO_N3DS
+/* Kevin Boggs: n3ds_ui_map_browser_selection - follow only the active focus chain. */
+int n3ds_ui_map_browser_selection(void)
+{
+    extern short n3ds_ui_multiplayer_map_original_index(short);
+    if(!widget_globals.initialized || !we_are_at_the_main_menu)return -1;
+    struct widget_instance *widget=widget_globals.active_widgets[0];
+    for(int depth=0;widget && depth<32;++depth,widget=widget->focused_child){
+        if(!widget->visible)return -1;
+        const char *path=tag_get_name(widget->definition_tag_index);
+        if(widget->type==_ui_widget_type_spinner_list && path &&
+           strstr(path,"\\mp_map_select\\mp_map_select_list") &&
+           widget->parameters.list.selected_index>=0 &&
+           widget->parameters.list.selected_index<widget->parameters.list.number_of_items)
+            return n3ds_ui_multiplayer_map_original_index((short)widget->parameters.list.selected_index);
+    }
+    return -1;
+}
+#endif
+
 boolean main_menu_screen_is_active(
 	void)
 {
@@ -2850,6 +2874,14 @@ int n3ds_ui_pause_menu_active(void)
         !strcmp(name,"ui\\shell\\solo_game\\pause_game\\pause_game_split_screen") ||
         !strcmp(name,"ui\\shell\\multiplayer_game\\pause_game\\1p_pause_game"));
 }
+/* Kevin Boggs: n3ds_ui_difficulty_menu_active - New3DS integration. */
+int n3ds_ui_difficulty_menu_active(void)
+{
+    struct widget_instance *root=widget_globals.active_widgets[0];
+    if(!root || root->widget_is_error_dialog || root->definition_tag_index==NONE)return 0;
+    const char *name=tag_get_name(root->definition_tag_index);
+    return name && !strcmp(name,"ui\\shell\\main_menu\\difficulty_select\\difficulty_select_list_screen");
+}
 #endif
 void ui_widgets_pop_stack(
 	short local_player_index)
@@ -3165,6 +3197,9 @@ static void event_handler_dispatch(
 	struct ui_widget_event_handler_reference *handler,
 	boolean *calling_widget_deleted)
 {
+#ifdef HALO_N3DS
+	int local_options_were_open=n3ds_local_match_menu_active();
+#endif
 	boolean widget_deleted = FALSE;
 	boolean success = TRUE;
 	boolean function_failed = FALSE;
@@ -3192,6 +3227,13 @@ static void event_handler_dispatch(
 	}
 	else
 	{
+#ifdef HALO_N3DS
+		/* A native match modal replaces this event's Xbox pregame transition.
+		 * Keep the calling widgets alive for Back; no fake deletion flag. */
+		if(!local_options_were_open && n3ds_local_match_menu_active()) {
+			*calling_widget_deleted=widget_deleted;return;
+		}
+#endif
 		if (TEST_FLAG(handler->flags, _event_handler_give_focus_to_widget_bit) &&
 			!widget_deleted)
 		{

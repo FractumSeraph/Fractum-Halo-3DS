@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 #include <3ds.h>
 #include <citro3d.h>
 #include <string.h>
@@ -9,7 +10,9 @@
 #include "engine_textures.h"
 #include "engine_widget_shader.h"
 #include "engine_effect_packed_shader.h"
-enum { WIDGET_VERTICES=6144, WIDGET_BLOCKS=4 };
+/* The optional PC nav preview can stream 9,091 walkable triangles over
+ * several bounded draws. Extra blocks allocate lazily only when it is shown. */
+enum { WIDGET_VERTICES=6144, WIDGET_BLOCKS=8 };
 static DVLB_s *shader;
 static shaderProgram_s program;
 static int ready,matrix_location;
@@ -237,6 +240,21 @@ static int effect_draw(const void *input,unsigned int count,
     C3D_TexEnvBufUpdate(C3D_Both,0);C3D_TexEnvBufColor(0);
     for(unsigned int i=0;i<6;++i) C3D_TexEnvInit(C3D_GetTexEnv(i));
     C3D_TexEnv *env=C3D_GetTexEnv(0);
+    if(geometry_flags&(1u<<8)) {
+        /* The authored dark decal maps encode a neutral background at alpha
+         * 128. Convert only values below that midpoint into a dark mask. */
+        C3D_TexEnvColor(env,0x80808080U);
+        C3D_TexEnvSrc(env,C3D_Alpha,GPU_CONSTANT,GPU_TEXTURE0,GPU_CONSTANT);
+        C3D_TexEnvFunc(env,C3D_Alpha,GPU_SUBTRACT);
+        C3D_TexEnvScale(env,C3D_Alpha,GPU_TEVSCALE_4);
+        C3D_TexEnvSrc(env,C3D_RGB,GPU_PRIMARY_COLOR,GPU_CONSTANT,GPU_CONSTANT);
+        C3D_TexEnvFunc(env,C3D_RGB,GPU_REPLACE);
+        env=C3D_GetTexEnv(1);
+        C3D_TexEnvSrc(env,C3D_Alpha,GPU_PREVIOUS,GPU_PRIMARY_COLOR,GPU_CONSTANT);
+        C3D_TexEnvFunc(env,C3D_Alpha,GPU_MODULATE);
+        C3D_TexEnvSrc(env,C3D_RGB,GPU_PREVIOUS,GPU_CONSTANT,GPU_CONSTANT);
+        C3D_TexEnvFunc(env,C3D_RGB,GPU_REPLACE);
+    } else {
     C3D_TexEnvSrc(env,C3D_Alpha,GPU_PRIMARY_COLOR,GPU_TEXTURE0,GPU_CONSTANT);
     C3D_TexEnvFunc(env,C3D_Alpha,GPU_REPLACE);
     /* Original effect tint: linear C*T, or nonlinear C*T+(1-C)*T^4.
@@ -264,6 +282,15 @@ static int effect_draw(const void *input,unsigned int count,
             C3D_TexEnvOpRgb(env,GPU_TEVOP_RGB_ONE_MINUS_SRC_ALPHA,GPU_TEVOP_RGB_SRC_COLOR,GPU_TEVOP_RGB_SRC_COLOR);
             C3D_TexEnvFunc(env,C3D_RGB,GPU_MULTIPLY_ADD);
         }
+    }
+    if(blend==NATIVE_BLEND_ADD) {
+        /* Additive framebuffer factors ignore source alpha. Apply the authored
+         * per-particle fade to RGB after the texture-alpha stage instead. */
+        env=C3D_GetTexEnv(4);
+        C3D_TexEnvSrc(env,C3D_RGB,GPU_PREVIOUS,GPU_PRIMARY_COLOR,GPU_CONSTANT);
+        C3D_TexEnvOpRgb(env,GPU_TEVOP_RGB_SRC_COLOR,GPU_TEVOP_RGB_SRC_ALPHA,GPU_TEVOP_RGB_SRC_COLOR);
+        C3D_TexEnvFunc(env,C3D_RGB,GPU_MODULATE);
+    }
     }
     C3D_CullFace(GPU_CULL_NONE);C3D_AlphaTest(false,GPU_ALWAYS,0);n3ds_gpu_framebuffer_blend(blend);
     } else ++effect_state_reused;

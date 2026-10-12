@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 UI_WIDGET_GAME_DATA_INPUT_FUNCTIONS.C
 
@@ -342,6 +343,8 @@ symbols in this file:
 #ifdef HALO_N3DS
 #include "interface/ui_widget_event_handler_functions.h"
 #include "engine_network.h"
+#include "engine_map_format.h"
+int n3ds_pc_tags_active(void);
 #endif
 #include "interface/ui_widget_game_data_input_functions.h"
 #include "interface/hud_messaging.h"
@@ -864,6 +867,13 @@ void difficulty_select_menu_update_extended_description(
 	struct widget_instance *child;
 	short index;
 
+#ifdef HALO_N3DS
+	/* The PC difficulty screen supplies its own description layout. The Xbox
+	 * two-child animation callback must not interpret that different widget. */
+	if (n3ds_pc_tags_active() && description_definition->child_count != 2)
+		return;
+#endif
+
 	match_vassert(
 		"c:\\halo\\SOURCE\\interface\\ui_widget_game_data_input_functions.c",
 		0x237,
@@ -1175,9 +1185,17 @@ void server_list_menu_update(
 				teams_text->parameters.text_box.string_list_index =
 					(server->has_teams == TRUE) ? 12 : 13;
 #ifdef HALO_N3DS
+				int pc=n3ds_pc_map_selection(map_name);
 				int campaign=n3ds_network_campaign_level(map_name);
 				map_bitmap->visible=TRUE;
-				if(campaign>=0)
+				if(pc>=0)
+				{
+					map_bitmap->visible=n3ds_pc_map_thumbnails[pc]>=0;
+					map_bitmap->animation.current_frame_index=MAX(0,n3ds_pc_map_thumbnails[pc]);
+					n3ds_widget_set_ascii(map_name_text,n3ds_pc_map_labels[pc]);
+					if(ruleset_text->parameters.text_box.text) ruleset_text->parameters.text_box.text[0]=0;
+				}
+				else if(campaign>=0)
 				{
 					map_bitmap->animation.current_frame_index=campaign;
 					n3ds_widget_set_ascii(map_name_text,n3ds_network_campaign_label(campaign));
@@ -2378,6 +2396,8 @@ void multiplayer_game_set_text_box_for_map_name(
 	{
 		map_name = game->map_name;
 #ifdef HALO_N3DS
+        int pc=n3ds_pc_map_selection(map_name);
+        if(pc>=0){n3ds_widget_set_ascii(widget,n3ds_pc_map_labels[pc]);return;}
 		int campaign=n3ds_network_campaign_level(map_name);
 		if(campaign>=0)
 		{
@@ -2654,6 +2674,12 @@ void multiplayer_game_set_bitmap_for_map(
 	if (game)
 	{
 		map_name = game->map_name;
+#ifdef HALO_N3DS
+        int pc=n3ds_pc_map_selection(map_name);
+        widget->visible=pc<0 || n3ds_pc_map_thumbnails[pc]>=0;
+        if(pc>=0){widget->animation.current_frame_index=MAX(0,n3ds_pc_map_thumbnails[pc]);return;}
+#endif
+
 	if (strstr(map_name, "beavercreek"))
 	{
 		widget->animation.current_frame_index = 0;
@@ -4220,7 +4246,15 @@ void mp_level_select_list_update_displayed_items(
 		short original_index=(short)displayed_item_indices[item_index];
 #ifdef HALO_N3DS
 		original_index=n3ds_ui_multiplayer_map_original_index(original_index);
-		if(original_index>=13)
+        if(original_index>=32 && original_index<51){
+            int pc=original_index-32;
+            n3ds_widget_set_ascii(map_name,n3ds_pc_map_labels[pc]);
+            n3ds_widget_set_ascii(map_description,"All players need this PC map");
+            map_bitmap->visible=n3ds_pc_map_thumbnails[pc]>=0;
+            map_bitmap->animation.current_frame_index=MAX(0,n3ds_pc_map_thumbnails[pc]);
+            continue;
+        }
+		if(original_index>=13 && original_index<23)
 		{
 			n3ds_widget_set_ascii(map_name,n3ds_network_campaign_label(original_index-13));
 			n3ds_widget_set_ascii(map_description,"2-player co-op");

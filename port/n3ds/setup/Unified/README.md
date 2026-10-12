@@ -1,0 +1,141 @@
+# Halo3DS unified installer
+
+This installer prepares owner supplied Halo: Combat Evolved Xbox and PC retail
+data for one New 3DS launcher. It installs Xbox campaign and multiplayer maps,
+PC retail multiplayer maps, and `3ds/Halo3DS/Halo3DS.3dsx`. The package contains
+no disc image, map, sound, HUD, XBE, DSP firmware, or extracted game asset.
+
+**At a glance:** extract the ZIP on your Windows PC, run the command below
+with your own game sources and SD card root, check its `-WhatIf` result, then
+repeat without `-WhatIf` to install. The installer prints three steps so you
+can see which source it is checking. If a check fails, correct that source and
+rerun it; a failed preflight does not write to the SD card.
+
+Use the supported English North American Xbox retail XISO and PC retail v7
+maps. For the PC source, give either its ISO or a complete extracted `maps`
+folder containing `ui.map`, `bitmaps.map`, `sounds.map`, and `bloodgulch.map`.
+If you select only some PC game maps, Blood Gulch is included because the
+optional campaign Rocket Warthog draws its assets from that owner supplied map.
+
+Extract the package to a normal PC folder and run a dry run first:
+
+```powershell
+.\Install-Halo3DS-Unified.ps1 -XboxIso 'C:\path\Halo Xbox.iso' -PcIso 'C:\path\Halo CE PC.iso' -SdRoot 'D:\' -WhatIf
+```
+
+For an already extracted PC `maps` folder:
+
+```powershell
+.\Install-Halo3DS-Unified.ps1 -XboxIso 'C:\path\Halo Xbox.iso' -PcMapsFolder 'C:\path\Halo CE\maps' -SdRoot 'D:\' -WhatIf
+```
+
+When validation succeeds, repeat without `-WhatIf`. Choose the SD card root,
+not its `3ds` folder. The script does not format the card. It verifies source
+formats and hashes, checks destination conflicts, and verifies each copy.
+Different existing game data is preserved. If the Xbox source lacks supported
+HUD data, pass `-XboxCompatibilityFile` pointing to a verified HUD file from
+your own prior installation. ISO extraction needs 7-Zip; pass `-SevenZipPath`
+if it is not found. The Xbox converter uses .NET Framework 3.5.
+
+The Xbox main menu starts Campaign and Xbox multiplayer. After selecting a local
+multiplayer gametype, the bottom screen offers bots, difficulty, weapons and
+vehicles. Choose **Start** to play or **Back** to return to gametype selection.
+No bot configuration file is required. These options are for local matches only.
+
+While browsing Xbox multiplayer maps, the lower screen shows a 3D preview
+from the installed map. Drag to rotate, use L/R to zoom, or tap the view,
+backface and navigation-overlay buttons. PC maps in the original browser
+use the same controls. Preview data is released when leaving the map browser;
+no new game assets or setup conversion are required.
+Press **SELECT** for
+PC Local Multiplayer. The lower screen is the map preview: tap the map name
+to advance through maps, or select it with the D-pad and press left/right.
+Mode, bot count, difficulty, and on New 3DS the PC texture option appear on
+the top screen. Use D-pad up/down to select an option and left/right to change
+it. **PC textures** switches between standard 64-pixel textures and the
+experimental 128-pixel texture with mip. This choice saves immediately and
+applies when the map loads. Difficulty changes ordinary bot accuracy and firing
+rate. ChaoticSPARTAN1 and KodeBreaker16 each have an independent 50% chance
+per match when at least two bot slots are available; both can appear together.
+KodeBreaker16 has teal armor and a 25% chance of 60 seconds of active
+camouflage on each spawn. ChaoticSPARTAN1 has green armor and a 10% chance.
+Press **X** or tap
+**X: Gear** to choose a weapon set and vehicle set before the match. **Normal
+(PC map)** keeps each PC map's original pickups, including Flamethrower and
+Fuel Rod placements where the map has them. The extra **Flamethrowers** and
+**Fuel Rods** sets replace weapon pickups across the chosen PC map. **All PC
+vehicles** enables every vehicle type that the map places, including Rocket
+Warthog and Banshee where present. It also places two Banshees at clear sites
+on opposing sides of Danger Canyon, Ice Fields, and Timberland; their PC caches contain
+the Banshee asset. Other vehicle choices retain the original placements.
+The lower screen previews the selected map's geometry. Tap **VIEW** to cycle
+**Textured Lit**, **X-ray**, **Wireframe**, and **X-ray + Wireframe**. X-ray
+shows interiors through ceilings and walls; the combined view adds their
+edges. Textured Lit reads base textures from the installed PC maps. Tap
+**BACKS ON/OFF** to include or cull rear facing map surfaces, and **NAV ON/OFF**
+to show or hide the blue walkable-surface overlay. NAV starts off so the map
+textures remain visible. Death Island's water is shrunk in this menu preview;
+only its playable terrain sets the camera scale. Gephyrophobia opens on its
+central bridge. Infinity's NAV view excludes disconnected upper rim surfaces
+and follows the main walkable area. The gear page previews the
+selected weapon or vehicle as a textured blue hologram from that PC map, with
+three-point studio lighting that follows the turntable camera.
+Drag a preview to turn it, use **L/R** to zoom, or leave it idle for a slow
+turntable. VIEW, BACKS, and NAV respond when a touch begins on their buttons.
+
+`-BotCount`
+sets a default from 0 to 15. On the campaign difficulty screen, the bottom
+touch screen toggles **PC weapons and vehicles in campaign**. It starts ON for
+testing and persists until changed there. The added pickups are beside
+original pickups in c20, c40, and d20. A Rocket Warthog is added beside an
+original Warthog in b30. Original map files and placements are not edited.
+The Rocket Warthog needs PC Blood Gulch on the SD card; if those assets are
+unavailable, the Xbox mission still loads without the extra vehicle.
+
+On New 3DS, the same choice is available in Controller Settings as **PC high
+textures** to compare
+the experimental 128-pixel textures and 64-pixel mip with standard 64-pixel
+textures. Save the setting, then reload the PC map. It starts OFF; the high
+mode can take longer to load and may affect frame rate. Xbox maps and original
+3DS use their standard texture profile.
+
+During a solo PC match, hold **SELECT** for the game's original top-screen
+scoreboard. Hold the lower-right **SCORE** touch panel around the motion
+tracker for the expanded top-screen roster with score, kills, deaths, K/D,
+and earned multi-kill or streak medals. Both keep the lower touch controls
+visible. K/D treats zero deaths as one for display.
+The three other touch panels give press feedback but have no assigned action.
+Magazine weapons show loaded rounds and reserve ammo above their meters on
+the lower screen; energy weapons keep their original charge and heat meters.
+Controller Settings also offers separate **Swap X/Y** and **Swap A/B** options,
+**Show FPS** on the bottom screen, and **Decals**. Both face-button swaps and
+Decals start ON for new profiles; FPS starts OFF. The Xbox face layout preset
+is applied before the individual swaps, so turning on the preset and a swap
+for the same pair restores that pair's Nintendo positions. Existing profiles
+keep their other choices and receive Swap A/B ON when upgraded. Surface marks
+follow the lifetimes supplied by the game maps. After a local multiplayer
+match ends, tap **Return to Lobby** at the top of the bottom screen or press
+**B** to reopen the map, mode, and bot selector.
+
+One launcher replaces the normal Xbox setup launcher only after both sources
+pass preflight. The previous 3DSX is archived under
+`halo-source/launcher-backups/`. Saves and unrelated Homebrew Launcher folders
+are preserved. A failed install can be rerun after correcting its input. Keep
+the card connected until the script reports completion.
+
+The unified menu and optional campaign spawns were exercised in Azahar 2126.2.
+A six-bot Timberland match reached its postgame state on a New 3DS XL. A user
+reported that the newer Death Island build no longer crashed in a local match;
+the exact Scorpion firing sequence and latest previews still need a device
+retest. Busy
+combat scenes have not established a smooth 30 FPS. Keep a known good SD
+backup while testing and retain `halo-source-engine.log` when reporting a
+problem.
+
+`Halo3DS-Source.zip` contains the tracked source tree used for the launcher;
+`Xbox-Setup-Source.zip` contains the separate Xbox installer source.
+`LICENSING.md`, `LICENSE.md`, `LICENSE-KEVIN-MIT.md`, `THIRD-PARTY.md`, and
+`GPL-3.0.txt` explain the mixed-license package. The original project's CC0
+notice, Kevin Boggs's MIT notice for his original additions, and the GPLv3
+notice and corresponding source for the setup component remain separate.
+These notices do not grant rights to game assets.

@@ -1,5 +1,8 @@
+/* New3DS integration additions by Kevin Boggs. */
 #include <3ds.h>
 #include <citro3d.h>
+#include "engine_map_format.h"
+#include "engine_wireless.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,6 +27,7 @@
 #include "engine_chicago.h"
 #include "engine_glass.h"
 #include "engine_controls.h"
+#include "engine_pc_preview.h"
 void n3ds_log(const char *message);
 
 /* Temporary hardware diagnosis: retain the normal rendering path and flush
@@ -633,6 +637,7 @@ void n3ds_gpu_model_cache_release(void)
     /* Map transitions occur between frames. Retire every queued GPU reference
      * before releasing the cached blocks, including loading-overlay vertices. */
     if(frame_active || !n3ds_gpu_texture_barrier()) svcBreak(USERBREAK_PANIC);
+    n3ds_preview_dispose();
     for(unsigned int i=0;i<MODEL_BLOCKS;++i) linearFree(model_blocks[i].data);
     memset(model_blocks,0,sizeof(model_blocks));model_reserved=model_used=0;
     if(resident_hits || resident_misses) {
@@ -677,6 +682,7 @@ void n3ds_gpu_renderer_dispose(void)
     if(loading_art) n3ds_gpu_texture_destroy(loading_art);loading_art=NULL;loading_art_tried=0;}
     /* The caller must have submitted the current frame before freeing resources. */
     if (frame_active || !n3ds_gpu_texture_barrier()) svcBreak(USERBREAK_PANIC);
+    n3ds_preview_dispose();
     if(index_draws) {
         char message[128];snprintf(message,sizeof(message),"INDEX TRANSFERS: draws=%u frame_flushes=%u",index_draws,index_flushes);
         n3ds_log(message);index_draws=index_flushes=0;
@@ -892,6 +898,7 @@ int n3ds_gpu_frame_begin(void)
         svcSleepThread(250000LL);
     }
     BOOT_TRACE("frame begin: GPU queue ready");
+    n3ds_preview_update();
     /* Queue has completed: read the previous submission, not an in-flight
      * timer. Queue time includes transfers; it is not a GPU busy percentage.
      * Read CPU time saved at previous FrameEnd because FrameBegin resets it. */
@@ -1036,7 +1043,8 @@ static void window_state_begin(const struct native_render_camera *camera)
     C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD, GPU_ONE, GPU_ZERO, GPU_ONE, GPU_ZERO);
     n3ds_gpu_model_stencil_apply();
     n3ds_gpu_texture_bind(1, NULL); n3ds_gpu_texture_bind(2, NULL);
-    if (!camera->suppress_clear) C3D_RenderTargetClear(world_target(), C3D_CLEAR_ALL, world_clear_color(camera->clear_color), 0);
+    if (!camera->suppress_clear) C3D_RenderTargetClear(bottom_selected?bottom_target:world_target(),
+        C3D_CLEAR_ALL,bottom_selected?camera->clear_color:world_clear_color(camera->clear_color),0);
     world_target_bind();
     C3D_SetScissor(diagnostic_mode==1 && !bottom_selected?GPU_SCISSOR_NORMAL:GPU_SCISSOR_DISABLE,0,0,120,200);
 }
@@ -1044,7 +1052,8 @@ void n3ds_gpu_window_begin(const struct native_render_camera *camera)
 {
     C3D_Mtx projection, view, combined;
     window_state_begin(camera);
-    Mtx_PerspTilt(&projection, camera->vertical_fov, 400.f/240.f, camera->near_clip, camera->far_clip, false);
+    Mtx_PerspTilt(&projection, camera->vertical_fov, (bottom_selected?320.f:400.f)/240.f,
+        camera->near_clip, camera->far_clip, false);
     /* The camera already carries its eye translation; only shift the frustum
      * here, keeping a point 1.5 world units away at zero disparity. */
     projection.r[1].z=-projection.r[1].x*eye_offset/1.5f;
@@ -1069,6 +1078,34 @@ void n3ds_gpu_world_state_restore(void)
 }
 int n3ds_gpu_geometry_draw(const struct native_render_vertex *vertices, const unsigned short *indices, unsigned int count)
 { return n3ds_gpu_indexed_draw(vertices,indices,count,sizeof(*vertices),3,0x210); }
+int n3ds_gpu_preview_material_draw(const struct native_render_vertex *vertices,
+    const unsigned short *indices,unsigned int count,int translucent,int depth_test,int cull_backfaces)
+{
+    if(!frame_active || !n3ds_gpu_texture_bound(0))return 0;
+    n3ds_gpu_world_state_restore();
+    C3D_CullFace(cull_backfaces?GPU_CULL_FRONT_CCW:GPU_CULL_NONE);
+    C3D_DepthTest(depth_test,GPU_GEQUAL,translucent?GPU_WRITE_COLOR & ~GPU_WRITE_ALPHA:GPU_WRITE_ALL);
+    if(translucent){
+        C3D_TexEnv *env=C3D_GetTexEnv(0);
+        C3D_TexEnvSrc(env,C3D_Alpha,GPU_TEXTURE0,GPU_PRIMARY_COLOR,GPU_PRIMARY_COLOR);
+        C3D_TexEnvFunc(env,C3D_Alpha,GPU_REPLACE);
+        n3ds_gpu_framebuffer_blend(NATIVE_BLEND_ALPHA);
+    }
+    int result=n3ds_gpu_geometry_draw(vertices,indices,count);
+    n3ds_gpu_world_state_restore();
+    return result;
+}
+int n3ds_gpu_preview_depth_draw(const struct native_render_vertex *vertices,
+    const unsigned short *indices,unsigned int count,int cull_backfaces)
+{
+    if(!frame_active)return 0;
+    n3ds_gpu_world_state_restore();
+    C3D_CullFace(cull_backfaces?GPU_CULL_FRONT_CCW:GPU_CULL_NONE);
+    C3D_AlphaTest(false,GPU_ALWAYS,0);
+    C3D_DepthTest(true,GPU_GEQUAL,GPU_WRITE_DEPTH);
+    int result=n3ds_gpu_geometry_draw(vertices,indices,count);
+    n3ds_gpu_world_state_restore();return result;
+}
 static int model_transform_draw(const void *vertices,const unsigned short *indices,unsigned int count,
     const float *rows,unsigned int nodes,const float uv[2],int sky,int decal,int two_sided,int skinned,
     const struct native_model_material *material)
@@ -2480,8 +2517,24 @@ static void loading_text(void)
 void n3ds_gpu_campaign_help(void)
 {
     struct native_control_settings s;n3ds_controls_get(&s);
-    const char *lines[]={"At difficulty selection:",s.xbox_buttons?"B: Start mission   R + B: Resume save":"A: Start mission   R + A: Resume save"};
+#ifdef HALO_N3DS_UNIFIED_UI
+    const char *lines[]={"Campaign uses the Xbox retail maps.",(s.xbox_buttons^s.swap_ab)?"B: Start mission   R + B: Resume save":"A: Start mission   R + A: Resume save","SELECT: PC maps, modes and bots"};
+    n3ds_gpu_hud_screen(1);status_text(lines,n3ds_pc_maps_present() && !n3ds_wireless_active()?3:2,1);
+    {
+        extern int n3ds_ui_difficulty_menu_active(void);
+        extern int n3ds_campaign_network_blocked(void);
+        extern int n3ds_campaign_extras_enabled(void);
+        extern int n3ds_campaign_options_save_error(void);
+        if(n3ds_ui_difficulty_menu_active() && n3ds_pc_maps_present() && !n3ds_campaign_network_blocked()) {
+            controls_quad(16,94,288,64,0xff674826,0);
+            controls_text(28,108,n3ds_campaign_extras_enabled()?"PC campaign extras: ON":"PC campaign extras: OFF",0xffffffff,0);
+            controls_text(28,128,n3ds_campaign_options_save_error()?"Save failed - tap to retry":"Tap here before mission to switch",0xffe9d6aa,0);
+        }
+    }
+#else
+    const char *lines[]={"At difficulty selection:",(s.xbox_buttons^s.swap_ab)?"B: Start mission   R + B: Resume save":"A: Start mission   R + A: Resume save"};
     n3ds_gpu_hud_screen(1);status_text(lines,2,1);
+#endif
     n3ds_gpu_hud_screen(0);n3ds_gpu_world_state_restore();
 }
 
@@ -2686,6 +2739,27 @@ int n3ds_gpu_readback(unsigned int *pixels,unsigned int count)
     return 1;
 }
 
+#if defined(HALO_N3DS_TEXTURE_CLIP) || defined(HALO_N3DS_TEXTURE_CLIP_DEATH)
+/* Kevin Boggs: n3ds_gpu_texture_clip_frame - New3DS integration. */
+int n3ds_gpu_texture_clip_frame(unsigned int game_tick)
+{
+    if(n3ds_gpu_screen_test())return 0;
+    char path[96];
+    snprintf(path,sizeof(path),"sdmc:/halo-source/texture-clip/frame%04u.rgba",game_tick);
+    FILE *source=fopen("sdmc:/halo-native-target.rgba","rb");
+    FILE *file=fopen(path,"wb");
+    if(!source || !file){if(source)fclose(source);if(file)fclose(file);return 0;}
+    unsigned char bytes[4096];size_t count,total=0;int ok=1;
+    while((count=fread(bytes,1,sizeof(bytes),source))>0){
+        if(fwrite(bytes,1,count,file)!=count){ok=0;break;}
+        total+=count;
+    }
+    ok=ok && !ferror(source) && total==240*400*4;
+    ok=!fclose(source) && ok;
+    ok=!fclose(file) && ok;
+    return ok;
+}
+#endif
 int n3ds_gpu_screen_test(void)
 {
     char capture_memory[160];

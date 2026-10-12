@@ -1,3 +1,4 @@
+// New3DS integration additions by Kevin Boggs.
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
@@ -6,7 +7,7 @@ using System.Text.Json;
 namespace HaloSetup;
 
 public sealed record SetupOptions(string Source, string Destination, string Executable, string? CompatibilityFile = null,
-    bool LauncherOnly = false);
+    bool LauncherOnly = false, string? PcMapsFolder = null);
 
 public static class Installer
 {
@@ -35,18 +36,21 @@ public static class Installer
     public static string SafePath(string root, string relative)
     {
         root = Path.TrimEndingDirectorySeparator(NormalizeDestination(root));
+        // Unix paths may differ only in case. Case-insensitive containment there
+        // could accept ../CARD/file as a child of /media/card.
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         string result = Path.GetFullPath(Path.Combine(root, relative));
         // TrimEndingDirectorySeparator deliberately preserves drive roots (H:\).
         string prefix = Path.EndsInDirectorySeparator(root) ? root : root + Path.DirectorySeparatorChar;
         Data.Require(!Path.IsPathRooted(relative) &&
-            !result.Equals(root, StringComparison.OrdinalIgnoreCase) &&
-            result.StartsWith(prefix, StringComparison.OrdinalIgnoreCase),
+            !result.Equals(root, comparison) &&
+            result.StartsWith(prefix, comparison),
             "Invalid destination path.");
         // The user explicitly chose this root. Its own mapping and ancestors
         // may legitimately be links (Wine drives, redirected home folders).
         // Only descendants can redirect an installer-owned path elsewhere.
         for (string? current = result; current != null &&
-            !current.Equals(root, StringComparison.OrdinalIgnoreCase); current = Path.GetDirectoryName(current))
+            !current.Equals(root, comparison); current = Path.GetDirectoryName(current))
         {
             try
             {
@@ -56,6 +60,9 @@ public static class Installer
             }
             catch (FileNotFoundException) { } // Setup will create this child.
             catch (DirectoryNotFoundException) { }
+            // A disconnected card reader may retain its drive letter. The
+            // caller checks Directory.Exists(root) before any installation.
+            catch (IOException) when (!Directory.Exists(Path.GetPathRoot(current)!)) { }
         }
         return result;
     }
@@ -65,7 +72,7 @@ public static class Installer
         byte[] header = entry.Head(2048);
         Data.Require(header.Length == 2048 && header.AsSpan(0, 4).SequenceEqual("daeh"u8) &&
             header.AsSpan(2044, 4).SequenceEqual("toof"u8) && Data.U32(header, 4) == 5,
-            $"{name}.map is not an original Xbox Halo map. PC/MCC maps are not supported.");
+            $"{name}.map is not an original Xbox Halo map. Select PC maps in the optional PC folder field instead. MCC is not supported.");
         string build = Encoding.ASCII.GetString(header, 64, 32).Split('\0')[0];
         Data.Require(build == Data.Build, $"{name}.map is from an unsupported release. Use the English North American retail release of Halo: Combat Evolved for the original Xbox. No prototype or debug version is needed. Technical details: found build {build}; supported build {Data.Build}.");
         Data.Require(Encoding.ASCII.GetString(header, 32, 32).Split('\0')[0] == name && Data.U32(header, 8) == expected.Bytes,
@@ -156,6 +163,7 @@ public static class Installer
 
     public static SetupResult Run(SetupOptions options, IProgress<SetupProgress>? progress = null, CancellationToken ct = default)
     {
+        ct.ThrowIfCancellationRequested();
         void Report(string message, double value) => progress?.Report(new(message, value));
         string destination = NormalizeDestination(options.Destination);
         Data.Require(Directory.Exists(destination), "Choose an existing SD card root or output folder.");
@@ -168,7 +176,7 @@ public static class Installer
             Data.Require(drive.DriveFormat.Equals("FAT32", StringComparison.OrdinalIgnoreCase),
                 "The 3DS needs a FAT32 SD card. This tool does not format or erase cards. You can also prepare a normal output folder and copy it to a FAT32 card later.");
         }
-        Data.Require(File.Exists(options.Executable), "Keep Halo3DS.3dsx beside the setup app, or select it under Additional options → Game build.");
+        Data.Require(File.Exists(options.Executable), "Select an existing Halo3DS.3dsx game build. Download it from the Halo3DS release or use your own build.");
         var exeInfo = new FileInfo(options.Executable);
         Data.Require(exeInfo.Length is > 32 and < 32 * Data.Chunk, "The selected game build has an invalid size.");
         byte[] executable = File.ReadAllBytes(options.Executable);
@@ -202,8 +210,9 @@ public static class Installer
         else
         {
             Data.Require(File.Exists(Path.Combine(game, "ui.map")) && File.Exists(hudPath),
-                "Prepare the game files first. Launcher-only updates need an existing installation.");
+                "Prepare the Xbox game files first. Updating the launcher or adding PC maps requires an existing Xbox installation.");
         }
+        var pcFiles = PcMaps.Inspect(options.PcMapsFolder, destination, ct, text => Report(text, 0));
         Directory.CreateDirectory(game);
         // Only one setup process may alter this output at once.
         using var destinationLock = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None, 1, FileOptions.DeleteOnClose);
@@ -218,12 +227,16 @@ public static class Installer
         }
         // Conservative space check retains existing data until each replacement is verified.
         long required = pending.Sum(n => Data.Catalog[n].Bytes) + 128 * (long)Data.Chunk;
+        required += pcFiles.Where(f => !File.Exists(SafePath(destination, "halo-source/pc-retail/" + f.Name))).Sum(f => f.Bytes);
         // Every texture archive in the hash-verified 24-map catalog is below
         // 64 MiB. Reserve a complete replacement while retaining the old file.
         var texturePending = names.Where(n => pending.Contains(n) || !Textures.Current(
             SafePath(game, n + ".map"), SafePath(game, n + ".ntx"), ct)).ToList();
         required += texturePending.Count * 64 * (long)Data.Chunk;
-        Data.Require(new DriveInfo(Path.GetPathRoot(destination)!).AvailableFreeSpace >= required,
+        // On Unix, stat the destination filesystem, including a mounted SD card,
+        // rather than the filesystem containing '/'. Windows uses the drive root.
+        string spacePath = OperatingSystem.IsWindows() ? Path.GetPathRoot(destination)! : destination;
+        Data.Require(new DriveInfo(spacePath).AvailableFreeSpace >= required,
             $"Please free at least {required / 1073741824.0:F1} GB on the destination and try again. Existing maps stay in place until replacements are verified.");
         for (int index = 0; index < pending.Count; index++)
         {
@@ -281,6 +294,7 @@ public static class Installer
         }
         ct.ThrowIfCancellationRequested();
         Report("Installing the game launcher…", 97);
+        PcMaps.Install(pcFiles, destination, ct, text => Report(text, 97));
         if (hud != null) AtomicWrite(hudPath, hud);
         if (loading != null) AtomicWrite(loadingPath, loading);
         AtomicWrite(launcher, executable);
@@ -291,6 +305,6 @@ public static class Installer
             AtomicWrite(manifestPath, JsonSerializer.SerializeToUtf8Bytes(new { SetupVersion = 1, MapBuild = Data.Build,
                 Maps = names, LauncherSha256 = Data.Hash(executable), DspPresent = dspPresent }, new JsonSerializerOptions { WriteIndented = true }));
         Report("Ready to play", 100);
-        return new(names.Count, pending.Count, names.Count - pending.Count, dspPresent, destination);
+        return new(names.Count, pending.Count, names.Count - pending.Count, dspPresent, destination, pcFiles.Count);
     }
 }

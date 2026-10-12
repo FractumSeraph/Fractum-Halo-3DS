@@ -16,6 +16,12 @@
 #include "networking/network_server_manager.h"
 #include <stdio.h>
 
+/* Kevin Boggs: n3ds_campaign_network_blocked - keep optional objects out of co-op state. */
+int n3ds_campaign_network_blocked(void)
+{
+ return n3ds_network_coop_menu() || n3ds_network_coop_selected() ||
+  game_connection()==_game_connection_network_client || game_connection()==_game_connection_network_server;
+}
 static unsigned coop_pending, coop_previous[16];
 static int coop_lobby_request;
 static int coop_menu;

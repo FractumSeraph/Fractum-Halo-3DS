@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 UI_WIDGET_EVENT_HANDLER_FUNCTIONS.C
 
@@ -920,6 +921,7 @@ struct event_record;
 #ifdef HALO_N3DS
 #include "input/input.h"
 #include "engine_input.h"
+int n3ds_pc_tags_active(void);
 #endif
 #include "saved games/saved_game_files.h"
 #include "saved games/playlist_profile.h"
@@ -934,10 +936,55 @@ struct event_record;
 #ifdef HALO_N3DS
 #include "engine_cache.h"
 #include "engine_network.h"
+#include "engine_map_format.h"
+#include "engine_controls.h"
 #include "tag_files/tag_files.h"
+#include "tag_files/files.h"
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_ALL_MAPS
+#include "text/text_group.h"
+#include "bitmaps/bitmap_group.h"
+#include "tag_files/tag_groups.h"
+#endif
 void n3ds_log(const char *);
-static char *native_multiplayer_maps[23];
-static short native_multiplayer_map_indices[23],native_multiplayer_map_count;
+static char *native_multiplayer_maps[32];
+static char native_pc_selection_paths[19][64];
+static short native_multiplayer_map_indices[32],native_multiplayer_map_count;
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_ALL_MAPS
+int n3ds_pc_tags_active(void);
+/* PC retail ui.map supplies names, descriptions and graphics for these six
+ * ordinals after the original thirteen. Keep Xbox UI at its original size. */
+static char *native_pc_expansion_maps[6]={
+    "levels\\test\\icefields\\icefields",
+    "levels\\test\\deathisland\\deathisland",
+    "levels\\test\\dangercanyon\\dangercanyon",
+    "levels\\test\\infinity\\infinity",
+    "levels\\test\\timberland\\timberland",
+    "levels\\test\\gephyrophobia\\gephyrophobia"
+};
+/* Kevin Boggs: native_pc_expansion_ui_assets_ready - New3DS integration. */
+static boolean native_pc_expansion_ui_assets_ready(void)
+{
+    if(!n3ds_pc_tags_active()) return FALSE;
+    long names=tag_loaded(UNICODE_STRING_LIST_TAG,"ui\\shell\\main_menu\\mp_map_list");
+    long descriptions=tag_loaded(UNICODE_STRING_LIST_TAG,"ui\\shell\\main_menu\\multiplayer_type_select\\mp_map_select\\map_data");
+    long graphics=tag_loaded(BITMAP_GROUP_TAG,"ui\\shell\\bitmaps\\mp_map_grafix");
+    if(names==NONE || descriptions==NONE || graphics==NONE) return FALSE;
+    struct string_list *name_list=unicode_string_list_definition_get(names);
+    struct string_list *description_list=unicode_string_list_definition_get(descriptions);
+    struct bitmap_group *graphic_group=bitmap_group_get(graphics);
+    return name_list && name_list->strings.count>=19 &&
+        description_list && description_list->strings.count>=19 &&
+        graphic_group && graphic_group->bitmaps.count>=19;
+}
+/* Kevin Boggs: n3ds_ui_pc_expansion_map_count - New3DS integration. */
+short n3ds_ui_pc_expansion_map_count(void)
+{
+    short count=0;
+    if(native_pc_expansion_ui_assets_ready()) for(short i=0;i<6;++i)
+        if(n3ds_engine_map_installed(native_pc_expansion_maps[i])) ++count;
+    return count;
+}
+#endif
 short n3ds_ui_multiplayer_map_original_index(short index)
 {
 	assert(index>=0 && index<native_multiplayer_map_count);
@@ -2119,7 +2166,11 @@ static boolean exit_to_xbox_dashboard(
 	boolean *widget_deleted)
 {
 	xbox_dashboard_launch();
+#ifdef HALO_N3DS
+	return TRUE; /* the 3DS loop observes the deferred exit request */
+#else
 	return FALSE;
+#endif
 }
 
 static boolean clear_multiplayer_player_joins(
@@ -3090,6 +3141,16 @@ static boolean multiplayer_level_list_initialize(
 			native_multiplayer_maps[native_multiplayer_map_count++]=event_handler_functions.multiplayer_levels[i];
 		}
 	}
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_ALL_MAPS
+ if(!n3ds_network_coop_menu() && n3ds_pc_maps_present())for(short i=0;i<19;++i){
+  snprintf(native_pc_selection_paths[i],sizeof(native_pc_selection_paths[i]),
+   "pc\\levels\\test\\%s\\%s",n3ds_pc_diagnostic_maps[i],n3ds_pc_diagnostic_maps[i]);
+  if(n3ds_engine_map_installed(native_pc_selection_paths[i])){
+   native_multiplayer_map_indices[native_multiplayer_map_count]=32+i;
+   native_multiplayer_maps[native_multiplayer_map_count++]=native_pc_selection_paths[i];
+  }
+ }
+#endif
 	level_count=native_multiplayer_map_count;
 	if(n3ds_network_coop_menu())
 	{
@@ -3514,8 +3575,24 @@ boolean ui_widget_event_handler_function_invoke(
 	match_vassert("c:\\halo\\SOURCE\\interface\\ui_widget_event_handler_functions.c", 478,
 		widget != NULL && widget_deleted != NULL,
 		"(widget != NULL) && (widget_deleted != NULL)");
+#ifdef HALO_N3DS
+	/* PC retail ui.map uses a larger function table than the Xbox game.
+	 * Its quit_button_ok is the sole widget referencing function 107.
+	 * Route that verified PC action to the native application exit. */
+	if (function_index == 107 && n3ds_pc_tags_active())
+	{
+		n3ds_log("PC UI: quit button requested application close");
+		xbox_dashboard_launch();
+		return TRUE;
+	}
+#endif
 	if ((short)function_index >= 0 && function_index < 102)
 	{
+#ifdef HALO_N3DS_EXPERIMENTAL_PC_MENU_KEYS
+		{ char message[192]; snprintf(message,sizeof(message),"MENU EVENT: index=%u name=%s widget=%s",
+			(unsigned)function_index,event_handler_function_list.names[(short)function_index],
+			widget->name?widget->name:""); n3ds_log(message); }
+#endif
 		result = event_handler_function_list.functions[(short)function_index](widget, event, widget_deleted);
 		if (!result)
 			console_warning("event handler '%s' failed", event_handler_function_list.names[(short)function_index]);
@@ -5761,6 +5838,16 @@ static boolean multiplayer_level_select(
 		if (server)
 			network_game_server_change_map_name(server, map_name);
 	}
+#ifdef HALO_N3DS
+	{
+		/* saved_game_file_remember_last_used_multiplayer_map writes a fixed
+		 * MAXIMUM_FILENAME_LENGTH+1 bytes. Expansion paths are string literals,
+		 * so supply a zero-filled buffer of that exact size. */
+		char remembered[MAXIMUM_FILENAME_LENGTH+1]={0};
+		csstrncpy(remembered,map_name,MAXIMUM_FILENAME_LENGTH);
+		saved_game_file_remember_last_used_multiplayer_map(remembered);
+	}
+#else
 	for (level_index = 0; level_index < 13; level_index++)
 	{
 		if (!_stricmp(map_name, event_handler_functions.multiplayer_levels[level_index]))
@@ -5769,6 +5856,7 @@ static boolean multiplayer_level_select(
 			break;
 		}
 	}
+#endif
 	return TRUE;
 }
 
@@ -5855,13 +5943,9 @@ static boolean multiplayer_profile_set_for_game(
 #ifdef HALO_N3DS
 		if(strstr(tag_get_name(widget->definition_tag_index),"\\split_screen\\"))
 		{
-			if(!event || !n3ds_main_queue_solo_multiplayer(main_get_multiplayer_map_name(),&profile,event->controller_index)) return FALSE;
-			/* Actually delete the caller, using the dispatcher's existing
-			 * contract, so its Xbox-only pregame replacement is not opened. */
-			ui_widget_delete(widget_instance_get_topmost_parent(widget));
-			*widget_deleted=TRUE;
-			n3ds_log("SOLO MULTIPLAYER: selected map/rules queued; one local player, no network lobby");
-			return TRUE;
+			/* Retain this screen so Back from the native options restores the
+			 * selected gametype. The dispatcher stops the Xbox pregame action. */
+			return event && n3ds_local_match_menu_open(main_get_multiplayer_map_name(),&profile,event->controller_index);
 		}
 #endif
 		if (server)

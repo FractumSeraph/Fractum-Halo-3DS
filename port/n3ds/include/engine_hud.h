@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 #ifndef N3DS_ENGINE_HUD_H
 #define N3DS_ENGINE_HUD_H
 #include "engine_text.h"
@@ -15,6 +16,10 @@ struct native_menu_plasma {
     int point,wrap[3],blend;
 };
 void n3ds_hud_screen(int bottom);
+void n3ds_hud_medals_reset(void);
+void n3ds_hud_medal_record(long player_index,short multiple_kills,short kills_in_a_row);
+int n3ds_hud_medal_count(long player_index);
+void n3ds_postgame_return_to_lobby(void);
 void n3ds_gpu_hud_layout(int group);
 void n3ds_gpu_hud_sensor_origin(float x,float y,float radius);
 int n3ds_gpu_touch_panel(const unsigned int *pixels,unsigned int revision);
