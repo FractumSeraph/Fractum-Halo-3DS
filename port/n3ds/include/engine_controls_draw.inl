@@ -199,12 +199,12 @@ void n3ds_gpu_local_match_menu(const char *title,int bots,int difficulty,int wea
 {
  static const char *const labels[]={"Bots","Difficulty","Weapons","Vehicles"};
  static const char *const difficulties[]={"Easy","Normal","Hard"};
- static const char *const weapon_sets[]={"Normal","Pistols","Rifles","Plasma","Snipers","No sniping","Rockets","Shotguns","Short range","Human","None"};
+ static const char *const weapon_sets[]={"Normal","Pistols","Rifles","Plasma","Snipers","No sniping","Rockets","Shotguns","Short range","Human","None","Flamethrowers","Fuel Rods"};
  static const char *const vehicle_sets[]={"All","None","Warthogs","Ghosts","Scorpions"};
  void *saved=n3ds_gpu_texture_bound(0);n3ds_gpu_hud_layout(0);n3ds_gpu_hud_screen(1);
  controls_quad(0,0,320,240,0xff24150c,0);
  controls_text(64,12,"LOCAL MATCH SETTINGS",0xffffffff,0);
- controls_text(16,30,title && *title?title:"Selected gametype",0xffe9d6aa,0);
+ controls_text(16,30,error?"Could not start. Retry or go back.":title && *title?title:"Selected gametype",error?0xff70a0ff:0xffe9d6aa,0);
  for(int row=0;row<4;++row){float y=48+row*28;char value[24];
   controls_quad(12,y,296,25,row==selected?0xff674826:0xff35251a,0);
   controls_text(20,y+9,labels[row],0xffffffff,0);
@@ -214,14 +214,42 @@ void n3ds_gpu_local_match_menu(const char *title,int bots,int difficulty,int wea
   controls_quad(240,y+2,30,21,0xff735333,0);controls_quad(274,y+2,30,21,0xff735333,0);
   controls_text(251,y+9,"-",0xffffffff,0);controls_text(285,y+9,"+",0xffffffff,0);
  }
- controls_text(16,172,"D-pad or touch: change options",0xffe9d6aa,0);
- controls_text(16,187,error?"Could not start. Retry or go back.":"Other gametype rules are preserved.",error?0xff70a0ff:0xffe9d6aa,0);
+ controls_quad(16,166,288,30,0xff53391a,0);
+ controls_text(68,177,"X: Gear previews",0xffffffff,0);
  controls_quad(16,202,136,30,0xff53391a,0);controls_quad(168,202,136,30,0xff674826,0);
  controls_text(48,214,"B: Back",0xffffffff,0);controls_text(204,214,"A: Start",0xffffffff,0);
  n3ds_gpu_hud_screen(0);n3ds_gpu_texture_bind(0,saved);n3ds_gpu_world_state_restore();
 }
 
 #include "engine_pc_preview.h"
+/* Kevin Boggs: n3ds_gpu_local_match_gear - browse equipment without replacing the top menu. */
+void n3ds_gpu_local_match_gear(int map,int pc,int weapons,int vehicles,int selected)
+{
+ static const char *const weapon_sets[]={"Normal","Pistols","Rifles","Plasma","Snipers","No sniping","Rockets","Shotguns","Short range","Human","None","Flamethrowers","Fuel Rods"};
+ static const char *const vehicle_sets[]={"All","None","Warthogs","Ghosts","Scorpions"};
+ void *saved=n3ds_gpu_texture_bound(0);n3ds_gpu_hud_layout(0);n3ds_gpu_hud_screen(1);
+ controls_quad(0,0,320,240,0xff24150c,0);
+ if(map>=0)n3ds_gear_preview_draw(map,pc,selected,weapons,vehicles);
+ n3ds_gpu_hud_screen(1);
+ controls_quad(0,0,320,24,0xff24150c,0);controls_text(32,8,"GEAR: DRAG / L+R ZOOM",0xffffffff,0);
+ controls_quad(0,144,320,96,0xff24150c,0);
+ int empty=selected?vehicles==1:weapons==10;
+ if(empty)controls_text(72,86,selected?"No vehicles":"No weapons",0xffffffff,0);
+ else if(map<0)controls_text(64,86,"Preview unavailable",0xffffffff,0);
+ else if(n3ds_preview_loading())controls_text(72,86,"Loading preview...",0xffffffff,0);
+ else if(!n3ds_preview_available())controls_text(64,86,"Preview unavailable",0xffffffff,0);
+ controls_text(48,134,"Example from selected set",0xffe9d6aa,0);
+ for(int row=0;row<2;++row){float y=148+row*24;
+  controls_quad(12,y,296,22,row==selected?0xff674826:0xff35251a,0);
+  controls_text(20,y+7,row?"Vehicles":"Weapons",0xffffffff,0);
+  controls_text(116,y+7,row?vehicle_sets[vehicles]:weapon_sets[weapons],0xffe9d6aa,0);
+  controls_quad(240,y+1,30,20,0xff735333,0);controls_quad(274,y+1,30,20,0xff735333,0);
+  controls_text(251,y+7,"-",0xffffffff,0);controls_text(285,y+7,"+",0xffffffff,0);
+ }
+ controls_quad(16,202,288,30,0xff53391a,0);controls_text(88,214,"A/B/X: Done",0xffffffff,0);
+ n3ds_gpu_hud_screen(0);n3ds_gpu_texture_bind(0,saved);n3ds_gpu_world_state_restore();
+}
+
 /* Kevin Boggs: n3ds_gpu_map_browser - keep preview controls on the lower display. */
 void n3ds_gpu_map_browser(int map,int pc,int ready)
 {

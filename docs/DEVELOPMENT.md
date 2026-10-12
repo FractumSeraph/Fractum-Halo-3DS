@@ -140,7 +140,14 @@ The multiplayer map browser reads the owner's selected Xbox or PC cache for a
 disposable 3D preview. The map page samples broad BSP render surfaces and
 the original collision BSP's walkable surfaces (pathfinding flag `0x40`),
 with a blue alpha-blended overlay that the bottom-screen NAV button toggles.
-The gear page previews a selected weapon or vehicle model. Touch dragging
+After choosing a map and gametype, press X or tap **Gear previews** in the
+shared local match settings. The gear page previews an example weapon or
+vehicle from the selected set, using the chosen Xbox or PC map directly.
+Xbox-only installs need no PC assets. A/B/X returns to settings without
+starting the match; weapon and vehicle choices stay synchronized between
+the two pages. Flamethrower/Fuel Rod presets are offered only for PC maps.
+Unavailable previews do not prevent selecting settings or starting a match.
+Touch dragging
 rotates the camera, L/R adjusts distance, and idle frames advance a slow
 turntable. Render geometry is capped at 21,840 triangles (8,192 for Xbox maps
 on Original models), with up to 9,600 navigation triangles.
@@ -156,7 +163,10 @@ map teardown drains any remaining cancelled worker. The preview camera clears
 only the bottom target, preserving the top-screen menu background.
 `test_preview_jobs.py` covers cancellation, coalescing, publication, bounded
 uploads and failure handling; `test_preview_reader.py` covers both cache
-formats, truncated data and chunk cancellation.
+formats, truncated data and chunk cancellation. `test_preview_models.py`
+covers Xbox compressed/uncompressed and PC model vertices, streamed region
+references, invalid buffers and indices. `test_local_match_menu.py` covers
+gear navigation, shared choices, PC-only presets and cancellation.
 Isolated Azahar captures showed Blood Gulch with the nav overlay on and off,
 plus a pistol and vehicle preview on the gear page. A separate selector sweep
 loaded geometry and walkable overlays on all 19 stock PC multiplayer maps

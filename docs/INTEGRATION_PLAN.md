@@ -151,8 +151,6 @@ part of this installer change:
   menu; PC matches started through the shared menu can reopen the separate PC
   selector with different retained map/mode choices. Preserve the selected
   format, map and game type when returning.
-- Bring the separate PC gear-preview page and Flamethrower/Fuel Rod presets
-  into the shared Xbox/PC setup flow where applicable.
 - Bots and the expanded touch scoreboard remain solo/local features. Wireless
   support for these features is a separate task.
 - Add top-screen thumbnails for PC-only maps. Their bottom-screen geometry
@@ -165,3 +163,17 @@ part of this installer change:
   families. Prior emulator or older-build results do not replace these checks.
 
 No dev or main merge is performed as part of the setup-tool update.
+
+The shared gear-preview page was subsequently integrated by request. After
+map and gametype selection, X or the Gear previews button opens equipment
+settings using the selected format's model data. Xbox maps retain their
+original equipment choices; PC maps also offer Flamethrower/Fuel Rod presets.
+The remaining items above are still deferred.
+
+Validation: both Xbox-only and unified builds compile; host checks cover
+modal navigation, equipment state, async preview scheduling and both model
+formats. The model reader decoded all 63 models (202 selected parts) from
+the owner's Xbox Blood Gulch cache in resident and streamed modes. An Azahar
+New-model run navigated the original Xbox menus into gear settings, rendered
+the pistol and Warthog previews, returned to settings and loaded Blood Gulch
+gameplay. Physical-console verification of the new page remains pending.

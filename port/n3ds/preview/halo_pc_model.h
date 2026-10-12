@@ -6,10 +6,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* A validated PC retail gbxmodel part. Offsets are within the owning map. */
+/* A validated Xbox model or PC gbxmodel part; offsets belong to its map. */
 struct halo_pc_model_part {
     uint32_t vertex_file_offset;
     uint32_t strip_file_offset;
+    uint32_t vertex_stride;
     uint32_t vertex_count;
     uint32_t strip_triangle_count;
     uint16_t shader_index;

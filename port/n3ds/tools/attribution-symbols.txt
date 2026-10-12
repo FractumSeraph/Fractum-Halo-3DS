@@ -273,3 +273,7 @@ port/n3ds/setup/Tests/PcMapsTests.cs|Fixture
 port/n3ds/setup/Tests/PcMapsTests.cs|Run
 port/n3ds/src/engine_hud.c|touch_aim_available
 port/n3ds/tests/src/engine_input_tests.c|test_aim_enabled
+port/n3ds/preview/engine_pc_preview.c|n3ds_gear_preview_draw
+port/n3ds/include/engine_controls_draw.inl|n3ds_gpu_local_match_gear
+port/n3ds/tests/preview_model_test.c|main
+port/n3ds/tests/test_preview_models.py|fixture

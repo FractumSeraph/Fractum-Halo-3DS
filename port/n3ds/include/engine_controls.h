@@ -37,6 +37,7 @@ void n3ds_map_browser_draw(void);
 void n3ds_gpu_map_browser(int map,int pc,int ready);
 void n3ds_local_match_menu_filter(struct native_input_sample *sample);
 void n3ds_local_match_menu_draw(void);
+void n3ds_gpu_local_match_gear(int map,int pc,int weapons,int vehicles,int selected);
 void n3ds_gpu_local_match_menu(const char *title,int bots,int difficulty,int weapons,int vehicles,int selected,int error);
 #ifdef HALO_N3DS_PC_LOCAL_MENU
 void n3ds_pc_local_menu_filter(struct native_input_sample *sample);

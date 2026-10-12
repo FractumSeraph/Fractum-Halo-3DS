@@ -11,6 +11,7 @@ int n3ds_pc_preview_view_mode(void);
 int n3ds_pc_preview_backfaces_enabled(void);
 void n3ds_pc_preview_close(void);
 void n3ds_xbox_preview_draw(int map);
+void n3ds_gear_preview_draw(int map,int pc,int field,int weapons,int vehicles);
 int n3ds_preview_available(void);
 int n3ds_preview_loading(void);
 /* Main thread: update after GPU queue completion; dispose at map teardown. */

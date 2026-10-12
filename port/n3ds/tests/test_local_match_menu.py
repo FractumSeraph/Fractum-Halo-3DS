@@ -23,6 +23,9 @@ static int pc_match_weapon_override=12;
 static struct game_variant queued;
 static char queued_map[96];
 static int browser_selection=-1,preview_closes,preview_draws,preview_map,preview_pc,preview_ready;
+void n3ds_gpu_local_match_gear(int map,int pc_map,int w,int v,int selected){
+ ++preview_draws;preview_map=map;preview_pc=pc_map;(void)w;(void)v;(void)selected;
+}
 int n3ds_ui_map_browser_selection(void){return browser_selection;}
 void n3ds_pc_preview_close(void){++preview_closes;}
 void n3ds_pc_preview_input(const struct native_input_sample *sample){(void)sample;}
@@ -83,7 +86,30 @@ int main(void){
  assert(!n3ds_local_match_menu_active() && bot_count==2 && queues==2);
  assert(n3ds_local_match_menu_open(map,&variant,0));input(0,0,0);wireless=1;input(NATIVE_KEY_A,0,0);
  assert(!n3ds_local_match_menu_active() && queues==2);
- wireless=0;browser_selection=9;
+ wireless=0;
+ /* Gear changes share the same state as the settings page; Done never starts. */
+ assert(n3ds_local_match_menu_open(map,&variant,0));tap(NATIVE_KEY_X);
+ assert(local_match_gear);n3ds_local_match_menu_draw();assert(preview_map==1 && !preview_pc);
+ tap(NATIVE_KEY_DLEFT);tap(NATIVE_KEY_DLEFT);assert(local_match_weapons==10); /* Xbox wraps before PC extras */
+ input(NATIVE_KEY_TOUCH,289,156); /* back to Normal */
+ input(NATIVE_KEY_TOUCH,289,183);assert(local_match_row==2); /* held drag cannot change Vehicles */
+ input(0,0,0);input(NATIVE_KEY_TOUCH,289,183);input(0,0,0);
+ assert(local_match_row==3 && local_match_variant.universal_variant.vehicle_set==2);
+ tap(NATIVE_KEY_A);assert(!local_match_gear && n3ds_local_match_menu_active() && queues==2);
+ assert(local_match_weapons==0);tap(NATIVE_KEY_START);assert(queues==3 && queued.universal_variant.weapon_set==0);
+ assert(queued.universal_variant.vehicle_set==2 && queued.universal_variant.score_limit==73);
+ assert(n3ds_local_match_menu_open(map,&variant,0));input(0,0,0);input(NATIVE_KEY_TOUCH,40,180);input(0,0,0);
+ assert(local_match_gear);tap(NATIVE_KEY_X);tap(NATIVE_KEY_B);assert(queues==3);
+#ifdef HALO_N3DS_PC_LOCAL_MENU
+ assert(n3ds_local_match_menu_open("pc\\levels\\test\\bloodgulch\\bloodgulch",&variant,0));tap(NATIVE_KEY_X);
+ n3ds_local_match_menu_draw();assert(preview_map==1 && preview_pc);
+ tap(NATIVE_KEY_DLEFT);tap(NATIVE_KEY_DLEFT);assert(local_match_weapons==12);
+ tap(NATIVE_KEY_B);queue_ok=0;tap(NATIVE_KEY_A);assert(!pc_match_weapon_override);
+ queue_ok=1;tap(NATIVE_KEY_A);assert(pc_match_weapon_override==2 && queued.universal_variant.weapon_set==0);
+#endif
+ assert(n3ds_local_match_menu_open(map,&variant,0));tap(NATIVE_KEY_X);widgets=0;input(0,0,0);
+ assert(!n3ds_local_match_menu_active() && !local_match_gear);widgets=1;
+ preview_closes=0;browser_selection=9;
  struct native_input_sample sample={0};sample.held=NATIVE_KEY_DRIGHT|NATIVE_KEY_TOUCH|NATIVE_KEY_R;
  n3ds_map_browser_filter(&sample);assert(sample.held==NATIVE_KEY_DRIGHT);
  n3ds_map_browser_draw();assert(preview_map==1 && !preview_pc && !preview_ready);

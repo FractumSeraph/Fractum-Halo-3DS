@@ -371,6 +371,7 @@ static struct game_variant local_match_variant;
 static char local_match_map[96],local_match_title[13];
 static int local_match_open,local_match_swallow,local_match_row,local_match_error;
 static int local_match_bots,local_match_difficulty;
+static int local_match_gear,local_match_preview_map,local_match_pc,local_match_weapons;
 static unsigned int local_match_previous;
 /* Kevin Boggs: n3ds_local_match_menu_active - native match options modal. */
 int n3ds_local_match_menu_active(void) { return local_match_open; }
@@ -389,8 +390,15 @@ int n3ds_local_match_menu_open(const char *map,const struct game_variant *varian
  local_match_title[12]=0;
  local_match_variant.universal_variant.weapon_set=PIN(variant->universal_variant.weapon_set,0,10);
  local_match_variant.universal_variant.vehicle_set=PIN(variant->universal_variant.vehicle_set,0,4);
+ local_match_weapons=local_match_variant.universal_variant.weapon_set;
  local_match_bots=n3ds_bots_requested_count();local_match_difficulty=n3ds_bots_menu_difficulty();
- local_match_open=local_match_swallow=1;local_match_row=local_match_error=0;
+ local_match_open=local_match_swallow=1;local_match_row=local_match_error=local_match_gear=0;
+ static const char *const maps[]={"beavercreek","bloodgulch","boardingaction","carousel","chillout",
+  "damnation","dangercanyon","deathisland","gephyrophobia","hangemhigh","icefields","infinity",
+  "longest","prisoner","putput","ratrace","sidewinder","timberland","wizard"};
+ const char *name=strrchr(map,'\\');name=name?name+1:map;
+ local_match_pc=!strncmp(map,"pc\\",3);local_match_preview_map=-1;
+ for(int i=0;i<19;++i)if(!strcmp(name,maps[i])){local_match_preview_map=i;break;}
  n3ds_log("LOCAL MATCH: bottom-screen options opened after gametype selection");return 1;
 }
 /* Kevin Boggs: local_match_adjust - change only the requested match option. */
@@ -398,8 +406,7 @@ static void local_match_adjust(int delta)
 {
  if(local_match_row==0)local_match_bots=(local_match_bots+16+delta)%16;
  else if(local_match_row==1)local_match_difficulty=(local_match_difficulty+3+delta)%3;
- else if(local_match_row==2)local_match_variant.universal_variant.weapon_set=
-  (local_match_variant.universal_variant.weapon_set+11+delta)%11;
+ else if(local_match_row==2){int count=local_match_pc?13:11;local_match_weapons=(local_match_weapons+count+delta)%count;}
  else local_match_variant.universal_variant.vehicle_set=(local_match_variant.universal_variant.vehicle_set+5+delta)%5;
  local_match_error=0;
 }
@@ -410,8 +417,26 @@ void n3ds_local_match_menu_filter(struct native_input_sample *sample)
  if(local_match_swallow){if(!held)local_match_swallow=0;memset(sample,0,sizeof(*sample));return;}
  if(!local_match_open)return;
  if(!main_menu_is_active() || !ui_widgets_active() || n3ds_wireless_active()){
+  n3ds_pc_preview_close();local_match_gear=0;
   local_match_open=0;local_match_swallow=1;memset(sample,0,sizeof(*sample));return;
  }
+ if(local_match_gear){
+  if(local_match_preview_map>=0)n3ds_pc_preview_input(sample);
+  if(fresh&(NATIVE_KEY_DUP|NATIVE_KEY_DDOWN))local_match_row=local_match_row==2?3:2;
+  if(fresh&NATIVE_KEY_DLEFT)local_match_adjust(-1);
+  if(fresh&NATIVE_KEY_DRIGHT)local_match_adjust(1);
+  int done=!!(fresh&(NATIVE_KEY_A|NATIVE_KEY_B|NATIVE_KEY_X|NATIVE_KEY_START));
+  if(fresh&NATIVE_KEY_TOUCH){unsigned x=sample->touch_x,y=sample->touch_y;
+   if(x>=12 && x<308 && y>=148 && y<196){
+    local_match_row=2+(y-148)/24;
+    if(x>=240)local_match_adjust(x<272?-1:1);
+   }
+   if(x>=16 && x<304 && y>=202 && y<234)done=1;
+  }
+  if(done){n3ds_pc_preview_close();local_match_gear=0;local_match_swallow=1;}
+  memset(sample,0,sizeof(*sample));return;
+ }
+ int gear=!!(fresh&NATIVE_KEY_X);
  int start=!!(fresh&(NATIVE_KEY_A|NATIVE_KEY_START)),back=!!(fresh&NATIVE_KEY_B);
  if(fresh&NATIVE_KEY_DUP)local_match_row=(local_match_row+3)%4;
  if(fresh&NATIVE_KEY_DDOWN)local_match_row=(local_match_row+1)%4;
@@ -423,22 +448,26 @@ void n3ds_local_match_menu_filter(struct native_input_sample *sample)
    local_match_row=(y-48)/28;
    if(x>=240)local_match_adjust(x<272?-1:1);
   }
+  if(x>=16 && x<304 && y>=166 && y<196)gear=1;
   if(y>=202 && y<234){if(x>=16 && x<152)back=1;else if(x>=168 && x<304)start=1;}
  }
- if(back){local_match_open=0;local_match_swallow=1;n3ds_log("LOCAL MATCH: returned to gametype selection");}
+ if(gear && !back && !start){local_match_gear=1;local_match_row=local_match_row==3?3:2;local_match_swallow=1;}
+ if(back){n3ds_pc_preview_close();local_match_open=0;local_match_swallow=1;n3ds_log("LOCAL MATCH: returned to gametype selection");}
  else if(start){
-  if(!n3ds_main_queue_solo_multiplayer(local_match_map,&local_match_variant,0)){
+  struct game_variant launch=local_match_variant;
+  launch.universal_variant.weapon_set=local_match_weapons<11?local_match_weapons:0;
+  if(!n3ds_main_queue_solo_multiplayer(local_match_map,&launch,0)){
    local_match_error=1;n3ds_log("LOCAL MATCH: map unavailable or match could not be queued");
   }else{
    n3ds_bots_set_menu_count((short)local_match_bots);
    n3ds_bots_set_menu_difficulty((short)local_match_difficulty);
 #ifdef HALO_N3DS_PC_LOCAL_MENU
-   pc_match_weapon_override=0;
+   pc_match_weapon_override=local_match_pc && local_match_weapons>=11?local_match_weapons-10:0;
 #endif
    char message[192];snprintf(message,sizeof(message),"LOCAL MATCH: queued %s mode=%ld bots=%d difficulty=%d weapons=%ld vehicles=%ld",
     local_match_map,local_match_variant.game_engine_index,local_match_bots,local_match_difficulty,
-    local_match_variant.universal_variant.weapon_set,local_match_variant.universal_variant.vehicle_set);n3ds_log(message);
-   local_match_open=0;local_match_swallow=1;
+    (long)local_match_weapons,local_match_variant.universal_variant.vehicle_set);n3ds_log(message);
+   n3ds_pc_preview_close();local_match_open=0;local_match_swallow=1;
   }
  }
  memset(sample,0,sizeof(*sample));
@@ -446,8 +475,11 @@ void n3ds_local_match_menu_filter(struct native_input_sample *sample)
 /* Kevin Boggs: n3ds_local_match_menu_draw - present shared local bot/equipment settings. */
 void n3ds_local_match_menu_draw(void)
 {
- if(local_match_open)n3ds_gpu_local_match_menu(local_match_title,local_match_bots,local_match_difficulty,
-  local_match_variant.universal_variant.weapon_set,local_match_variant.universal_variant.vehicle_set,local_match_row,local_match_error);
+ if(!local_match_open)return;
+ if(local_match_gear){n3ds_gpu_local_match_gear(local_match_preview_map,local_match_pc,
+  local_match_weapons,local_match_variant.universal_variant.vehicle_set,local_match_row-2);return;}
+ n3ds_gpu_local_match_menu(local_match_title,local_match_bots,local_match_difficulty,
+  local_match_weapons,local_match_variant.universal_variant.vehicle_set,local_match_row,local_match_error);
 }
 
 int n3ds_controls_tests(void)

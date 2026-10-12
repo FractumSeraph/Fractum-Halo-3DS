@@ -1,6 +1,7 @@
 #include "halo_pc_model.h"
 
 #include <limits.h>
+#include <math.h>
 #include <string.h>
 
 #define GBXMODEL_GROUP 0x6d6f6432u
@@ -36,14 +37,15 @@ static int model_header(const struct halo_cache *cache, const struct halo_cache_
                         uint32_t *model_file_offset, uint32_t *index_offset,
                         uint32_t *model_bytes, char *error, size_t error_size) {
     const uint8_t *index;
-    if (!cache || !tag || cache->kind != HALO_CACHE_PC_V7 || tag->group != GBXMODEL_GROUP ||
+    if (!cache || !tag || (cache->kind != HALO_CACHE_PC_V7 && cache->kind != HALO_CACHE_XBOX_V5) ||
+        tag->group != (cache->kind == HALO_CACHE_XBOX_V5 ? 0x6d6f6465u : GBXMODEL_GROUP) ||
         !tag->metadata || tag->metadata_available < MODEL_GEOMETRIES_OFFSET + 12u ||
-        cache->tag_size < 40u)
-        return fail(error, error_size, "Expected a PC retail gbxmodel tag");
+        cache->tag_size < (cache->kind == HALO_CACHE_XBOX_V5 ? 36u : 40u))
+        return fail(error, error_size, "Expected an Xbox model or PC retail gbxmodel tag");
     index = cache->tags;
-    *model_file_offset = u32(index + 20);
-    *index_offset = u32(index + 28);
-    *model_bytes = u32(index + 32);
+    *model_file_offset = cache->kind == HALO_CACHE_XBOX_V5 ? 0 : u32(index + 20);
+    *index_offset = cache->kind == HALO_CACHE_XBOX_V5 ? 0 : u32(index + 28);
+    *model_bytes = cache->kind == HALO_CACHE_XBOX_V5 ? (uint32_t)cache->file_size : u32(index + 32);
     if (*model_file_offset > cache->file_size || *model_bytes > cache->file_size - *model_file_offset ||
         *index_offset > *model_bytes)
         return fail(error, error_size, "Model data is outside map");
@@ -64,7 +66,7 @@ static int geometry_parts(const struct halo_cache *cache, uint32_t address, uint
     *part_count = u32(geometry + GEOMETRY_PARTS_OFFSET);
     part_address = u32(geometry + GEOMETRY_PARTS_OFFSET + 4u);
     if (*part_count == 0 || *part_count > 4096u ||
-        !(*parts = halo_cache_resolve(cache, part_address, (size_t)*part_count * PART_BYTES)))
+        !(*parts = halo_cache_resolve(cache, part_address, (size_t)*part_count * (cache->kind == HALO_CACHE_XBOX_V5 ? 104u : PART_BYTES))))
         return fail(error, error_size, "Model parts are outside tags");
     return 1;
 }
@@ -72,6 +74,29 @@ static int geometry_parts(const struct halo_cache *cache, uint32_t address, uint
 static int part_details(const struct halo_cache *cache, const uint8_t *part,
                         uint32_t model_file_offset, uint32_t index_offset, uint32_t model_bytes,
                         struct halo_pc_model_part *out, char *error, size_t error_size) {
+    if(cache->kind == HALO_CACHE_XBOX_V5) {
+        /* The cached base_address is not a file offset. The Xbox D3D vertex
+         * descriptor carries the real virtual address, as in setup relocation. */
+        uint32_t count=u32(part+88),triangles=u32(part+72),strip=u32(part+76);
+        uint32_t descriptor=u32(part+100),type=u32(part+84)&0xffffu;
+        uint32_t shader=(uint16_t)(part[4]|(uint16_t)part[5]<<8);
+        if((u32(part+68)&0xffffu)!=1 || (type!=4 && type!=5) ||
+           !count || count>65535 || triangles>1000000u || strip<cache->virtual_base)
+            return fail(error,error_size,"Unsupported Xbox model part");
+        const uint8_t *buffer=halo_cache_resolve(cache,descriptor,12);
+        if(!buffer)return fail(error,error_size,"Xbox vertex descriptor is outside tags");
+        uint32_t vertex=u32(buffer+4),stride=type==5?32u:PC_VERTEX_BYTES;
+        if(vertex<cache->virtual_base)return fail(error,error_size,"Xbox vertex address is invalid");
+        vertex-=cache->virtual_base;strip-=cache->virtual_base;
+        if(vertex>cache->tag_size || (size_t)count*stride>cache->tag_size-vertex ||
+           strip>cache->tag_size || (size_t)(triangles+2u)*2u>cache->tag_size-strip)
+            return fail(error,error_size,"Xbox model buffers are outside tags");
+        out->vertex_file_offset=(uint32_t)cache->tag_file_offset+vertex;
+        out->strip_file_offset=(uint32_t)cache->tag_file_offset+strip;
+        out->vertex_stride=stride;out->vertex_count=count;
+        out->strip_triangle_count=triangles;out->shader_index=(uint16_t)shader;
+        return 1;
+    }
     uint32_t vertices = u32(part + 88u);
     uint32_t vertex_offset = u32(part + 100u);
     uint32_t triangles = u32(part + 72u);
@@ -83,6 +108,7 @@ static int part_details(const struct halo_cache *cache, const uint8_t *part,
         return fail(error, error_size, "Model part vertices or strip are outside model data");
     out->vertex_file_offset = model_file_offset + vertex_offset;
     out->strip_file_offset = model_file_offset + index_offset + strip_offset;
+    out->vertex_stride = PC_VERTEX_BYTES;
     out->vertex_count = vertices;
     out->strip_triangle_count = triangles;
     out->shader_index = (uint16_t)(part[4] | (uint16_t)part[5] << 8);
@@ -102,7 +128,7 @@ int halo_pc_model_part_at(const struct halo_cache *cache, const struct halo_cach
     if (geometry_index >= count ||
         !geometry_parts(cache, address, geometry_index, &parts_count, &parts, error, error_size)) return 0;
     if (part_index >= parts_count) return fail(error, error_size, "Part index is out of range");
-    return part_details(cache, parts + (size_t)part_index * PART_BYTES, model_offset,
+    return part_details(cache, parts + (size_t)part_index * (cache->kind == HALO_CACHE_XBOX_V5 ? 104u : PART_BYTES), model_offset,
                         index_offset, model_bytes, out, error, error_size);
 }
 
@@ -139,7 +165,10 @@ int halo_pc_model_default_geometries(const struct halo_cache *cache,
                                                (size_t)regions * REGION_BYTES) : NULL;
     if (regions && !region_block) return fail(error, error_size, "Model regions are outside tags");
     for (region = 0; region < regions; ++region) {
-        const uint8_t *entry = region_block + (size_t)region * REGION_BYTES;
+        /* A streamed resolve reuses scratch memory; reacquire each region
+         * after reading the preceding region's permutation block. */
+        const uint8_t *entry = halo_cache_resolve(cache,region_address+region*REGION_BYTES,REGION_BYTES);
+        if(!entry)return fail(error,error_size,"Model region is outside tags");
         uint32_t permutations = u32(entry + REGION_PERMUTATIONS_OFFSET);
         uint32_t address = u32(entry + REGION_PERMUTATIONS_OFFSET + 4u);
         const uint8_t *permutation;
@@ -205,8 +234,7 @@ int halo_pc_model_inspect(const struct halo_cache *cache, const struct halo_cach
     for (i = 0; i < count; i++) {
         if (!geometry_parts(cache, address, i, &parts_count, &parts, error, error_size)) return 0;
         for (j = 0; j < parts_count; j++) {
-            if (!part_details(cache, parts + (size_t)j * PART_BYTES, model_offset,
-                              index_offset, model_bytes, &part, error, error_size)) return 0;
+            if (!halo_pc_model_part_at(cache,tag,i,j,&part,error,error_size)) return 0;
             if (UINT32_MAX - summary->vertex_count < part.vertex_count ||
                 UINT32_MAX - summary->strip_triangle_count < part.strip_triangle_count)
                 return fail(error, error_size, "Model total count overflowed");
@@ -226,7 +254,7 @@ int halo_pc_model_read_part(const struct halo_cache *cache, const struct halo_pc
     uint8_t vertex[PC_VERTEX_BYTES];
     uint8_t pair[2];
     uint32_t i;
-    if (!cache || !cache->file || !part || !positions || !indices ||
+    if (!cache || !cache->file || !part || (part->vertex_stride!=32u && part->vertex_stride!=PC_VERTEX_BYTES) || !positions || !indices ||
         position_floats < (size_t)part->vertex_count * 3u ||
         index_count < (size_t)part->strip_triangle_count + 2u)
         return fail(error, error_size, "Model part buffers are too small");
@@ -234,7 +262,7 @@ int halo_pc_model_read_part(const struct halo_cache *cache, const struct halo_pc
         fseek(cache->file, (long)part->vertex_file_offset, SEEK_SET))
         return fail(error, error_size, "Could not seek to model vertices");
     for (i = 0; i < part->vertex_count; i++) {
-        if (fread(vertex, 1, sizeof(vertex), cache->file) != sizeof(vertex))
+        if (halo_cache_read_chunks(cache,cache->file,vertex,part->vertex_stride) != part->vertex_stride)
             return fail(error, error_size, "Could not read model vertices");
         memcpy(positions + (size_t)i * 3u, vertex, 3u * sizeof(float));
     }
@@ -258,7 +286,7 @@ int halo_pc_model_read_part_uv(const struct halo_cache *cache, const struct halo
     uint8_t vertex[PC_VERTEX_BYTES];
     uint8_t pair[2];
     uint32_t i;
-    if (!cache || !cache->file || !part || !vertices || !indices ||
+    if (!cache || !cache->file || !part || (part->vertex_stride!=32u && part->vertex_stride!=PC_VERTEX_BYTES) || !vertices || !indices ||
         vertex_floats < (size_t)part->vertex_count * 5u ||
         index_count < (size_t)part->strip_triangle_count + 2u)
         return fail(error, error_size, "Model part UV buffers are too small");
@@ -266,10 +294,12 @@ int halo_pc_model_read_part_uv(const struct halo_cache *cache, const struct halo
         fseek(cache->file, (long)part->vertex_file_offset, SEEK_SET))
         return fail(error, error_size, "Could not seek to model vertices");
     for (i = 0; i < part->vertex_count; i++) {
-        if (fread(vertex, 1, sizeof(vertex), cache->file) != sizeof(vertex))
+        if (halo_cache_read_chunks(cache,cache->file,vertex,part->vertex_stride) != part->vertex_stride)
             return fail(error, error_size, "Could not read model vertices");
         memcpy(vertices + (size_t)i * 5u, vertex, 3u * sizeof(float));
-        memcpy(vertices + (size_t)i * 5u + 3u, vertex + 48u, 2u * sizeof(float));
+        if(part->vertex_stride==32u)for(int axis=0;axis<2;++axis)
+            vertices[(size_t)i*5u+3u+axis]=((int16_t)(vertex[24+axis*2]|(uint16_t)vertex[25+axis*2]<<8)*2.f+1.f)/65535.f;
+        else memcpy(vertices + (size_t)i * 5u + 3u, vertex + 48u, 2u * sizeof(float));
     }
     if (fseek(cache->file, (long)part->strip_file_offset, SEEK_SET))
         return fail(error, error_size, "Could not seek to model strip");
@@ -292,7 +322,7 @@ int halo_pc_model_read_part_uv_normal(const struct halo_cache *cache,
     uint8_t vertex[PC_VERTEX_BYTES];
     uint8_t pair[2];
     uint32_t i;
-    if (!cache || !cache->file || !part || !vertices || !indices ||
+    if (!cache || !cache->file || !part || (part->vertex_stride!=32u && part->vertex_stride!=PC_VERTEX_BYTES) || !vertices || !indices ||
         vertex_floats < (size_t)part->vertex_count * 8u ||
         index_count < (size_t)part->strip_triangle_count + 2u)
         return fail(error, error_size, "Model part normal buffers are too small");
@@ -301,11 +331,22 @@ int halo_pc_model_read_part_uv_normal(const struct halo_cache *cache,
         return fail(error, error_size, "Could not seek to model vertices");
     for (i = 0; i < part->vertex_count; i++) {
         float *out = vertices + (size_t)i * 8u;
-        if (fread(vertex, 1, sizeof(vertex), cache->file) != sizeof(vertex))
+        if (halo_cache_read_chunks(cache,cache->file,vertex,part->vertex_stride) != part->vertex_stride)
             return fail(error, error_size, "Could not read model vertices");
         memcpy(out, vertex, 3u * sizeof(float));
-        memcpy(out + 3u, vertex + 48u, 2u * sizeof(float));
-        memcpy(out + 5u, vertex + 12u, 3u * sizeof(float));
+        if(part->vertex_stride==32u){
+            for(int axis=0;axis<2;++axis)
+                out[3+axis]=((int16_t)(vertex[24+axis*2]|(uint16_t)vertex[25+axis*2]<<8)*2.f+1.f)/65535.f;
+            uint32_t normal=u32(vertex+12);
+            out[5]=((int32_t)(normal<<21)*(1.f/1048576.f)+1.f)/2047.f;
+            out[6]=((int32_t)((normal>>11)<<21)*(1.f/1048576.f)+1.f)/2047.f;
+            out[7]=((int32_t)((normal>>22)<<22)*(1.f/2097152.f)+1.f)/1023.f;
+        }else{
+            memcpy(out + 3u, vertex + 48u, 2u * sizeof(float));
+            memcpy(out + 5u, vertex + 12u, 3u * sizeof(float));
+        }
+        for(int axis=0;axis<8;++axis)if(!isfinite(out[axis]))
+            return fail(error,error_size,"Nonfinite model vertex");
     }
     if (fseek(cache->file, (long)part->strip_file_offset, SEEK_SET))
         return fail(error, error_size, "Could not seek to model strip");

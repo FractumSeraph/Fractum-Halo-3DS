@@ -430,7 +430,7 @@ static int load_model(struct halo_cache *cache,const char *wanted,int kind)
     char error[128];struct halo_cache_tag tag={0};int found=0;
     for(unsigned int i=0;i<cache->tag_count && !preview_cancelled(NULL);++i){
         if(halo_cache_tag_at(cache,i,&tag,error,sizeof(error)) &&
-            tag.group==0x6d6f6432u && !strcmp(tag.name,wanted)){found=1;break;}
+            tag.group==(cache->kind==HALO_CACHE_XBOX_V5?0x6d6f6465u:0x6d6f6432u) && !strcmp(tag.name,wanted)){found=1;break;}
     }
     if(!found)return 0;
     uint16_t chosen[MODEL_GEOMETRIES],candidate[MODEL_GEOMETRIES];
@@ -545,11 +545,13 @@ static unsigned int preview_worker(void *unused)
     else if(kind==1){
         static const unsigned char choice[]={0,0,1,2,3,1,4,5,5,1,0,6,7};
         ok=load_model(&cache,weapons[choice[weapon_set<13?weapon_set:0]],kind);
-        if(!ok && weapon_set!=0)ok=load_model(&cache,weapons[0],kind);
+
     }else{
         static const unsigned char choice[]={0,4,0,1,2,3};
-        ok=load_model(&cache,vehicles[choice[vehicle_choice<6?vehicle_choice:0]],kind);
-        if(!ok && vehicle_choice!=0)ok=load_model(&cache,vehicles[0],kind);
+        unsigned int model=choice[vehicle_choice<6?vehicle_choice:0];
+        if(selected_xbox && (model==1 || model==4))model=0;
+        ok=load_model(&cache,vehicles[model],kind);
+
     }
     halo_cache_close(&cache);
     if(!ok || preview_cancelled(NULL)){triangles=0;snprintf(message,sizeof(message),"PC PREVIEW: no mesh for %s kind=%d",map_files[map],kind);n3ds_log(message);return 0;}
@@ -780,6 +782,9 @@ static void preview_draw(int map,int page,int field,int weapon_set,int vehicle_c
 
 void n3ds_pc_preview_draw(int map,int page,int field,int weapons,int vehicles)
 {requested_xbox=0;preview_draw(map,page,field,weapons,vehicles);}
+/* Kevin Boggs: n3ds_gear_preview_draw - selected-format gear without live engine tags. */
+void n3ds_gear_preview_draw(int map,int pc,int field,int weapons,int vehicles)
+{requested_xbox=!pc;preview_draw(map,1,field,weapons,vehicles+1);}
 /* Kevin Boggs: n3ds_xbox_preview_draw - reuse the interactive view with Xbox geometry. */
 void n3ds_xbox_preview_draw(int map)
 {requested_xbox=1;preview_draw(map,0,0,0,0);}
