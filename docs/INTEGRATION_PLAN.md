@@ -1,11 +1,16 @@
-# Proposed New 3DS integration
+# Halo3DS integration notes
 
-This is a review guide for the original Halo3DS author. The work is on the
-`local-integration` branch and has **not** been submitted upstream. It adds one
-experimental New 3DS launcher that can run the existing Xbox campaign and
-local multiplayer, plus Halo CE PC retail v7 local multiplayer. Original 3DS
-and 2DS support in the upstream release should remain a separate supported
-path until the new code is tested there.
+PR [#3](https://github.com/Generalkidd/Halo3DS/pull/3) was merged into `dev`
+on October 11, 2026 (merge commit `754ce9f`). It combines the PC-map and local-bot
+contribution from #1 with the existing wireless multiplayer/co-op work.
+`main` has not been updated. The merged game source is the same as the tested
+`6fee7f8` build copied to the owner's SD card; this merge does not require
+another executable update.
+
+The sections below retain the original contribution's implementation and
+validation history. References to its earlier branches or New-3DS-only scope
+are historical, not the current release policy. The follow-up checklist at
+the end is the current list of outstanding integration work.
 
 ## What players receive
 
@@ -142,38 +147,55 @@ an upstream pull request.
 
 ## Deferred follow-up after the dev merge (October 11, 2026)
 
-The pre-merge review's setup-tool item (#3) is addressed by optional retail PC
-maps-folder import in both graphical setup tools, packaged with the integrated
-launcher. The other review items remain outstanding by request; they are not
-part of this installer change:
+The merge is complete. These items remain open for future work; they do not
+imply that the associated features have already passed hardware testing.
 
-- Unify **Return to Lobby** behavior. Xbox local matches return to the main
-  menu; PC matches started through the shared menu can reopen the separate PC
-  selector with different retained map/mode choices. Preserve the selected
-  format, map and game type when returning.
-- Bots and the expanded touch scoreboard remain solo/local features. Wireless
-  support for these features is a separate task.
-- Add top-screen thumbnails for PC-only maps. Their bottom-screen geometry
-  previews already work.
-- Reconcile older branch, release-status and New-3DS-only wording in the docs
-  after the merge. Those passages describe earlier integration stages.
-- Test the current merged launcher on two physical consoles: Xbox/PC map
-  identity, missing-map rejection, match completion, disconnects and disabled
-  campaign extras in co-op. Repeat quality/performance checks on both model
-  families. Prior emulator or older-build results do not replace these checks.
+- [ ] **Return to Lobby:** preserve the selected map format, map, gametype and
+  local match settings. Xbox matches currently return to the main menu;
+  PC matches from the shared menu can reopen the separate PC selector with
+  different retained choices.
+- [ ] **Wireless feature parity:** bots and the expanded touch scoreboard are
+  still solo/local features. Networking them requires separate implementation
+  and synchronization tests.
+- [ ] **PC map thumbnails:** add top-screen images for PC-only maps. Their
+  bottom-screen geometry previews already work.
+- [ ] **Physical-console validation:** test the merged build on Original and
+  New models, including a mixed-model pair. Check Xbox/PC map identity,
+  missing-map rejection, match completion/disconnects, co-op gameplay and
+  blocked campaign extras, gear previews, and touch-aim capture. Measure
+  Balanced/Quality frame times and memory use. Include full-roster bot matches
+  and the previously reported Death Island tank-firing path. Emulator results
+  are useful coverage, not proof of console performance or wireless stability.
+- [ ] **Setup packages:** rebuild and verify the Windows 7 and WinUI packages
+  with the final merged executable before distributing the next test release.
+  Optional PC-folder import is implemented, but the last packaged executable
+  predates the final touch-drag and shared gear-menu changes. Check fresh
+  Xbox-only and Xbox-plus-PC setup and executable-only updates.
+- [ ] **Documentation cleanup:** reconcile historical branch/release and
+  New-3DS-only wording across the imported notes, and make the shared-menu
+  instructions consistent. Preserve attribution and license notices.
+- [ ] **Performance preset:** implement and benchmark the reserved Performance
+  quality option before enabling it. It remains unavailable; Balanced is the
+  default and Quality is opt-in.
 
-No dev or main merge is performed as part of the setup-tool update.
+Completed before the merge: optional retail PC maps-folder import in both
+GUI setup tools; full-screen captured touch aiming; and the shared gear page
+opened with X or **Gear previews** after map/gametype selection. Gear previews
+read the selected Xbox or PC map asynchronously. Xbox maps keep their original
+equipment choices, while PC maps also offer Flamethrower/Fuel Rod presets.
 
-The shared gear-preview page was subsequently integrated by request. After
-map and gametype selection, X or the Gear previews button opens equipment
-settings using the selected format's model data. Xbox maps retain their
-original equipment choices; PC maps also offer Flamethrower/Fuel Rod presets.
-The remaining items above are still deferred.
+Validation for the merged head: Xbox-only and unified builds compile; host
+regressions cover settings/input, map identity and co-op gating, wireless
+transport, local menu state, asynchronous previews and model readers. All
+four GitHub cross-platform setup test/package jobs passed on `6fee7f8`.
+Attribution and repository-content checks passed. The model reader decoded
+all 63 models (202 selected parts) in the owner's Xbox Blood Gulch cache in
+resident and streamed modes. The final New-model Azahar run navigated the
+original Xbox menus, rendered pistol and Warthog previews, returned to match
+settings, and loaded Blood Gulch into gameplay.
 
-Validation: both Xbox-only and unified builds compile; host checks cover
-modal navigation, equipment state, async preview scheduling and both model
-formats. The model reader decoded all 63 models (202 selected parts) from
-the owner's Xbox Blood Gulch cache in resident and streamed modes. An Azahar
-New-model run navigated the original Xbox menus into gear settings, rendered
-the pistol and Warthog previews, returned to settings and loaded Blood Gulch
-gameplay. Physical-console verification of the new page remains pending.
+The final executable's SHA-256 is
+`1e2f595debd92f166b8058923399cc92c2fbabc572b6e154167050c7d8fb07c3`.
+It was verified after copying to the owner's SD card. Merge-only and notes-only
+commits do not change that executable. Promotion to `main` and publication of
+new release assets remain separate work.
