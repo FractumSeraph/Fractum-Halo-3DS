@@ -29,8 +29,12 @@ float n3ds_input_touch_look_scale(int component)
         (component?gamepad.sticks[1].y:gamepad.sticks[1].x)?n3ds_controls_sensitivity(0):1.f;
 }
 static unsigned int (*touch_handler)(unsigned int,unsigned int);
-void n3ds_input_touch_handler(unsigned int (*handler)(unsigned int,unsigned int))
-{ if(handler!=touch_handler) touch_aiming=FALSE;touch_handler=handler; }
+static int (*touch_aim_available)(void);
+void n3ds_input_touch_handler(unsigned int (*handler)(unsigned int,unsigned int), int (*aim_available)(void))
+{
+    if(handler!=touch_handler || aim_available!=touch_aim_available) touch_aiming=FALSE;
+    touch_handler=handler;touch_aim_available=aim_available;
+}
 _Static_assert(sizeof(struct gamepad_state)==40, "Original gamepad ABI");
 
 short fix_dead_zone(short value, short dead_range)
@@ -136,7 +140,7 @@ void n3ds_engine_input_sample(const struct native_input_sample *sample)
         if(action&NATIVE_TOUCH_FLASHLIGHT) pressed|=1u<<_gamepad_analog_button_white;
         touch_scoreboard=(action&NATIVE_TOUCH_SCOREBOARD)!=0;
         touch_stub=action&(NATIVE_TOUCH_STUB_1|NATIVE_TOUCH_STUB_2|NATIVE_TOUCH_STUB_3|NATIVE_TOUCH_STUB_4);
-        touch_aiming=(action&NATIVE_TOUCH_AIM) && sample->touch_y<NATIVE_TOUCH_AIM_BOTTOM;
+        touch_aiming=(action&NATIVE_TOUCH_AIM) && touch_aim_available && touch_aim_available();
         touch_last_x=sample->touch_x;touch_last_y=sample->touch_y;
     } else if(touch_scoreboard && touching && !suppressed) {
         if(touch_handler && (touch_handler(sample->touch_x,sample->touch_y)&NATIVE_TOUCH_SCOREBOARD))
@@ -145,10 +149,11 @@ void n3ds_engine_input_sample(const struct native_input_sample *sample)
     } else if(touch_stub && touching && !suppressed) {
         if(!touch_handler || touch_handler(sample->touch_x,sample->touch_y)!=touch_stub) touch_stub=0;
     } else if(touch_aiming) {
-        /* Cancel until release on leaving the aim area or entering a menu.
-         * Crossing the button row cannot trigger a button or resume aiming. */
-        if(sample->touch_x>=320 || sample->touch_y>=NATIVE_TOUCH_AIM_BOTTOM ||
-           !touch_handler || !(touch_handler(sample->touch_x,sample->touch_y)&NATIVE_TOUCH_AIM)) touch_aiming=FALSE;
+        /* A drag owns the whole screen until release. Only the live gameplay
+         * gate is queried here: crossing buttons must neither cancel aiming
+         * nor invoke their handlers (which can have immediate side effects). */
+        if(sample->touch_x>=320 || sample->touch_y>=240 ||
+           !touch_aim_available || !touch_aim_available()) touch_aiming=FALSE;
         else {
             touch_dx=((long)sample->touch_x-touch_last_x)*TOUCH_AIM_GAIN;
             touch_dy=((long)touch_last_y-sample->touch_y)*TOUCH_AIM_GAIN;
@@ -195,7 +200,7 @@ boolean input_initialize(void)
     memset(&gamepad,0,sizeof(gamepad)); memset(&neutral,0,sizeof(neutral));
     memset(&last_sample,0,sizeof(last_sample));
     initialized=active=TRUE; suppressed=FALSE;
-    touch_was_down=touch_aiming=touch_scoreboard=FALSE;touch_stub=0;touch_handler=NULL;
+    touch_was_down=touch_aiming=touch_scoreboard=FALSE;touch_stub=0;touch_handler=NULL;touch_aim_available=NULL;
     return TRUE;
 }
 void input_dispose(void)
@@ -203,7 +208,7 @@ void input_dispose(void)
     if (initialized) n3ds_input_platform_dispose();
     initialized=active=suppressed=FALSE;
     gameplay_controls=0;
-    touch_was_down=touch_aiming=touch_scoreboard=FALSE;touch_stub=0;touch_handler=NULL;
+    touch_was_down=touch_aiming=touch_scoreboard=FALSE;touch_stub=0;touch_handler=NULL;touch_aim_available=NULL;
     memset(&gamepad,0,sizeof(gamepad)); memset(&last_sample,0,sizeof(last_sample));
 }
 void input_frame_begin(void)

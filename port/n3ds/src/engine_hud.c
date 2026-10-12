@@ -92,6 +92,12 @@ static int halo_touch_zone(unsigned int x,unsigned int y)
     if(x>=320.f-left)return y<114?2:4;
     return 0;
 }
+/* Kevin Boggs: touch_aim_available - Live gate without button hit tests or actions. */
+static int touch_aim_available(void)
+{
+    return !(n3ds_main_is_solo_multiplayer() && !game_engine_allow_pause()) &&
+        touch_unit()!=NONE && player_control_camera_control_is_active();
+}
 static unsigned int touch_action(unsigned int x,unsigned int y)
 {
     if(n3ds_main_is_solo_multiplayer() && !game_engine_allow_pause()) {
@@ -284,7 +290,7 @@ void n3ds_hud_draw_screen(void)
     long player=local_player_get_player_index(0);
     control_unit=player==NONE?NONE:player_get(player)->unit_index;
     control_generation=n3ds_engine_cache_generation();
-    n3ds_input_touch_handler(touch_action);draw_touch_panel();
+    n3ds_input_touch_handler(touch_action,touch_aim_available);draw_touch_panel();
     if(hud_visible && !cinematic_in_progress() && player_input_enabled() && touch_unit()!=NONE) {
         static long long fps_start;static unsigned int fps_frames;static int fps_value=30;
         extern long long n3ds_engine_ticks(void),n3ds_engine_tick_frequency(void);

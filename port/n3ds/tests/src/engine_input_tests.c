@@ -19,10 +19,16 @@ static unsigned int test_stub_touch(unsigned int x,unsigned int y)
     return 0;
 }
 
-static int aim_available;
+static int aim_available,aim_hit_tests;
+/* Kevin Boggs: test_aim_enabled - Live camera gate independent of touch location. */
+static int test_aim_enabled(void) { return aim_available; }
 static unsigned int test_aim_touch(unsigned int x,unsigned int y)
 {
+    ++aim_hit_tests;
     if(!aim_available || x>=320) return 0;
+    unsigned int panel=test_stub_touch(x,y);
+    if(panel)return panel==NATIVE_TOUCH_STUB_4?NATIVE_TOUCH_SCOREBOARD:panel;
+    if(y>=184 && y<236 && x>=8 && x<208)return NATIVE_TOUCH_GRENADE;
     if(y<NATIVE_TOUCH_AIM_BOTTOM) return NATIVE_TOUCH_AIM;
     if(y>=184 && y<236 && x>=216 && x<312) return NATIVE_TOUCH_FLASHLIGHT;
     return 0;
@@ -35,9 +41,10 @@ int halo_engine_touch_aim_tests(void)
 #define SAMPLE() n3ds_engine_input_sample(&s)
 #define RELEASE() do {s.held=0;SAMPLE();s.held=NATIVE_KEY_TOUCH;}while(0)
     AIM_CHECK(input_initialize());pad=input_get_gamepad_state(0);
-    aim_available=1;n3ds_input_touch_handler(test_aim_touch);
+    aim_available=1;n3ds_input_touch_handler(test_aim_touch,test_aim_enabled);
     s.held=NATIVE_KEY_TOUCH;s.touch_x=160;s.touch_y=100;SAMPLE();
     AIM_CHECK(!pad->sticks[1].x && !pad->sticks[1].y);
+    aim_hit_tests=0;
     s.touch_x=162;s.touch_y=99;SAMPLE();
     AIM_CHECK(pad->sticks[1].x==16384 && pad->sticks[1].y==8192);
     AIM_CHECK(n3ds_input_touch_look_scale(0)==1.65f && n3ds_input_touch_look_scale(1)==1.65f);
@@ -50,9 +57,19 @@ int halo_engine_touch_aim_tests(void)
     s.touch_x=0;s.touch_y=175;SAMPLE();
     AIM_CHECK(pad->sticks[1].x==-32768 && pad->sticks[1].y==-32768);
     s.touch_x=270;s.touch_y=200;SAMPLE();
-    AIM_CHECK(!pad->sticks[1].x && !pad->sticks[1].y && !pad->buttons[5]);
+    AIM_CHECK(pad->sticks[1].x==32767 && pad->sticks[1].y==-32768 && !pad->buttons[5]);
+    /* Cross every new panel, both grenades, and all four LCD corners. */
+    static const unsigned short drag[][2]={{40,65},{270,74},{40,140},{270,140},
+        {40,200},{150,200},{319,239},{0,239},{0,0},{319,0},{160,100}};
+    for(unsigned int point=0;point<sizeof(drag)/sizeof(drag[0]);++point) {
+        s.touch_x=drag[point][0];s.touch_y=drag[point][1];SAMPLE();
+        AIM_CHECK(pad->sticks[1].x || pad->sticks[1].y);
+        for(int button=0;button<NUMBER_OF_GAMEPAD_BUTTONS;++button) AIM_CHECK(!pad->buttons[button]);
+        AIM_CHECK(!n3ds_input_touch_panel_pressed());
+    }
+    AIM_CHECK(!aim_hit_tests);
     s.touch_x=100;s.touch_y=100;SAMPLE();
-    AIM_CHECK(!pad->sticks[1].x && !pad->sticks[1].y && !pad->buttons[5]);
+    AIM_CHECK(pad->sticks[1].x==-32768 && !pad->sticks[1].y && !pad->buttons[5]);
     RELEASE();s.touch_x=270;s.touch_y=200;SAMPLE();AIM_CHECK(pad->buttons[5]==1);
     SAMPLE();AIM_CHECK(!pad->buttons[5]);
     s.touch_x=100;s.touch_y=100;SAMPLE();AIM_CHECK(!pad->sticks[1].x && !pad->buttons[5]);
@@ -65,8 +82,12 @@ int halo_engine_touch_aim_tests(void)
     AIM_CHECK(!pad->sticks[1].x);
     RELEASE();SAMPLE();input_deactivate();input_activate();s.touch_x=130;SAMPLE();
     AIM_CHECK(!pad->sticks[1].x);
-    RELEASE();SAMPLE();s.touch_y=176;SAMPLE();s.touch_y=100;SAMPLE();
-    AIM_CHECK(!pad->sticks[1].y);
+    RELEASE();SAMPLE();s.touch_y=176;SAMPLE();AIM_CHECK(pad->sticks[1].y==-32768);
+    s.touch_y=239;SAMPLE();AIM_CHECK(pad->sticks[1].y==-32768);
+    s.touch_y=240;SAMPLE();s.touch_y=100;SAMPLE();AIM_CHECK(!pad->sticks[1].y);
+    RELEASE();SAMPLE();n3ds_input_touch_handler(NULL,NULL);s.touch_x=131;SAMPLE();
+    AIM_CHECK(!pad->sticks[1].x);n3ds_input_touch_handler(test_aim_touch,test_aim_enabled);
+    s.touch_x=130;SAMPLE();AIM_CHECK(!pad->sticks[1].x);
     RELEASE();SAMPLE();s.touch_x=320;SAMPLE();s.touch_x=130;SAMPLE();
     AIM_CHECK(!pad->sticks[1].x);
     RELEASE();SAMPLE();s.cstick_x=156;s.touch_x=140;SAMPLE();
@@ -74,7 +95,7 @@ int halo_engine_touch_aim_tests(void)
     AIM_CHECK(n3ds_input_touch_look_scale(0)==1.f);
     s.held=0;SAMPLE();AIM_CHECK(pad->sticks[1].x==32767);
     s.cstick_x=0;SAMPLE();AIM_CHECK(!pad->sticks[1].x && !pad->sticks[1].y);
-    n3ds_input_touch_handler(test_score_touch);
+    n3ds_input_touch_handler(test_score_touch,NULL);
     s.held=0;SAMPLE();s.held=NATIVE_KEY_TOUCH;s.touch_x=260;s.touch_y=150;SAMPLE();
     AIM_CHECK(pad->buttons[_gamepad_binary_button_back]==1);
     SAMPLE();AIM_CHECK(pad->buttons[_gamepad_binary_button_back]==2);
@@ -84,7 +105,7 @@ int halo_engine_touch_aim_tests(void)
     AIM_CHECK(n3ds_input_touch_panel_pressed()==4);
     s.held=0;SAMPLE();AIM_CHECK(!pad->buttons[_gamepad_binary_button_back]);
     AIM_CHECK(!n3ds_input_touch_panel_pressed());
-    n3ds_input_touch_handler(test_stub_touch);
+    n3ds_input_touch_handler(test_stub_touch,NULL);
     static const unsigned int px[]={40,270,40,270},py[]={65,74,140,140};
     for(int panel=1;panel<=4;++panel){
         s.held=0;SAMPLE();s.held=NATIVE_KEY_TOUCH;s.touch_x=px[panel-1];s.touch_y=py[panel-1];SAMPLE();
@@ -96,7 +117,7 @@ int halo_engine_touch_aim_tests(void)
     }
     s.held=0;SAMPLE();AIM_CHECK(!n3ds_input_touch_panel_pressed());
     input_dispose();
-    n3ds_log("PASS: touch drag aiming, direction, scoreboard and stub feedback hold/release, C-stick coexistence, button isolation and gameplay cancellation");
+    n3ds_log("PASS: full-screen captured touch aiming, no button hit tests during drag, direction, scoreboard and stub feedback hold/release, C-stick coexistence, button isolation and gameplay cancellation");
     n3ds_controls_set(&saved);return 0;
 #undef RELEASE
 #undef SAMPLE
@@ -150,7 +171,7 @@ int halo_engine_input_tests(void)
     input_activate(); n3ds_engine_input_sample(&sample); CHECK(pad->buttons[0]==1);
     sample.held=NATIVE_KEY_TOUCH; sample.touch_x=159; sample.touch_y=239;
     n3ds_engine_input_sample(&sample); CHECK(!pad->buttons[4] && !pad->buttons[5]);
-    n3ds_input_touch_handler(test_touch);
+    n3ds_input_touch_handler(test_touch,NULL);
     sample.touch_x=270;sample.touch_y=200;n3ds_engine_input_sample(&sample);CHECK(!pad->buttons[5]);
     sample.held=0;n3ds_engine_input_sample(&sample);
     sample.held=NATIVE_KEY_TOUCH;n3ds_engine_input_sample(&sample);CHECK(pad->buttons[5]==1);
@@ -160,7 +181,7 @@ int halo_engine_input_tests(void)
     input_activate();n3ds_engine_input_sample(&sample);CHECK(!pad->buttons[5]);
     sample.held=0;n3ds_engine_input_sample(&sample);
     sample.held=NATIVE_KEY_TOUCH;n3ds_engine_input_sample(&sample);CHECK(pad->buttons[5]==1);
-    n3ds_input_touch_handler(NULL);
+    n3ds_input_touch_handler(NULL,NULL);
     sample.touch_x=320; n3ds_engine_input_sample(&sample); CHECK(!pad->buttons[4] && !pad->buttons[5]);
     sample.touch_x=0; sample.touch_y=240; n3ds_engine_input_sample(&sample); CHECK(!pad->buttons[4]);
     sample.held=0; sample.touch_y=0; n3ds_engine_input_sample(&sample); CHECK(!pad->buttons[4]);
