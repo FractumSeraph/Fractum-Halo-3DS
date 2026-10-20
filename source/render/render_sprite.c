@@ -234,7 +234,13 @@ void build_sprites_begin(
 void build_sprites_end(
 	struct build_sprite_data *data)
 {
-	real one_over_sprite_count = 1.f / data->sprite_count;
+	real one_over_sprite_count =
+#ifdef HALO_N3DS
+		/* port: (Halo3DS) its particle thinning can leave a group empty */
+		data->sprite_count ? 1.f / data->sprite_count : 0.f;
+#else
+		1.f / data->sprite_count;
+#endif
 	short group_index;
 
 	match_assert(

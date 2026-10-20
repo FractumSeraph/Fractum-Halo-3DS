@@ -3117,9 +3117,27 @@ static boolean multiplayer_level_list_initialize(
 	match_vassert("c:\\halo\\SOURCE\\interface\\ui_widget_event_handler_functions.c", 1229,
 		definition->child_count == 3,
 		"expected 3 list items for 'multiplayer level list' widget");
+#if defined(HALO_N3DS) && !defined(HALO_CUSTOM_EDITION)
+	/* port: (Halo3DS) the SD card may hold only some of the maps: the ones
+	converted, with their original places kept apart so that each row's
+	name, picture and description still match its map */
+	native_multiplayer_map_count = 0;
+	for (short i = 0; i < 13; ++i)
+	{
+		if (n3ds_engine_map_installed(event_handler_functions.multiplayer_levels[i]))
+		{
+			native_multiplayer_map_indices[native_multiplayer_map_count] = i;
+			native_multiplayer_maps[native_multiplayer_map_count++] = event_handler_functions.multiplayer_levels[i];
+		}
+	}
+	level_count = native_multiplayer_map_count;
+	level_names = native_multiplayer_maps;
+	widget->parameters.list.selected_index = level_count ? 0 : NONE;
+	{char message[96];snprintf(message,sizeof(message),"MENU MAPS: %d prepared multiplayer maps available",level_count);n3ds_log(message);}
+#endif
 	widget->parameters.list.list_items = level_names;
 	widget->parameters.list.number_of_items = level_count;
-	if (saved_game_file_retrieve_last_used_multiplayer_map(map_name))
+	if (level_count && saved_game_file_retrieve_last_used_multiplayer_map(map_name))
 	{
 		widget->parameters.list.selected_index = 0;
 		while (widget->parameters.list.selected_index < level_count &&
@@ -5860,6 +5878,18 @@ static boolean multiplayer_level_select(
 		level_list->parameters.list.selected_index >= 0 && level_list->parameters.list.selected_index < ui_map_list_count(),
 		"invalid multiplayer level specified from 'multiplayer level list' list widget");
 	map_name = ui_map_list_names()[level_list->parameters.list.selected_index];
+#elif defined(HALO_N3DS)
+	/* port: (Halo3DS) the list of the maps on the SD card
+	(multiplayer_level_list_initialize), which may be empty */
+	if (level_list->parameters.list.number_of_items <= 0)
+	{
+		n3ds_log("MENU MAPS: no prepared multiplayer map to select");
+		ui_play_audio_feedback_sound(4);
+		return FALSE;
+	}
+	assert(level_list->parameters.list.selected_index >= 0 &&
+		level_list->parameters.list.selected_index < level_list->parameters.list.number_of_items);
+	map_name = ((char **)level_list->parameters.list.list_items)[level_list->parameters.list.selected_index];
 #else
 	match_vassert("c:\\halo\\SOURCE\\interface\\ui_widget_event_handler_functions.c", 1298,
 		level_list->parameters.list.selected_index >= 0 && level_list->parameters.list.selected_index < 13,

@@ -11,7 +11,7 @@
 /* port/linux/src\build_identity.h */
 const char * build_identity(void)
 {
-	return NULL;
+	return "Halo3DS multiplayer (FractumSeraph/OpenCE engine)";
 }
 /* source\cache_files.h */
 boolean cache_file_tags_are_ce(void)
@@ -259,7 +259,7 @@ boolean hud_hires_button_draw(struct icon_hud_element_definition const *icon, re
 /* port/linux/game\hud_hires_tags.c */
 struct bitmap_data const * hud_hires_sprite_bitmap(struct bitmap_data const *bitmap, short sequence_index)
 {
-	return NULL;
+	return bitmap; /* (no high-res sprite: the map's own) */
 }
 /* port/linux/game\hud_hires_tags.c */
 void hud_hires_tags_unloaded(void)
