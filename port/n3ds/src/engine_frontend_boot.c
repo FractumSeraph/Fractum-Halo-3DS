@@ -274,6 +274,8 @@ int halo_engine_boot(void)
         n3ds_main_frontend_services();
         long long services_end=n3ds_engine_ticks();
         n3ds_frontend_trace("input");
+        /* (the system's keyboard, asked for an invite: between two frames) */
+        {extern void n3ds_invite_keyboard_poll(void);n3ds_invite_keyboard_poll();}
         n3ds_input_platform_poll(&sample);
         n3ds_input_gameplay_controls(game_in_progress() && !main_menu_is_active() &&
             !ui_widgets_active() && player_input_enabled() && !cinematic_in_progress());

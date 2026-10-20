@@ -2455,7 +2455,7 @@ static void status_text(const char *const *lines,unsigned int count,int menu)
     n3ds_gpu_text_begin(320,240,0xffffffffu,1,0);
     C3D_AlphaBlend(GPU_BLEND_ADD,GPU_BLEND_ADD,GPU_SRC_ALPHA,GPU_ONE_MINUS_SRC_ALPHA,GPU_ZERO,GPU_ONE);
     for(unsigned int line=0;line<count;++line) {
-        float size=menu?8:line?8:16,x=(320-strlen(lines[line])*size)*.5f,y=menu?184+line*20:line?80+line*24:40;
+        float size=menu?8:line?8:16,x=(320-strlen(lines[line])*size)*.5f,y=menu?(count<=2?184+line*20:236-(count-line)*18):line?80+line*24:40;
         for(const char *p=lines[line];*p;++p,x+=size) {
             unsigned int c=(unsigned char)*p;
             float u=(c%16)/16.f,v=(c/16)/8.f;
@@ -2481,7 +2481,13 @@ void n3ds_gpu_campaign_help(void)
 {
     struct native_control_settings s;n3ds_controls_get(&s);
     const char *lines[]={"At difficulty selection:",s.xbox_buttons?"B: Start mission   R + B: Resume save":"A: Start mission   R + A: Resume save"};
-    n3ds_gpu_hud_screen(1);status_text(lines,2,1);
+    /* port: the fork's internet play's lines first, when it has some: a
+     * hosted game's invite, Online Games' controls (engine_network_help.c) */
+    extern int n3ds_menu_network_help(const char **lines,int maximum);
+    const char *network[6];int network_count=n3ds_menu_network_help(network,6);
+    n3ds_gpu_hud_screen(1);
+    if(network_count>0) status_text(network,(unsigned int)network_count,1);
+    else status_text(lines,2,1);
     n3ds_gpu_hud_screen(0);n3ds_gpu_world_state_restore();
 }
 

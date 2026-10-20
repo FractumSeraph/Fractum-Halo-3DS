@@ -103,11 +103,6 @@ int halo_linux_touch_move(short controller_index, float *forward, float *strafe)
 {
 	return 0;
 }
-/* port/linux/include/halo_ui_pointer.h */
-int halo_scoreboard_pointer_update(int offered, struct halo_ui_pointer *pointer)
-{
-	return 0;
-}
 /* port/linux/include/halo_linux_source_fixups.h */
 void halo_screen_ui_offset(unsigned char centered)
 {
@@ -116,11 +111,6 @@ void halo_screen_ui_offset(unsigned char centered)
 long halo_screen_width(void)
 {
 	return 640; /* (the Xbox's screen: Halo3DS draws its own) */
-}
-/* port/linux/include/halo_ui_pointer.h */
-int halo_ui_pointer_update(int menus_active, struct halo_ui_pointer *pointer)
-{
-	return 0;
 }
 /* port/linux/game/hud_hires_tags.c */
 boolean hud_hires_button_draw(struct icon_hud_element_definition const *icon, rectangle2d *cursor, pixel32 color)
@@ -548,12 +538,6 @@ const char *updater_version(void)
 int platform_open_url(const char *url)
 {
 	(void)url;
-	return 0;
-}
-int platform_take_clipboard_invite(char *invite, int size)
-{
-	if (invite && size > 0)
-		invite[0] = 0;
 	return 0;
 }
 /* port/linux/src/map_torrents.c's: no BitTorrent on the 3DS (nor Custom

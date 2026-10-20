@@ -3350,6 +3350,22 @@
     {
       "source": "port/n3ds/src/engine_win32_files.c",
       "compiler": "gcc"
+    },
+    {
+      "source": "port/linux/src/touch_menu.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "port/n3ds/src/engine_ui_pointer.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "port/n3ds/src/engine_invite_keyboard.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "port/n3ds/src/engine_network_help.c",
+      "compiler": "clang"
     }
   ],
   "runtime": [

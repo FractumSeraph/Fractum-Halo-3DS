@@ -720,6 +720,61 @@ static void join_selected(
 	browser_screen.connecting_time = system_milliseconds();
 }
 
+#ifdef HALO_N3DS
+/* port: (the 3DS, which has no clipboard) a game joined by its invite, typed
+on the system's keyboard (port/n3ds/src/engine_invite_keyboard.c), as a
+picked game is: its 64 digits taken from what was typed (a halo://join link,
+or the digits alone), the network client started, the invite joined, its
+host's game joined once it is advertised (wait_for_host). FALSE if what was
+typed holds no invite */
+boolean browser_screen_join_typed_invite(
+	char const *typed)
+{
+	char invite[BROWSER_INVITE_LENGTH + 1];
+	long length = 0;
+	char const *cursor;
+
+	for (cursor = typed; cursor && *cursor && length < BROWSER_INVITE_LENGTH; cursor++)
+	{
+		char c = *cursor >= 'A' && *cursor <= 'F' ? *cursor - 'A' + 'a' : *cursor;
+
+		if ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))
+			invite[length++] = c;
+		else if (length && length < BROWSER_INVITE_LENGTH)
+			length = 0;
+	}
+	invite[length] = 0;
+	if (length != BROWSER_INVITE_LENGTH)
+	{
+		set_status("That is not an invite: 64 digits and letters a to f.");
+		return FALSE;
+	}
+	if (!global_network_game_client_get())
+	{
+		if (!create_global_network_game_client())
+		{
+			set_status("Could not start the network.");
+			return FALSE;
+		}
+		game_connection_set(_game_connection_network_client);
+	}
+	join_first_player();
+	if (!browser_join(invite))
+	{
+		set_status("Online play is off (network.online in config.toml).");
+		return FALSE;
+	}
+	browser_screen.connecting = TRUE;
+	browser_screen.connecting_map_checked = FALSE;
+	browser_screen.rejoin_pending = FALSE;
+	csstrncpy(browser_screen.connecting_invite, invite, sizeof(browser_screen.connecting_invite) - 1);
+	browser_screen.connecting_invite[sizeof(browser_screen.connecting_invite) - 1] = 0;
+	snprintf(browser_screen.connecting_name, sizeof(browser_screen.connecting_name), "the invite's game");
+	browser_screen.connecting_time = system_milliseconds();
+	return TRUE;
+}
+#endif
+
 /* the picked game's host: its game joined once it is advertised, and its
 lobby opened */
 static void wait_for_host(
@@ -1264,7 +1319,18 @@ offer's while it is) */
 			create_game();
 		break;
 	case _gamepad_binary_button_back:
+#ifdef HALO_N3DS
+		/* port: (the 3DS, which has no clipboard) a game joined by its
+		invite, typed on the system's keyboard; the invite prompt asks
+		(port/n3ds/src/engine_invite_keyboard.c, invite_prompt.c) */
+		{
+			void n3ds_invite_keyboard_request(void);
+
+			n3ds_invite_keyboard_request();
+		}
+#else
 		set_status("Filters are next");
+#endif
 		break;
 	case _gamepad_analog_button_left_trigger:
 	case _gamepad_analog_button_white:

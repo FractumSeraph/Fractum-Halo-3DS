@@ -101,6 +101,12 @@ int halo_engine_model_controls_tests(void)
     n3ds_log("PASS: original-model L fire/R grenade/Up zoom/Down crouch; no Up/Down movement; menu navigation and New-model mapping preserved");
     return 0;
 }
+/* port: the latest sample, as polled (the fork's menu pointer reads its
+ * touch: engine_ui_pointer.c) */
+void n3ds_engine_input_last(struct native_input_sample *sample)
+{
+    if(sample) *sample=last_sample;
+}
 void n3ds_engine_input_sample(const struct native_input_sample *sample)
 {
     unsigned int i, pressed=0;
