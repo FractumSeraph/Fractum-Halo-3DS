@@ -82,8 +82,18 @@ struct machine_datum
 
 /* ---------- prototypes/DEVICES.C */
 
+void devices_initialize(
+	void);
+void devices_initialize_for_new_map(
+	void);
+void device_delete(
+	long object_index);
 void devices_dispose(
 	void);
+void devices_dispose_from_old_map(
+	void);
+boolean device_new(
+	long object_index);
 void device_add_scenario_information(
 	long object_index,
 	struct scenario_device_datum *scenario_device);
@@ -98,6 +108,9 @@ real device_get_power(
 void device_set_never_appears_locked(
 	long device_index,
 	boolean never_locked);
+void device_group_set_actual_value(
+	short group_index,
+	real actual_value);
 void device_one_sided_set(
 	long device_index,
 	boolean one_sided);
@@ -107,9 +120,33 @@ void device_operates_automatically_set(
 void device_set_actual_position(
 	long device_index,
 	real position);
+boolean device_set_desired_position(
+	long device_index,
+	real position);
+void device_set_power(
+	long device_index,
+	real power);
 boolean device_group_set_desired_value(
 	short group_index,
 	real desired_value);
+/* port: co-op device sync (port/linux/game/network_coop.c) */
+boolean device_group_network_get(
+	short group_index,
+	real *value,
+	word *flags,
+	boolean *runtime);
+void device_group_network_set(
+	short group_index,
+	real value,
+	word flags,
+	boolean snap);
+/* port: a co-op client puts a device at the host's power, and at its
+position when move_to_position */
+void device_port_set_state(
+	long device_index,
+	real power,
+	boolean move_to_position,
+	real position);
 boolean device_can_change_position(
 	long device_index);
 boolean device_frontfacing(

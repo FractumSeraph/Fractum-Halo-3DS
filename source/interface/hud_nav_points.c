@@ -99,7 +99,9 @@ symbols in this file:
 /* ---------- headers */
 
 #include "cseries/cseries.h"
+#include "cseries/errors.h"
 #include "game_state.h"
+#include "game/game_engine.h"
 #include "game/players.h"
 #include "networking/network_connection.h"
 #include "memory/data.h"
@@ -121,6 +123,10 @@ symbols in this file:
 #include "scenario/scenario.h"
 #include "scenario/scenario_definitions.h"
 #include "units/units.h"
+#ifdef HALO_64BIT
+#include "cseries/errors.h"
+#endif
+#include "network_coop.h" /* port: port/linux/game/network_coop.c */
 
 /* ---------- constants */
 
@@ -160,35 +166,6 @@ enum hud_number_show_flags
 
 /* ---------- structures */
 
-struct hud_absolute_placement_definition
-{
-	short corner;
-	short pad;
-	long unused[8];
-};
-
-struct hud_placement_definition
-{
-	point2d offset;
-	real_vector2d scale;
-	short multiplayer_scaling_flags;
-	short pad;
-	long unused0[5];
-};
-
-struct hud_color_definition
-{
-	unsigned long color;
-	unsigned long flash_color;
-	real flash_period;
-	real flash_delay;
-	short number_of_flashes;
-	unsigned short flash_flags;
-	real flash_length;
-	unsigned long disabled_color;
-	unsigned long custom;
-};
-
 struct number_hud_element_definition
 {
 	struct hud_placement_definition placement;
@@ -198,26 +175,6 @@ struct number_hud_element_definition
 	byte fractional_digits;
 	byte pad;
 	long unused[3];
-};
-
-struct hud_messaging_parameters_definition
-{
-	struct hud_absolute_placement_definition absolute_placement;
-	struct hud_placement_definition placement;
-	struct tag_reference single_player_font;
-	struct tag_reference multi_player_font;
-	real up_time;
-	real fade_time;
-	real_argb_color state_color;
-	real_argb_color text_color;
-	real spacing;
-	struct tag_reference hud_item_messages;
-	struct tag_reference messaging_icons;
-	struct tag_reference alternate_icon_text;
-	struct tag_block button_icons;
-	struct hud_color_definition color;
-	struct tag_reference hud_messages;
-	struct hud_color_definition objective_color;
 };
 
 struct hud_waypoint_arrow
@@ -234,25 +191,6 @@ struct hud_waypoint_arrow
 	long unused2[6];
 };
 
-struct hud_waypoint_definition
-{
-	real top_offset;
-	real bottom_offset;
-	real left_offset;
-	real right_offset;
-	long unused0[8];
-	struct tag_reference arrow_bitmap;
-	struct tag_block arrows;
-	long unused1[0x14];
-};
-
-struct hud_globals_definition
-{
-	struct hud_messaging_parameters_definition messaging;
-	struct hud_waypoint_definition waypoint;
-	byte unknown1BC[0x294];
-};
-
 struct hud_nav_point_datum
 {
 	short nav_index;
@@ -265,15 +203,6 @@ struct hud_nav_point_datum
 struct hud_nav_point_player_datum
 {
 	struct hud_nav_point_datum nav_points[MAXIMUM_NUMBER_OF_NAV_POINTS];
-};
-
-struct scenario_cutscene_flag
-{
-	long runtime_unused;
-	char name[TAG_STRING_LENGTH];
-	real_point3d position;
-	real_euler_angles2d facing;
-	byte unused[0x24];
 };
 
 struct hud_nav_object_datum
@@ -290,35 +219,11 @@ struct hud_nav_object_datum
 static void hud_update_nav_point_local_player(
 	short local_player_index);
 
-void *object_try_and_get_and_verify_type(
-	long object_index,
-	unsigned long valid_type_flags);
-
-void object_get_bounding_sphere(
-	long object_index,
-	real_point3d *center,
-	real *radius);
-
-real_point3d *game_engine_get_goal_position(
-	real_point3d *position,
-	short goal_index);
-
-void custom_render_nav_point(
-	short local_player_index,
-	real_point3d const *position,
-	short nav_index,
-	short render_type);
-
-void game_engine_render_nav_points(
-	short local_player_index);
-
-void unit_get_head_position(
-	long unit_index,
-	real_point3d *head_position);
-
 /* ---------- globals */
+#ifdef HALO_64BIT
 
 extern struct hud_globals_definition *hud_globals;
+#endif
 
 static struct hud_nav_point_player_datum *nav_point_data;
 
@@ -353,6 +258,30 @@ short find_nav_point(
 
 	return nav_index;
 }
+
+#ifdef HALO_GAME_BROWSER
+/* port: a waypoint arrow's color (its tag's), for a game type's HUD to show
+a team in its arrows' colors (game_engine_bomb.c); FALSE for none */
+boolean hud_nav_point_color(
+	char const *name,
+	unsigned long *color)
+{
+	short index;
+
+	for (index = 0; hud_globals && index < hud_globals->waypoint.arrows.count; index++)
+	{
+		struct hud_waypoint_arrow *arrow = TAG_BLOCK_GET_ELEMENT(
+			&hud_globals->waypoint.arrows, index, struct hud_waypoint_arrow);
+
+		if (!_stricmp(name, arrow->name))
+		{
+			*color = arrow->color | 0xFF000000;
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+#endif
 
 struct hud_nav_point_player_datum *get_nav_point_datum(
 	short local_player_index)
@@ -599,6 +528,7 @@ void hud_activate_team_nav_point_with_flag(
 	short flag_index,
 	float vertical_offset)
 {
+	network_coop_note_nav_point(_coop_nav_point_team_flag, nav_index, team_index, flag_index, vertical_offset);
 	hud_activate_team_nav_point(nav_index, team_index, _hud_nav_point_type_flag, flag_index, vertical_offset);
 
 	return;
@@ -610,6 +540,7 @@ void hud_activate_team_nav_point_with_object(
 	long object_index,
 	float vertical_offset)
 {
+	network_coop_note_nav_point(_coop_nav_point_team_object, nav_index, team_index, object_index, vertical_offset);
 	hud_activate_team_nav_point(nav_index, team_index, _hud_nav_point_type_object, object_index, vertical_offset);
 
 	return;
@@ -656,6 +587,7 @@ void hud_deactivate_team_nav_point_with_flag(
 	short team_index,
 	short flag_index)
 {
+	network_coop_note_nav_point(_coop_nav_point_team_flag, NONE, team_index, flag_index, 0.0f);
 	hud_deactivate_team_nav_point(team_index, _hud_nav_point_type_flag, flag_index);
 
 	return;
@@ -665,6 +597,7 @@ void hud_deactivate_team_nav_point_with_object(
 	short team_index,
 	long object_index)
 {
+	network_coop_note_nav_point(_coop_nav_point_team_object, NONE, team_index, object_index, 0.0f);
 	hud_deactivate_team_nav_point(team_index, _hud_nav_point_type_object, object_index);
 
 	return;
@@ -678,6 +611,7 @@ void hud_unit_activate_nav_point_with_flag(
 {
 	long player_index = player_index_from_unit_index(unit_index);
 
+	network_coop_note_nav_point(_coop_nav_point_unit_flag, nav_index, unit_index, flag_index, vertical_offset);
 	if (player_index!=NONE)
 	{
 		hud_activate_nav_point(nav_index, player_index, _hud_nav_point_type_flag, flag_index, vertical_offset);
@@ -694,6 +628,7 @@ void hud_unit_activate_nav_point_with_object(
 {
 	long player_index = player_index_from_unit_index(unit_index);
 
+	network_coop_note_nav_point(_coop_nav_point_unit_object, nav_index, unit_index, object_index, vertical_offset);
 	if (player_index!=NONE)
 	{
 		hud_activate_nav_point(nav_index, player_index, _hud_nav_point_type_object, object_index, vertical_offset);
@@ -708,6 +643,7 @@ void hud_unit_deactivate_nav_point_with_flag(
 {
 	long player_index = player_index_from_unit_index(unit_index);
 
+	network_coop_note_nav_point(_coop_nav_point_unit_flag, NONE, unit_index, flag_index, 0.0f);
 	if (player_index!=NONE)
 	{
 		hud_deactivate_nav_point(player_index, _hud_nav_point_type_flag, flag_index);
@@ -722,6 +658,7 @@ void hud_unit_deactivate_nav_point_with_object(
 {
 	long player_index = player_index_from_unit_index(unit_index);
 
+	network_coop_note_nav_point(_coop_nav_point_unit_object, NONE, unit_index, object_index, 0.0f);
 	if (player_index!=NONE)
 	{
 		hud_deactivate_nav_point(player_index, _hud_nav_point_type_object, object_index);
@@ -781,7 +718,7 @@ void custom_render_nav_point(
 	real_point3d view_point;
 	real distance;
 	real arrow_scale;
-	real_point2d screen_point;
+	real_point2d screen_position;
 	real horizontal_radius;
 	real vertical_radius;
 	real vertical_component;
@@ -801,16 +738,16 @@ void custom_render_nav_point(
 		long unit_index = local_player_get_player_index(local_player_index)==NONE ?
 			NONE :
 			player_get(local_player_get_player_index(local_player_index))->unit_index;
-		real_point3d camera_position;
+		real_point3d cam_pos;
 		real delta_x;
 		real delta_y;
 		real delta_z;
 
-		unit_get_camera_position(unit_index, &camera_position);
+		unit_get_camera_position(unit_index, &cam_pos);
 
-		delta_x = position->x-camera_position.x;
-		delta_y = position->y-camera_position.y;
-		delta_z = position->z-camera_position.z;
+		delta_x = position->x-cam_pos.x;
+		delta_y = position->y-cam_pos.y;
+		delta_z = position->z-cam_pos.z;
 		distance = square_root(
 			delta_x*delta_x + (delta_y*delta_y + delta_z*delta_z));
 	}
@@ -836,18 +773,18 @@ void custom_render_nav_point(
 			&render.camera,
 			&render.frustum,
 			&view_point,
-			&screen_point))
+			&screen_position))
 	{
-		screen_point.x = view_point.x;
-		screen_point.y = -view_point.y;
+		screen_position.x = view_point.x;
+		screen_position.y = -view_point.y;
 		waypoint_type = _waypoint_off_screen;
 	}
 	else
 	{
-		screen_point.x -= (real)(
+		screen_position.x -= (real)(
 			((render.camera.viewport_bounds.x1-render.camera.viewport_bounds.x0)/2) +
 			render.camera.viewport_bounds.x0);
-		screen_point.y -= (real)(
+		screen_position.y -= (real)(
 			((render.camera.viewport_bounds.y1-render.camera.viewport_bounds.y0)/2) +
 			render.camera.viewport_bounds.y0);
 	}
@@ -859,8 +796,8 @@ void custom_render_nav_point(
 		((real)(render.camera.window_bounds.y1-render.camera.window_bounds.y0) -
 		(hud_globals->waypoint.bottom_offset+hud_globals->waypoint.top_offset))*0.5f;
 	radius_product = vertical_radius*horizontal_radius;
-	vertical_component = vertical_radius*screen_point.x;
-	horizontal_component = horizontal_radius*screen_point.y;
+	vertical_component = vertical_radius*screen_position.x;
+	horizontal_component = horizontal_radius*screen_position.y;
 	theta = 0.0f;
 
 	if (waypoint_type==_waypoint_off_screen ||
@@ -872,18 +809,18 @@ void custom_render_nav_point(
 			(vertical_component*vertical_component + horizontal_component*horizontal_component));
 
 		waypoint_type = _waypoint_off_screen;
-		screen_point.x *= scale;
-		screen_point.y *= scale;
+		screen_position.x *= scale;
+		screen_position.y *= scale;
 
 		if (!TEST_FLAG(arrow->flags, _hud_waypoint_dont_rotate_offscreen_bit))
 		{
-			theta = -arctangent(screen_point.x, screen_point.y);
+			theta = -arctangent(screen_position.x, screen_position.y);
 		}
 	}
 
-	screen_point.x += (real)(
+	screen_position.x += (real)(
 		(render.camera.viewport_bounds.x1-render.camera.viewport_bounds.x0)/2);
-	screen_point.y += (real)(
+	screen_position.y += (real)(
 		(render.camera.viewport_bounds.y1-render.camera.viewport_bounds.y0)/2);
 
 	match_assert(
@@ -907,18 +844,18 @@ void custom_render_nav_point(
 			(struct bitmap_data *)bitmap, FALSE, TRUE))
 		{
 			point2d point;
-			real_rgb_color color;
+			real_rgb_color rgb_temp;
 			byte alpha;
 			real fade;
 
-			point.x = (short)(long)screen_point.x;
-			point.y = (short)(long)screen_point.y;
+			point.x = (short)(long)screen_position.x;
+			point.y = (short)(long)screen_position.y;
 			alpha = (byte)PIN(fast_ftol_C(arrow->opacity)*255, 0, 255);
-			pixel32_to_real_rgb_color(arrow->color, &color);
+			pixel32_to_real_rgb_color(arrow->color, &rgb_temp);
 			fade = 1.0f-arrow->fade;
-			color.red *= PIN(fade, 0.0f, 1.0f);
-			color.green *= PIN(fade, 0.0f, 1.0f);
-			color.blue *= PIN(fade, 0.0f, 1.0f);
+			rgb_temp.red *= PIN(fade, 0.0f, 1.0f);
+			rgb_temp.green *= PIN(fade, 0.0f, 1.0f);
+			rgb_temp.blue *= PIN(fade, 0.0f, 1.0f);
 
 			hud_draw_bitmap_direct(
 				bitmap,
@@ -927,7 +864,7 @@ void custom_render_nav_point(
 				clip,
 				arrow_scale,
 				theta,
-				((pixel32)alpha<<24) | real_rgb_color_to_pixel32(&color),
+				((pixel32)alpha<<24) | real_rgb_color_to_pixel32(&rgb_temp),
 				FALSE);
 
 			if (waypoint_type!=_waypoint_off_screen)
@@ -943,9 +880,9 @@ void custom_render_nav_point(
 
 				placement.corner = _hud_anchor_top_left;
 				numbers.colors.color =
-					((pixel32)alpha<<24) | real_rgb_color_to_pixel32(&color);
+					((pixel32)alpha<<24) | real_rgb_color_to_pixel32(&rgb_temp);
 				numbers.colors.flash_color =
-					((pixel32)alpha<<24) | real_rgb_color_to_pixel32(&color);
+					((pixel32)alpha<<24) | real_rgb_color_to_pixel32(&rgb_temp);
 				numbers.digits = 3;
 				numbers.fractional_digits = 1;
 				numbers.number_flags =
@@ -1006,7 +943,7 @@ void hud_render_nav_points(
 		for (nav_point_index = 0; nav_point_index<MAXIMUM_NUMBER_OF_NAV_POINTS; nav_point_index++)
 		{
 			struct hud_nav_point_datum *nav_point = &datum->nav_points[nav_point_index];
-			real_point3d position;
+			real_point3d position = { 0 };
 
 			if (nav_point->nav_index==NONE ||
 				nav_point->reference_index==NONE ||

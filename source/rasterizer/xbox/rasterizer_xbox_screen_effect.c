@@ -97,17 +97,20 @@ symbols in this file:
 #include "cseries/errors.h"
 #include "interface/hud_draw.h"
 #include "bitmaps/bitmaps_inlines.h"
-#include "main/main_runtime.h"
+#include "main/main.h"
 #include "math/integer_math.h"
 #include "math/real_math.h"
 #include "render/render_cameras.h"
 #include "rasterizer/rasterizer.h"
 #include "rasterizer/rasterizer_cinematics.h"
-#include "rasterizer/rasterizer_debug_options.h"
+#include "rasterizer/rasterizer_console_vars.h"
 #include <stddef.h>
 #include <xtl.h>
 #include "rasterizer_xbox.h"
 #include "rasterizer_xbox_pixel_shader.h"
+#ifdef HALO_64BIT
+#include "cseries/cseries_windows.h" /* (declared: its result is not an int) */
+#endif
 
 /* ---------- constants */
 
@@ -168,11 +171,12 @@ enum
 /* ---------- structures */
 
 typedef char rasterizer_screen_effect_debug_options_flashes_offset_assert[
-	offsetof(struct rasterizer_debug_options_definition, screen_flashes) == 0x47 ? 1 : -1];
+	offsetof(struct rasterizer_debug_options, screen_flash_enabled) == 0x47 ? 1 : -1];
 typedef char rasterizer_screen_effect_debug_options_effects_offset_assert[
-	offsetof(struct rasterizer_debug_options_definition, screen_effects) == 0x48 ? 1 : -1];
+	offsetof(struct rasterizer_debug_options, screen_effects_enabled) == 0x48 ? 1 : -1];
 typedef char rasterizer_screen_effect_parameters_mask_offset_assert[
 	offsetof(struct rasterizer_cinematic_screen_effect_parameters, convolution_mask) == 0x08 ? 1 : -1];
+#ifndef HALO_64BIT
 typedef char rasterizer_screen_effect_parameters_tint_offset_assert[
 	offsetof(struct rasterizer_cinematic_screen_effect_parameters, filter_desaturation_tint) == 0x14 ? 1 : -1];
 typedef char rasterizer_screen_effect_parameters_video_offset_assert[
@@ -181,18 +185,20 @@ typedef char rasterizer_screen_effect_parameters_scanline_offset_assert[
 	offsetof(struct rasterizer_cinematic_screen_effect_parameters, video_scanline_map) == 0x28 ? 1 : -1];
 typedef char rasterizer_screen_effect_parameters_noise_offset_assert[
 	offsetof(struct rasterizer_cinematic_screen_effect_parameters, video_noise_map) == 0x34 ? 1 : -1];
+#endif
 typedef char rasterizer_screen_effect_window_viewport_offset_assert[
 	offsetof(struct rasterizer_window_begin_parameters, camera.viewport_bounds) == 0x34 ? 1 : -1];
 typedef char rasterizer_screen_effect_window_bounds_offset_assert[
 	offsetof(struct rasterizer_window_begin_parameters, camera.window_bounds) == 0x3C ? 1 : -1];
+#ifndef HALO_64BIT
 typedef char rasterizer_screen_effect_window_flash_offset_assert[
 	offsetof(struct rasterizer_window_begin_parameters, screen_flash) == 0x238 ? 1 : -1];
+#endif
 typedef char rasterizer_screen_effect_pixel_shader_size_assert[
 	sizeof(struct pixel_shader_definition) == 0xF0 ? 1 : -1];
 
 /* ---------- globals */
 
-extern struct rasterizer_window_begin_parameters global_window_parameters;
 
 /* ---------- private code */
 
@@ -432,10 +438,21 @@ static void rasterizer_screen_effect_set_texture_transforms(
 				223,
 				main_get_window_count()<=1);
 
-			random_value = real_seed_random(get_global_local_random_seed_address());
-			constants[4][3] += noise_scale.i * random_value * noise_size.i;
-			random_value = real_seed_random(get_global_local_random_seed_address());
-			constants[5][3] += noise_scale.j * random_value * noise_size.j;
+			/* The native builds draw several frames per tick
+			(port/linux/game/render_interpolation.c): move the noise 30 times
+			a second, as the Xbox did once a frame, not every frame. */
+			{
+				unsigned long noise_seed =
+					(unsigned long)system_milliseconds() / (MILLISECONDS_PER_SECOND / TICKS_PER_SECOND) * 0x9E3779B1UL;
+
+				noise_seed ^= noise_seed >> 16;
+				noise_seed *= 0x7FEB352DUL;
+				noise_seed ^= noise_seed >> 15;
+				random_value = real_seed_random(&noise_seed);
+				constants[4][3] += noise_scale.i * random_value * noise_size.i;
+				random_value = real_seed_random(&noise_seed);
+				constants[5][3] += noise_scale.j * random_value * noise_size.j;
+			}
 		}
 
 		IDirect3DDevice8_SetVertexShaderConstant(
@@ -470,11 +487,33 @@ void _rasterizer_screen_effect(
 		parameters->filter_light_enhancement_intensity > 0.0f ||
 		parameters->filter_desaturation_intensity > 0.0f ||
 		parameters->video_on) &&
-		rasterizer_debug_options.screen_effects &&
+		rasterizer_debug_options.screen_effects_enabled &&
 		global_window_parameters.rasterizer_target == _rasterizer_target_render_primary)
 	{
 		short pass_count = (parameters->convolution_extra_passes + 1) * 2;
 		short pass;
+		/* The native builds draw the screen at several pixels to the Xbox's
+		one (halo_screen_scale): a convolution's few copies of the screen,
+		apart by its radius in the Xbox's pixels, blended into a blur at
+		640x480, and at four times the pixels they stand apart as sharp
+		ghosts (the zoom's warp). The same spread in that many times the
+		passes, each a step of it, blends them again. */
+		struct rasterizer_cinematic_screen_effect_parameters scaled_parameters;
+
+		if (parameters->convolution_type != _rasterizer_screen_effect_convolution_type_none && !parameters->video_on)
+		{
+			long steps = (long)(halo_screen_scale() + 0.999f);
+
+			if (steps > 6)
+				steps = 6;
+			if (steps > 1)
+			{
+				scaled_parameters = *parameters;
+				scaled_parameters.convolution_radius /= (real)steps;
+				parameters = &scaled_parameters;
+				pass_count *= (short)steps;
+			}
+		}
 		short source_target;
 		short destination_target;
 		short stage;
@@ -977,17 +1016,10 @@ void _rasterizer_screen_effect(
 
 			if (pass == 0 && main_get_window_count() > 1 && pass_count != 1)
 			{
-#ifdef HALO_ANDROID
 				vertex_bounds.x0 = 2 * global_window_parameters.camera.viewport_bounds.x0 *
-					(1.0f / (real)halo_android_screen_width()) - 1.0f;
+					(1.0f / (real)halo_screen_width()) - 1.0f;
 				vertex_bounds.x1 = 2 * global_window_parameters.camera.viewport_bounds.x1 *
-					(1.0f / (real)halo_android_screen_width()) - 1.0f;
-#else
-				vertex_bounds.x0 = 2 * global_window_parameters.camera.viewport_bounds.x0 *
-					(1.0f / 640.0f) - 1.0f;
-				vertex_bounds.x1 = 2 * global_window_parameters.camera.viewport_bounds.x1 *
-					(1.0f / 640.0f) - 1.0f;
-#endif
+					(1.0f / (real)halo_screen_width()) - 1.0f;
 				vertex_bounds.y0 = -2 * global_window_parameters.camera.viewport_bounds.y0 *
 					(1.0f / 480.0f) + 1.0f;
 				vertex_bounds.y1 = -2 * global_window_parameters.camera.viewport_bounds.y1 *
@@ -1191,7 +1223,7 @@ void _rasterizer_screen_flash(
 
 	rasterizer_profile_begin(_rasterizer_profile_screen_flash);
 
-	if (rasterizer_debug_options.screen_flashes &&
+	if (rasterizer_debug_options.screen_flash_enabled &&
 		global_window_parameters.screen_flash.type != _render_screen_flash_type_none)
 	{
 		flash_color.alpha = global_window_parameters.screen_flash.intensity *

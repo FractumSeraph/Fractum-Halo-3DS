@@ -22,6 +22,14 @@ enum cached_map_file_precache_state
 	NUMBER_OF_CACHED_MAP_FILE_PRECACHE_STATES,
 };
 
+/* port: what a read's completion flag is set to when the read failed or came
+up short (cache_file_read): not FALSE, so whatever waits on it stops
+waiting, but not TRUE either, so a caller that checks can tell */
+enum
+{
+	_cache_file_read_failed = 2,
+};
+
 /* ---------- macros */
 
 /* ---------- structures */
@@ -37,13 +45,17 @@ struct cache_file_structure_bsp_header;
 struct tag_iterator
 {
 	byte reserved0[4];
-	short absolute_index;
-	byte reserved6[10];
+	/* port: a long, as the tags' count is (a short wrapped on a count past
+	0x7FFF, and the walk never ended); the struct keeps its size */
+	long absolute_index;
+	byte reserved8[8];
 	long group_tag;
 };
 
 /* ---------- prototypes/CACHE_FILES.C */
 
+void *cache_files_tag_cache(
+	unsigned long *size);
 #ifdef HALO_N3DS
 /* Platform loader supplies fully validated, relocated cache memory. */
 void cache_files_bind_native(const struct cache_file_header *header, struct cache_file_tag_header *tags);
@@ -57,6 +69,45 @@ boolean cache_file_header_verify(
 	struct cache_file_header *header,
 	char const *scenario_name,
 	boolean fatal);
+boolean cache_files_give_time_to_precache(
+	char const *map_name);
+char const *cache_file_loaded_map_name(
+	void);
+char const *cache_files_build_region(
+	char const *build);
+char const *cache_files_multiplayer_region(
+	char build[0x20]);
+boolean cache_files_map_plays_multiplayer(
+	char const *map_name,
+	char build[0x20]);
+void cache_files_show_multiplayer_unavailable(
+	char const *map_name,
+	char const *build);
+unsigned long cache_files_map_version(
+	char const *map_name);
+
+/* port: whether the loaded map is a Custom Edition or HaloMD map, whose
+tags Halo PC's engine let be what the Xbox's asserts against; FALSE in a
+build without them */
+#ifdef HALO_CUSTOM_EDITION
+boolean cache_file_tags_are_ce(void);
+#define CACHE_FILE_TAGS_ARE_CE() cache_file_tags_are_ce()
+#else
+#define CACHE_FILE_TAGS_ARE_CE() FALSE
+#endif
+unsigned long cache_files_map_choose(
+	char *map_name,
+	long size);
+/* port: a Halo PC map here but refused by the port's checks: why, and
+whether its file is the one it should be (cache_files_windows.c) */
+boolean cache_files_ce_map_refused(
+	char const *map_name,
+	char *text,
+	long size);
+
+boolean cache_files_map_present(
+	char const *map_name,
+	unsigned long version);
 
 unsigned long cache_files_get_checksum(
 	void);
@@ -145,6 +196,9 @@ void cache_files_precache_map_queue_end(
 boolean cache_files_precache_map_begin(
 	char const *map_name,
 	boolean copy_map);
+/* port: the error for a map that could not be precached (cache_files_windows.c) */
+void cache_files_display_map_error(
+	char const *map_name);
 
 void cache_file_promote_read(
 	short request_index);

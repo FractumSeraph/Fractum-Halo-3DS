@@ -73,6 +73,7 @@ symbols in this file:
 #include "cseries/cseries_windows.h"
 #include "ai/ai_profile.h"
 #include "bitmaps/bitmap_group.h"
+#include "bitmaps/bitmap_utilities.h"
 #include "bitmaps/color_table_group.h"
 #include "camera/director.h"
 #include "cseries/profile.h"
@@ -81,15 +82,16 @@ symbols in this file:
 #include "effects/particles.h"
 #include "game/game_globals.h"
 #include "game/game_engine.h"
-#include "game/player_control.h"
 #include "game/players.h"
 #include "interface/first_person_weapons.h"
 #include "interface/hud.h"
+#include "interface/hud_definitions.h"
 #include "interface/interface.h"
 #include "interface/hud_messaging.h"
 #include "interface/terminal.h"
+#include "interface/virtual_keyboard.h"
+#include "interface/weapon_hud_interface_definition.h"
 #include "main/main.h"
-#include "main/main_runtime.h"
 #include "math/real_math.h"
 #include "objects/objects.h"
 #include "physics/collision_usage.h"
@@ -103,6 +105,7 @@ symbols in this file:
 #include "text/draw_string.h"
 #include "units/unit_definitions.h"
 #include "units/units.h"
+#include "map_share.h" /* port: port/linux/game/map_share.c */
 
 /* ---------- constants */
 
@@ -153,7 +156,7 @@ enum
 #define interface_tag_references_get() \
 	(scenario_get_game_globals()->interface_tag_references.count ? \
 		TAG_BLOCK_GET_ELEMENT(&scenario_get_game_globals()->interface_tag_references, 0, \
-			struct interface_tag_references_definition) : \
+			struct game_globals_interface_tag_references) : \
 		NULL)
 
 #define weapon_hud_interface_definition_get(index) \
@@ -161,102 +164,20 @@ enum
 
 /* ---------- structures */
 
-union argb_color
-{
-	word n[4];
-};
-typedef union argb_color argb_color;
-
 typedef char argb_color_size_assert[
-	sizeof(argb_color) == 0x8 ? 1 : -1];
-
-struct interface_tag_references_definition
-{
-	struct tag_reference tags[NUMBER_OF_INTERFACE_TAGS];
-	byte unused[48];
-};
+	sizeof(union argb_color) == 0x8 ? 1 : -1];
 
 typedef char interface_tag_references_definition_size_assert[
-	sizeof(struct interface_tag_references_definition) == 0x130 ? 1 : -1];
-
-struct weapon_flash_state_definition
-{
-	short flags;
-	short pad02;
-	short total_ammo;
-	short loaded_ammo;
-	short heat;
-	short age;
-	long unused0C[8];
-};
-
-struct hud_absolute_placement_definition
-{
-	short corner;
-	short pad02;
-	long unused04[8];
-};
-
-struct icon_hud_element_definition
-{
-	short sequence_index;
-	short width_offset;
-	point2d offset;
-	pixel32 color;
-	char frame_rate;
-	byte flags;
-	short text_index;
-};
-
-struct weapon_hud_interface_definition
-{
-	struct tag_reference parent_hud;
-	struct weapon_flash_state_definition flash_cutoffs;
-	struct hud_absolute_placement_definition absolute_placement;
-	struct tag_block statics;
-	struct tag_block meters;
-	struct tag_block numbers;
-	struct tag_block crosshairs;
-	struct tag_block overlays;
-	unsigned long valid_crosshair_types_flags;
-	struct tag_block warning_sounds;
-	struct tag_block screen_effects;
-	long unusedB8[33];
-	struct icon_hud_element_definition messaging_icon;
-	long unused14C[12];
-};
-
-struct hud_screen_effect_definition
-{
-	long unused00;
-	word mask_flags;
-	word mask_pad;
-	long mask_unused[4];
-	struct tag_reference mask_fullscreen;
-	struct tag_reference mask_splitscreen;
-	long unused38[2];
-	word convolution_flags;
-	word convolution_pad;
-	real convolution_radius_in_bounds[2];
-	real convolution_radius_out_bounds[2];
-	long unused54[6];
-	word light_enhancement_flags;
-	short light_enhancement_script_source;
-	real light_enhancement_intensity;
-	long unused74[6];
-	word desaturation_flags;
-	short desaturation_script_source;
-	real desaturation_intensity;
-	real_rgb_color desaturation_tint;
-	long unusedA0[6];
-};
+	sizeof(struct game_globals_interface_tag_references) == 0x130 ? 1 : -1];
 
 typedef char weapon_hud_interface_definition_screen_effects_offset_assert[
 	offsetof(struct weapon_hud_interface_definition, screen_effects) == 0xAC ? 1 : -1];
 typedef char weapon_flash_state_definition_size_assert[
 	sizeof(struct weapon_flash_state_definition) == 0x2C ? 1 : -1];
+#ifdef HALO_64BIT
 typedef char hud_absolute_placement_definition_size_assert[
 	sizeof(struct hud_absolute_placement_definition) == 0x24 ? 1 : -1];
+#endif
 typedef char icon_hud_element_definition_size_assert[
 	sizeof(struct icon_hud_element_definition) == 0x10 ? 1 : -1];
 typedef char weapon_hud_interface_definition_size_assert[
@@ -267,15 +188,11 @@ typedef char hud_screen_effect_definition_light_flags_offset_assert[
 	offsetof(struct hud_screen_effect_definition, light_enhancement_flags) == 0x6C ? 1 : -1];
 typedef char hud_screen_effect_definition_desaturation_flags_offset_assert[
 	offsetof(struct hud_screen_effect_definition, desaturation_flags) == 0x8C ? 1 : -1];
+#ifndef HALO_64BIT
 typedef char rasterizer_cinematic_screen_effect_parameters_tint_offset_assert[
 	offsetof(struct rasterizer_cinematic_screen_effect_parameters, filter_desaturation_tint) == 0x14 ? 1 : -1];
 
-struct system_memory_information
-{
-	long available_physical_memory;
-	long total_physical_memory;
-};
-
+#endif
 struct profile_value
 {
 	char name[256];
@@ -286,36 +203,20 @@ struct profile_value
 	boolean subtract_previous;
 	boolean enabled;
 };
+#ifndef HALO_64BIT
 
 typedef char profile_value_size_assert[
 	sizeof(struct profile_value) == 0x20C ? 1 : -1];
-
-struct interface_hud_scripted_globals
-{
-	boolean show_hud;
-	boolean show_hud_help_text;
-	byte unused[2];
-};
-
-struct interface_hud_defaults_definition
-{
-	struct tag_reference default_weapon_hud;
-};
-
-struct interface_hud_globals_definition
-{
-	byte unused[0x2C0];
-	struct interface_hud_defaults_definition defaults;
-};
+#endif
 
 typedef char interface_hud_globals_default_weapon_hud_index_offset_assert[
-	offsetof(struct interface_hud_globals_definition, defaults.default_weapon_hud.index) == 0x2CC ? 1 : -1];
+	offsetof(struct hud_globals_definition, defaults.default_weapon_hud.index) == 0x2CC ? 1 : -1];
 
 /* ---------- prototypes */
 
-void interface_splitscreen_render(
+static void interface_splitscreen_render(
 	void);
-void render_debug_profile(
+static void render_debug_profile(
 	void);
 static void render_debug_profile_stall_tick(
 	short stall_type,
@@ -325,25 +226,22 @@ static void render_debug_profile_stall_tick(
 	real scale);
 /* ---------- globals */
 
-extern struct interface_hud_globals_definition *hud_globals;
-extern struct interface_hud_scripted_globals *hud_scripted_globals;
-
-static short profile_game_value_count = NUMBER_OF_PROFILE_GAME_VALUES;
-static struct profile_value profile_game_values[MAXIMUM_PROFILE_VALUES] =
+short profile_game_value_count = NUMBER_OF_PROFILE_GAME_VALUES;
+struct profile_value profile_game_values[MAXIMUM_PROFILE_VALUES] =
 {
 	{ "game", "game", &global_real_argb_yellow, NONE, NONE, FALSE, TRUE },
 	{ "objects_update", "objects", &global_real_argb_green, NONE, NONE, FALSE, TRUE },
 	{ "ai_update", "ai", &global_real_argb_blue, NONE, NONE, FALSE, TRUE },
 };
 
-static short profile_frame_value_count = NUMBER_OF_PROFILE_FRAME_VALUES;
-static struct profile_value profile_frame_values[MAXIMUM_PROFILE_VALUES] =
+short profile_frame_value_count = NUMBER_OF_PROFILE_FRAME_VALUES;
+struct profile_value profile_frame_values[MAXIMUM_PROFILE_VALUES] =
 {
 	{ "frame", "frame", &global_real_argb_white, NONE, NONE, FALSE, TRUE },
 };
 
-static short profile_graph_value_count = NUMBER_OF_PROFILE_GRAPH_VALUES;
-static struct profile_value profile_graph_values[MAXIMUM_PROFILE_VALUES] =
+short profile_graph_value_count = NUMBER_OF_PROFILE_GRAPH_VALUES;
+struct profile_value profile_graph_values[MAXIMUM_PROFILE_VALUES] =
 {
 	{ "stall", "stall", &global_real_argb_red, NONE, NONE, FALSE, TRUE },
 	{ "texture", "texture", &global_real_argb_orange, NONE, NONE, FALSE, TRUE },
@@ -382,7 +280,7 @@ void interface_initialize_for_new_map(
 	first_person_weapons_initialize_for_new_map();
 
 	draw_string_set_draw_mode(
-		interface_tag_references_get()->tags[_interface_font_terminal].index,
+		interface_tag_references_get()->interface_tag_references[_interface_font_terminal].index,
 		NONE,
 		0,
 		0,
@@ -397,6 +295,10 @@ void interface_dispose_from_old_map(
 	draw_string_dispose_from_old_map();
 	hud_dispose_from_old_map();
 	first_person_weapons_dispose_from_old_map();
+	/* port: and the virtual keyboard, whose keyboard tag was the old map's
+	(ui.map's: main_screen_shell_load sets it up again); a game map has none,
+	so it cannot open there (the PC menus' Settings, from the pause menu) */
+	virtual_keyboard_dispose();
 
 	return;
 }
@@ -420,7 +322,7 @@ long interface_get_tag_index(
 		109,
 		interface_tag_index>=0 && interface_tag_index<NUMBER_OF_INTERFACE_TAGS);
 
-	return interface_tag_references_get()->tags[interface_tag_index].index;
+	return interface_tag_references_get()->interface_tag_references[interface_tag_index].index;
 }
 
 real_argb_color *interface_get_real_argb_color(
@@ -468,10 +370,10 @@ void interface_set_bitmap_text_draw_mode(
 	return;
 }
 
-argb_color *interface_get_rgb_color(
+union argb_color *interface_get_rgb_color(
 	short interface_color_table_index,
 	short color_index,
-	argb_color *color)
+	union argb_color *color)
 {
 	real_argb_color real_color;
 
@@ -493,6 +395,8 @@ void interface_draw_fullscreen_overlays(
 	cinematic_render();
 	interface_splitscreen_render();
 	hud_render_timer();
+	/* port: a map's download (port/linux/game/map_share.c) */
+	map_share_render();
 	terminal_draw();
 	main_framerate_render();
 	render_debug_profile();
@@ -548,7 +452,11 @@ void interface_draw_bitmap(
 	return;
 }
 
+#ifdef HALO_64BIT
 long interface_get_weapon_hud_index(
+#else
+static long interface_get_weapon_hud_index(
+#endif
 	real *flashlight_power)
 {
 	long player_index = local_player_get_player_index(render.local_player_index);
@@ -989,7 +897,7 @@ static void render_debug_profile_stall_tick(
 	return;
 }
 
-void render_debug_profile(
+static void render_debug_profile(
 	void)
 {
 	if (profile_display)
@@ -1015,8 +923,8 @@ void render_debug_profile(
 
 			csstrcpy(buffer, "");
 			sprintf(buffer+csstrlen(buffer), "% 6.1fk free of % 6.1fk total|n",
-				memory_information.available_physical_memory/1024.0f,
-				memory_information.total_physical_memory/1024.0f);
+				memory_information.free/1024.0f,
+				memory_information.total/1024.0f);
 			sprintf(buffer+csstrlen(buffer), "% 5d active of % 5d objects (% 3.1f%% used)|n",
 				objects_information.active_object_count,
 				objects_information.object_count,
@@ -1342,11 +1250,19 @@ void render_debug_profile(
 	return;
 }
 
-void interface_splitscreen_render(
+static void interface_splitscreen_render(
 	void)
 {
 	rectangle2d bounds;
 	short window_count;
+	/* port: where compute_window_bounds splits the frame, across the whole
+	screen. The Xbox's drew at 640x480's middle (x 320, y 240, 640 wide),
+	which on a wider screen (halo_screen_width) is left of where the views
+	meet: the dividers crossed the views and stopped short of the right */
+	rectangle2d const *screen = &rasterizer_globals.reserved04.screen_bounds;
+	rectangle2d const *frame = &rasterizer_globals.reserved04.frame_bounds;
+	short middle_x = (short)(frame->x0 + (frame->x1 - frame->x0) / 2);
+	short middle_y = (short)(frame->y0 + (frame->y1 - frame->y0) / 2);
 
 	if (game_engine_force_single_screen() || cinematic_in_progress())
 		return;
@@ -1356,10 +1272,10 @@ void interface_splitscreen_render(
 	if (window_count <= 1)
 		return;
 
-	bounds.y0 = 239;
-	bounds.x0 = 0;
-	bounds.y1 = 241;
-	bounds.x1 = 640;
+	bounds.y0 = (short)(middle_y - 1);
+	bounds.x0 = screen->x0;
+	bounds.y1 = (short)(middle_y + 1);
+	bounds.x1 = screen->x1;
 	draw_quad(&bounds, 0xFF000000);
 
 	if (window_count <= 2)
@@ -1367,19 +1283,19 @@ void interface_splitscreen_render(
 
 	if (window_count == 3)
 	{
-		bounds.y0 = 240;
-		bounds.x0 = 319;
-		bounds.y1 = 480;
-		bounds.x1 = 321;
+		bounds.y0 = middle_y;
+		bounds.x0 = (short)(middle_x - 1);
+		bounds.y1 = screen->y1;
+		bounds.x1 = (short)(middle_x + 1);
 		draw_quad(&bounds, 0xFF000000);
 
 		return;
 	}
 
-	bounds.y0 = 0;
-	bounds.x0 = 319;
-	bounds.y1 = 480;
-	bounds.x1 = 321;
+	bounds.y0 = screen->y0;
+	bounds.x0 = (short)(middle_x - 1);
+	bounds.y1 = screen->y1;
+	bounds.x1 = (short)(middle_x + 1);
 
 	match_assert(
 		"c:\\halo\\SOURCE\\interface\\interface.c",

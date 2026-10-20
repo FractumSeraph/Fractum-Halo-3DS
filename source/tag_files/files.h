@@ -12,7 +12,14 @@ header included in hcex build.
 
 enum
 {
+#ifdef HALO_64BIT
+	/* struct file_reference_info with its file handle: 268 bytes on the
+	Xbox, 272 with a 64-bit handle. Callers only see the opaque size, so a
+	short one let the file layer write past their stack variables. */
+	FILE_REFERENCE_SIZE = 264 + sizeof(void *),
+#else
 	FILE_REFERENCE_SIZE = 268,
+#endif
 	MAXIMUM_FILENAME_LENGTH = 255
 };
 
@@ -122,7 +129,11 @@ enum
 
 struct file_reference
 {
+#ifdef HALO_64BIT
+	char data[FILE_REFERENCE_SIZE] __attribute__((aligned(sizeof(void *))));
+#else
 	char data[FILE_REFERENCE_SIZE];
+#endif
 };
 
 struct file_last_modification_date
@@ -146,6 +157,8 @@ char *file_reference_get_name(const struct file_reference *reference, unsigned l
 boolean file_references_equal(const struct file_reference *reference0, const struct file_reference *reference1);
 struct file_reference *file_reference_create_from_path(struct file_reference *reference, const char *path, boolean is_directory);
 void directory_create_or_delete_contents(const char *directory_name);
+/* port: makes the folder when it is missing (shell_initialize: custom_maps) */
+void directory_create(const char *directory_name);
 boolean datastore_read(const char *file_name, const char *field_name, long length, void *data);
 boolean datastore_write(const char *file_name, const char *field_name, long length, const void *data);
 
@@ -193,7 +206,7 @@ boolean find_files_next(struct file_reference *file, struct file_last_modificati
 
 /* ---------- globals */
 
-extern char file_location_volume_names[NUMBER_OF_FILE_REFERENCE_LOCATIONS-1][256];
+extern char file_location_volume_names[NUMBER_OF_FILE_REFERENCE_LOCATIONS][256];
 
 /* ---------- public code */
 

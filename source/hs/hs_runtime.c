@@ -265,6 +265,7 @@ symbols in this file:
 #include "ai/ai_debug_scripting.h"
 #include "ai/ai_script.h"
 #include "hs/hs.h"
+#include "hs/hs_library_internal.h"
 #include "hs/hs_library_internal_runtime.h"
 #include "hs/object_lists.h"
 #include "hs/hs_scenario_definitions.h"
@@ -280,8 +281,13 @@ symbols in this file:
 #include "saved games/game_state.h"
 #include "text/draw_string.h"
 #include "cseries/errors.h"
+#include "interface/terminal.h"
 #include "main/console.h"
 #include "game/game.h"
+#include "game/game_engine.h"
+#ifdef HALO_64BIT
+#include "cseries/cseries_windows.h"
+#endif
 
 /* ---------- constants */
 
@@ -307,13 +313,29 @@ enum
 
 enum
 {
+#ifdef HALO_64BIT
+	/* doubled: stack frames hold two native pointers; and doubled again
+	for Halo PC's maps, whose scripts run deeper than the Xbox's (Halo
+	Kart's), which Halo PC's engine let them */
+	HS_THREAD_STACK_SIZE = 0x800
+#else
 	HS_THREAD_STACK_SIZE = 0x200
+#endif
+};
+
+/* port: the size of the text an inspector writes (hs_evaluate_inspect) */
+enum
+{
+	HS_INSPECT_BUFFER_SIZE = 1024
 };
 
 enum
 {
 	_hs_thread_in_function_call_bit = 0,
 	_hs_thread_sleeping_bit,
+	/* port: the thread's stack overflowed (hs_stack_overflow); hs_thread_main
+	ends it */
+	_hs_thread_stack_overflow_bit,
 	_hs_global_external_bit = 15,
 };
 
@@ -328,8 +350,8 @@ enum
 /* a thread is valid when it lies inside the thread data array and its stack pointer and
    the fill mark of its topmost frame lie inside its own inline stack buffer */
 #define valid_thread(thread) \
-	((byte *)(thread)>=(byte *)hs_thread_data->data && \
-	(byte *)(thread)<(byte *)hs_thread_data->data+hs_thread_data->count*hs_thread_data->size && \
+	((byte *)(thread)>=(byte *)xbox_pointer(hs_thread_data->data) && \
+	(byte *)(thread)<(byte *)xbox_pointer(hs_thread_data->data)+hs_thread_data->count*hs_thread_data->size && \
 	(byte *)(thread)->stack>=(thread)->stack_data && \
 	(byte *)(thread)->stack<(thread)->stack_data+HS_THREAD_STACK_SIZE && \
 	(thread)->stack->data+(thread)->stack->size<=(thread)->stack_data+HS_THREAD_STACK_SIZE)
@@ -371,15 +393,6 @@ enum
 		break; \
 	}
 
-union hs_conversion_result
-{
-	boolean boolean;
-	short short_integer;
-	long long_integer;
-	real real;
-	char const *string;
-};
-
 typedef long (*hs_typecasting_procedure)(long value);
 
 typedef void (*hs_debug_string_procedure)(
@@ -388,15 +401,14 @@ typedef void (*hs_debug_string_procedure)(
 
 typedef void (*hs_inspection_procedure)(
 	short type,
-	union hs_conversion_result value,
-	char *result);
+	long value,
+	char *buffer);
 
 /* ---------- structures */
 
 struct hs_runtime_globals
 {
 	boolean initialized;
-	byte pad;
 	short executing_thread_index;
 };
 
@@ -413,15 +425,7 @@ struct hs_global_datum
 {
 	short identifier;
 	short unused;
-	union hs_conversion_result value;
-};
-
-struct hs_external_global_definition
-{
-	char const *name;
-	short type;
-	short unused;
-	void *address;
+	long value;
 };
 
 struct hs_thread_datum
@@ -434,60 +438,64 @@ struct hs_thread_datum
 	long previous_sleep_until;
 	struct hs_stack_frame *stack;
 	long result;
-	byte stack_data[0x200];
+	/* sized by the limit the stack checks allow: with 0x200 here, a 64-bit
+	   script deeper than 0x200 bytes wrote over the next thread's datum */
+	byte stack_data[HS_THREAD_STACK_SIZE];
 };
+#ifndef HALO_64BIT
 
 typedef char hs_thread_datum_size_assert[
 	sizeof(struct hs_thread_datum) == 0x218 ? 1 : -1];
+#endif
 
 /* ---------- prototypes */
 
 static void hs_inspect_boolean(
 	short type,
-	union hs_conversion_result value,
-	char *result);
+	long value,
+	char *buffer);
 static void hs_inspect_real(
 	short type,
-	union hs_conversion_result value,
-	char *result);
+	long value,
+	char *buffer);
 static void hs_inspect_short_integer(
 	short type,
-	union hs_conversion_result value,
-	char *result);
+	long value,
+	char *buffer);
 static void hs_inspect_long_integer(
 	short type,
-	union hs_conversion_result value,
-	char *result);
+	long value,
+	char *buffer);
 static void hs_inspect_string(
 	short type,
-	union hs_conversion_result value,
-	char *result);
+	long value,
+	char *buffer);
 static void hs_inspect_enum(
 	short type,
-	union hs_conversion_result value,
-	char *result);
-static union hs_conversion_result hs_long_to_boolean(
-	union hs_conversion_result value);
-static union hs_conversion_result hs_short_to_boolean(
-	union hs_conversion_result value);
-static union hs_conversion_result hs_string_to_boolean(
-	union hs_conversion_result value);
-static union hs_conversion_result hs_data_to_void(
-	union hs_conversion_result value);
-static union hs_conversion_result hs_short_to_real(
-	union hs_conversion_result value);
-static union hs_conversion_result hs_long_to_real(
-	union hs_conversion_result value);
-static union hs_conversion_result hs_enum_to_real(
-	union hs_conversion_result value);
-static union hs_conversion_result hs_real_to_short(
-	union hs_conversion_result value);
+	long value,
+	char *buffer);
+static long hs_long_to_boolean(
+	long n);
+static long hs_short_to_boolean(
+	long s);
+static long hs_string_to_boolean(
+	long n);
+static long hs_data_to_void(
+	long n);
+static long hs_short_to_real(
+	long s);
+static long hs_long_to_real(
+	long l);
+static long hs_enum_to_real(
+	long e);
+static long hs_real_to_short(
+	long r);
 static long hs_real_to_long(
-	union hs_conversion_result value);
+	long r);
 static long hs_long_to_short(
-	union hs_conversion_result value);
+	long l);
 static long hs_object_name_to_object_list(
-	short object_name_index);
+	long object_name_index);
 static long hs_object_to_object_list(
 	long object_index);
 static boolean hs_object_type_can_cast(
@@ -511,7 +519,11 @@ static void hs_thread_delete(
 static long hs_thread_new(
 	short type,
 	long script_index);
-static void hs_stack_push(
+static boolean hs_stack_push(
+	long thread_index);
+static void hs_stack_overflow(
+	long thread_index);
+static void hs_syntax_error(
 	long thread_index);
 static void *hs_stack_allocate(
 	long thread_index,
@@ -531,6 +543,9 @@ static boolean script_error(
 	long thread_index,
 	char const *reason,
 	char const *expression);
+/* port: a type's default value (hs_scenario_functions_check) */
+static long hs_type_default_value(
+	short type);
 static void hs_script_evaluate(
 	short script_index,
 	long thread_index,
@@ -544,13 +559,15 @@ static void hs_global_reconcile_write(
 
 /* ---------- globals */
 
-extern struct data_array *hs_global_data;
-extern struct data_array *hs_thread_data;
+struct data_array *hs_global_data;
+struct data_array *hs_thread_data;
 extern struct data_array *hs_syntax_data;
-extern short hs_external_global_count;
-extern short hs_type_sizes[NUMBER_OF_HS_TYPES];
-extern boolean debug_scripting;
-extern unsigned long hs_debug_data[];
+extern short const hs_external_global_count;
+extern long const hs_function_table_count;
+extern short const hs_type_sizes[NUMBER_OF_HS_TYPES];
+boolean debug_scripting;
+unsigned long hs_debug_data[BIT_VECTOR_SIZE_IN_LONGS(MAXIMUM_TRIGGER_VOLUMES_PER_SCENARIO)];
+typedef char verify_hs_debug_data_size[sizeof(hs_debug_data) == 0x20 ? 1 : -1];
 static hs_inspection_procedure hs_type_inspectors[NUMBER_OF_HS_TYPES] =
 {
 	NULL,
@@ -739,45 +756,46 @@ void n3ds_scripted_camera_menu_begin(void);
 #endif
 
 /* per-type fallbacks used when an external global has no backing address */
-extern boolean _hs_type_boolean_default;
-extern real _hs_type_real_default;
-extern short _hs_type_short_integer_default;
-extern long _hs_type_long_integer_default;
+extern boolean const _hs_type_boolean_default;
+extern real const _hs_type_real_default;
+extern short const _hs_type_short_integer_default;
+extern long const _hs_type_long_integer_default;
 extern char const *_hs_type_string_default;
-extern short _hs_type_script_default;
-extern short _hs_type_trigger_volume_default;
-extern short _hs_type_cutscene_flag_default;
-extern short _hs_type_cutscene_camera_point_default;
-extern short _hs_type_cutscene_title_default;
-extern short _hs_type_cutscene_recording_default;
-extern short _hs_type_device_group_default;
-extern long _hs_type_ai_default;
-extern short _hs_type_ai_command_list_default;
-extern short _hs_type_starting_profile_default;
-extern short _hs_type_conversation_default;
-extern short _hs_type_navpoint_default;
-extern short _hs_type_hud_message_default;
-extern long _hs_type_object_list_default;
-extern long _hs_type_sound_default;
-extern long _hs_type_effect_default;
-extern long _hs_type_damage_default;
-extern long _hs_type_looping_sound_default;
-extern long _hs_type_animation_graph_default;
-extern long _hs_type_actor_variant_default;
-extern long _hs_type_damage_effect_default;
-extern long _hs_type_object_definition_default;
-extern short _hs_type_enum_game_difficulty_default;
-extern short _hs_type_enum_team_default;
-extern short _hs_type_enum_ai_default_state_default;
-extern short _hs_type_enum_actor_type_default;
-extern short _hs_type_enum_hud_corner_default;
-extern long _hs_type_object_default;
-extern long _hs_type_unit_default;
-extern long _hs_type_vehicle_default;
-extern long _hs_type_weapon_default;
-extern long _hs_type_device_default;
-extern long _hs_type_scenery_default;
-extern short _hs_type_object_name_default;
+extern short const _hs_type_script_default;
+extern short const _hs_type_trigger_volume_default;
+extern short const _hs_type_cutscene_flag_default;
+extern short const _hs_type_cutscene_camera_point_default;
+extern short const _hs_type_cutscene_title_default;
+extern short const _hs_type_cutscene_recording_default;
+extern short const _hs_type_device_group_default;
+extern long const _hs_type_ai_default;
+extern short const _hs_type_ai_command_list_default;
+extern short const _hs_type_starting_profile_default;
+extern short const _hs_type_conversation_default;
+extern short const _hs_type_navpoint_default;
+extern short const _hs_type_hud_message_default;
+extern long const _hs_type_object_list_default;
+extern long const _hs_type_sound_default;
+extern long const _hs_type_effect_default;
+extern long const _hs_type_damage_default;
+extern long const _hs_type_looping_sound_default;
+extern long const _hs_type_animation_graph_default;
+extern long const _hs_type_actor_variant_default;
+extern long const _hs_type_damage_effect_default;
+extern long const _hs_type_object_definition_default;
+extern short const _hs_type_enum_game_difficulty_default;
+extern short const _hs_type_enum_team_default;
+extern short const _hs_type_enum_ai_default_state_default;
+extern short const _hs_type_enum_actor_type_default;
+extern short const _hs_type_enum_hud_corner_default;
+extern long const _hs_type_object_default;
+extern long const _hs_type_unit_default;
+extern long const _hs_type_vehicle_default;
+extern long const _hs_type_weapon_default;
+extern long const _hs_type_device_default;
+extern long const _hs_type_scenery_default;
+extern short const _hs_type_object_name_default;
+boolean debug_trigger_volumes;
 
 /* ---------- public code */
 
@@ -787,7 +805,12 @@ void hs_runtime_initialize(
 	short global_index;
 	long index;
 
+#ifdef HALO_64BIT
+	/* the thread holds a native stack frame pointer */
+	hs_thread_data = game_state_data_new("hs thread", 0x100, MAX(0x218, sizeof(struct hs_thread_datum)));
+#else
 	hs_thread_data = game_state_data_new("hs thread", 0x100, 0x218);
+#endif
 	hs_global_data = game_state_data_new("hs globals", 0x400, 8);
 	if (hs_thread_data && hs_global_data)
 	{
@@ -861,10 +884,20 @@ void hs_runtime_initialize_for_new_map(
 			global_datum = datum_get(hs_global_data, global_datum_index);
 			internal_thread->script_index = NONE;
 			internal_thread->stack->size = 0;
-			hs_evaluate(
-				internal_thread_index,
-				global->initialization_expression_index,
-				&global_datum->value.long_integer);
+			/* port: an initializer that calls a function a map's scripts
+			may not isn't evaluated: the global starts at its type's
+			default (hs_scenario_functions_check) */
+			if (hs_scenario_global_initializer_disabled(global_index))
+			{
+				global_datum->value = hs_type_default_value(global->type);
+			}
+			else
+			{
+				hs_evaluate(
+					internal_thread_index,
+					global->initialization_expression_index,
+					&global_datum->value);
+			}
 
 			if (TEST_FLAG(internal_thread->flags, _hs_thread_in_function_call_bit))
 			{
@@ -889,8 +922,11 @@ void hs_runtime_initialize_for_new_map(
 				script_index,
 				struct hs_script);
 
+			/* port: none for a script that calls a function a map's
+			scripts may not (hs_scenario_functions_check) */
 			if (script->script_type!=_hs_script_static &&
-				script->script_type!=_hs_script_stub)
+				script->script_type!=_hs_script_stub &&
+				!hs_scenario_script_disabled(script_index))
 			{
 				if (hs_thread_new(_hs_thread_type_script, script_index)==NONE)
 					error(_error_immediate, "ran out of script threads.");
@@ -946,6 +982,10 @@ static char const *expression_get_function_name(
 		if (syntax_node->index != 0 ||
 			expression_index != thread->stack->expression_index)
 		{
+			/* port: an index past the table (a damaged map's) names none */
+			if ((word)syntax_node->index>=hs_function_table_count)
+				return "(corrupt function)";
+
 			return hs_function_get((word)syntax_node->index)->name;
 		}
 
@@ -958,10 +998,33 @@ static char const *expression_get_function_name(
 		thread = hs_thread_get(thread_index);
 	}
 
+	/* port: as for a function's */
+	if (syntax_node->index<0 ||
+		syntax_node->index>=global_scenario_get()->hs_scripts.count)
+	{
+		return "(corrupt script)";
+	}
+
 	return TAG_BLOCK_GET_ELEMENT(
 		&global_scenario_get()->hs_scripts,
 		syntax_node->index,
 		struct hs_script)->name;
+}
+
+boolean hs_runtime_waiting_on_call(
+	void)
+{
+	struct hs_stack_frame *frame;
+	struct hs_syntax_node *caller;
+
+	if (hs_runtime_globals.executing_thread_index == NONE)
+		return FALSE;
+	frame = hs_thread_get(hs_runtime_globals.executing_thread_index)->stack;
+	if (!frame || !frame->previous)
+		return FALSE;
+	caller = hs_syntax_get(frame->previous->expression_index);
+
+	return !TEST_FLAG(caller->flags, _hs_syntax_node_script_bit) && caller->function_index == _hs_function_sleep_until;
 }
 
 char const *hs_runtime_get_executing_thread_name(
@@ -1055,7 +1118,7 @@ void render_debug_trigger_volumes(
 {
 	if (debug_trigger_volumes)
 	{
-		real_matrix4x3 matrix;
+		real_matrix4x3 matrix = { 0 };
 		short volume_index;
 		struct scenario *scenario = global_scenario_get();
 
@@ -1182,6 +1245,24 @@ void render_debug_trigger_volumes(
 	return;
 }
 
+/* port: moves every sleeping script thread's wake time on by `ticks`, after
+a network co-op host reverts but keeps its clock (network_coop.c) */
+void hs_runtime_port_shift_sleep_times(
+	long ticks)
+{
+	struct data_iterator iterator;
+	struct hs_thread_datum *thread;
+
+	data_iterator_new(&iterator, hs_thread_data);
+	while ((thread = data_iterator_next(&iterator)) != NULL)
+	{
+		if (thread->sleep_until > 0)
+			thread->sleep_until += ticks;
+		if (thread->previous_sleep_until > 0)
+			thread->previous_sleep_until += ticks;
+	}
+}
+
 void hs_runtime_update(
 	void)
 {
@@ -1199,6 +1280,12 @@ void hs_runtime_update(
 
 			if (thread->type==_hs_thread_type_console_command)
 				console_command_running = TRUE;
+#ifdef HALO_GAME_BROWSER
+			/* port: a court's scripts, off in a Bomb game, which plays the
+			court's game itself (game_engine_bomb.c, bomb_courts) */
+			if (thread->type==_hs_thread_type_script && game_engine_bomb_scripts_off())
+				continue;
+#endif
 			if (thread->sleep_until>=0 && thread->sleep_until<=time)
 				hs_thread_main(thread_index);
 		}
@@ -1390,7 +1477,7 @@ static void hs_thread_delete(
 	return;
 }
 
-static void hs_stack_push(
+static boolean hs_stack_push(
 	long thread_index)
 {
 	struct hs_thread_datum *thread = hs_thread_get(thread_index);
@@ -1409,9 +1496,55 @@ static void hs_stack_push(
 		(byte *) (new_frame+1)<thread->stack_data+HS_THREAD_STACK_SIZE,
 		"stack overflow.");
 
+	/* port: a frame past the thread's stack isn't pushed (it would be
+	written over the next thread's datum): the thread is ended instead */
+	if ((byte *)(new_frame+1)>=thread->stack_data+HS_THREAD_STACK_SIZE ||
+		TEST_FLAG(thread->flags, _hs_thread_stack_overflow_bit))
+	{
+		hs_stack_overflow(thread_index);
+
+		return FALSE;
+	}
+
 	new_frame->previous = thread->stack;
 	thread->stack = new_frame;
 	new_frame->size = 0;
+
+	return TRUE;
+}
+
+/* port: a script whose stack overflows is ended rather than let write past
+its thread's stack: the push or allocation is refused (its caller returns),
+and hs_thread_main lets the thread's frames go once the evaluation in hand
+returns */
+static void hs_stack_overflow(
+	long thread_index)
+{
+	struct hs_thread_datum *thread = hs_thread_get(thread_index);
+
+	if (!TEST_FLAG(thread->flags, _hs_thread_stack_overflow_bit))
+	{
+		error(_error_silent, "a problem occurred while executing the script %s: stack overflow. (it was stopped)",
+			hs_thread_format(thread_index));
+		SET_FLAG(thread->flags, _hs_thread_stack_overflow_bit, TRUE);
+	}
+
+	return;
+}
+
+/* port: a script that reaches a syntax node a damaged map has wrong
+(hs_evaluate, hs_thread_main) is ended as one whose stack overflows is */
+static void hs_syntax_error(
+	long thread_index)
+{
+	struct hs_thread_datum *thread = hs_thread_get(thread_index);
+
+	if (!TEST_FLAG(thread->flags, _hs_thread_stack_overflow_bit))
+	{
+		error(_error_silent, "a problem occurred while executing the script %s: corrupt syntax tree. (it was stopped)",
+			hs_thread_format(thread_index));
+		SET_FLAG(thread->flags, _hs_thread_stack_overflow_bit, TRUE);
+	}
 
 	return;
 }
@@ -1552,73 +1685,75 @@ static long hs_find_thread_by_script(
 
 static void hs_inspect_boolean(
 	short type,
-	union hs_conversion_result value,
-	char *result)
+	long value,
+	char *buffer)
 {
 	match_assert("c:\\halo\\source\\hs\\hs_library_internal_runtime.h", 0x241,
 		type==_hs_type_boolean);
 
-	sprintf(result, "%s", value.boolean ? "true" : "false");
+	sprintf(buffer, "%s", (boolean)value ? "true" : "false");
 
 	return;
 }
 
 static void hs_inspect_real(
 	short type,
-	union hs_conversion_result value,
-	char *result)
+	long value,
+	char *buffer)
 {
 	match_assert("c:\\halo\\source\\hs\\hs_library_internal_runtime.h", 0x24c,
 		type==_hs_type_real);
 
-	sprintf(result, "%f", value.real);
+	sprintf(buffer, "%f", *(real *)&value);
 
 	return;
 }
 
 static void hs_inspect_short_integer(
 	short type,
-	union hs_conversion_result value,
-	char *result)
+	long value,
+	char *buffer)
 {
 	match_assert("c:\\halo\\source\\hs\\hs_library_internal_runtime.h", 0x257,
 		type==_hs_type_short_integer);
 
-	sprintf(result, "%d", value.short_integer);
+	sprintf(buffer, "%d", (short)value);
 
 	return;
 }
 
 static void hs_inspect_long_integer(
 	short type,
-	union hs_conversion_result value,
-	char *result)
+	long value,
+	char *buffer)
 {
 	match_assert("c:\\halo\\source\\hs\\hs_library_internal_runtime.h", 0x262,
 		type==_hs_type_long_integer);
 
-	sprintf(result, "%ld", value.long_integer);
+	sprintf(buffer, "%ld", value);
 
 	return;
 }
 
 static void hs_inspect_string(
 	short type,
-	union hs_conversion_result value,
-	char *result)
+	long value,
+	char *buffer)
 {
 	match_assert("c:\\halo\\source\\hs\\hs_library_internal_runtime.h", 0x26d,
 		type==_hs_type_string);
 
-	sprintf(result, "%s", value.string);
+	/* port: no longer than hs_evaluate_inspect's buffer (a script's
+	string can be any length) */
+	snprintf(buffer, HS_INSPECT_BUFFER_SIZE, "%s", (char const *)xbox_pointer(value));
 
 	return;
 }
 
 static void hs_inspect_enum(
 	short type,
-	union hs_conversion_result value,
-	char *result)
+	long value,
+	char *buffer)
 {
 	struct hs_enum_definition const *enum_definition;
 
@@ -1626,119 +1761,121 @@ static void hs_inspect_enum(
 	match_assert("c:\\halo\\source\\hs\\hs_library_internal_runtime.h", 0x27b,
 		HS_TYPE_IS_ENUM(type));
 	match_vassert("c:\\halo\\source\\hs\\hs_library_internal_runtime.h", 0x27c,
-		value.short_integer>=0 && value.short_integer<enum_definition->count,
+		(short)value>=0 && (short)value<enum_definition->count,
 		"enum_value>=0 && enum_value<enum_definition->count");
 
-	sprintf(result, "%s", enum_definition->values[value.short_integer]);
+	/* port: a value that isn't one of the enum's isn't looked up */
+	if ((short)value<0 || (short)value>=enum_definition->count)
+	{
+		sprintf(buffer, "<invalid %s %d>", hs_type_names[type], (short)value);
+
+		return;
+	}
+
+	sprintf(buffer, "%s", enum_definition->values[(short)value]);
 
 	return;
 }
 
-static union hs_conversion_result hs_long_to_boolean(
-	union hs_conversion_result value)
+static long hs_long_to_boolean(
+	long n)
 {
-	value.boolean = value.long_integer==0;
+	long result;
 
-	return value;
-}
-
-static union hs_conversion_result hs_short_to_boolean(
-	union hs_conversion_result value)
-{
-	value.boolean = value.short_integer==0;
-
-	return value;
-}
-
-static union hs_conversion_result hs_string_to_boolean(
-	union hs_conversion_result value)
-{
-	union hs_conversion_result result;
-#ifdef HALO_N3DS
-	result.long_integer = 0;
-#endif
-
-	result.boolean = csstrlen(value.string)==0;
+	result = 0;
+	*(boolean *)&result = n==0;
 
 	return result;
 }
 
-static union hs_conversion_result hs_data_to_void(
-	union hs_conversion_result value)
+static long hs_short_to_boolean(
+	long s)
 {
-	union hs_conversion_result result;
+	long result;
 
-	result.long_integer = 0;
+	result = 0;
+	*(boolean *)&result = (short)s==0;
 
 	return result;
 }
 
-static union hs_conversion_result hs_short_to_real(
-	union hs_conversion_result value)
+static long hs_string_to_boolean(
+	long n)
 {
-	union hs_conversion_result result;
+	return hs_long_to_boolean(csstrlen((char const *)xbox_pointer(n)));
+}
 
-	result.long_integer = value.short_integer;
-	result.real = result.long_integer;
+static long hs_data_to_void(
+	long n)
+{
+	return 0;
+}
+
+static long hs_short_to_real(
+	long s)
+{
+	long result;
+
+	*(real *)&result = (real)(short)s;
 
 	return result;
 }
 
-static union hs_conversion_result hs_long_to_real(
-	union hs_conversion_result value)
+static long hs_long_to_real(
+	long l)
 {
-	value.real = value.long_integer;
+	long result;
 
-	return value;
-}
-
-static union hs_conversion_result hs_enum_to_real(
-	union hs_conversion_result value)
-{
-	union hs_conversion_result result;
-
-	result.long_integer = value.short_integer+1;
-	result.real = result.long_integer;
+	*(real *)&result = (real)l;
 
 	return result;
 }
 
-static union hs_conversion_result hs_real_to_short(
-	union hs_conversion_result value)
+static long hs_enum_to_real(
+	long e)
 {
-	value.short_integer = (short)value.real;
+	long result;
 
-	return value;
+	*(real *)&result = (real)((short)e+1);
+
+	return result;
+}
+
+static long hs_real_to_short(
+	long r)
+{
+	long result;
+
+	result = 0;
+	*(short *)&result = (short)*(real *)&r;
+
+	return result;
 }
 
 static long hs_real_to_long(
-	union hs_conversion_result value)
+	long r)
 {
-	return (long)value.real;
+	return (long)*(real *)&r;
 }
 
 static long hs_long_to_short(
-	union hs_conversion_result value)
+	long l)
 {
-	union hs_conversion_result result;
-#ifdef HALO_N3DS
-	/* PAL 2342 at RVA 0xBA310 rewrites the low word in the argument
-     * slot, then returns the full unchanged argument word. */
-    result = value;
-#endif
+	long result;
 
-	result.short_integer = value.short_integer;
+	result = 0;
+	*(short *)&result = (short)l;
 
-	return result.long_integer;
+	return result;
 }
 
 static long hs_object_name_to_object_list(
-	short object_name_index)
+	long object_name_index)
 {
 	long object_index;
 	long object_list_index = NONE;
 
-	object_index = object_index_from_name_index(object_name_index);
+	object_index = object_index_from_name_index((short)object_name_index);
 	if (object_index != NONE)
 	{
 		object_list_index = object_list_new();
@@ -1889,6 +2026,40 @@ void hs_return(
 	return;
 }
 
+#ifdef HALO_64BIT
+#define MAXIMUM_HS_FUNCTION_PARAMETERS 32
+
+short const *hs_function_parameter_types(
+	struct hs_function_definition const *function)
+{
+	static struct
+	{
+		struct hs_function_definition const *function;
+		short types[MAXIMUM_HS_FUNCTION_PARAMETERS];
+	} copies[512];
+	static int copy_count = 0;
+	int copy_index;
+	short parameter_index;
+
+	for (copy_index = 0; copy_index < copy_count; copy_index++)
+	{
+		if (copies[copy_index].function == function)
+		{
+			return copies[copy_index].types;
+		}
+	}
+	match_assert("c:\\halo\\SOURCE\\hs\\hs_runtime.c", __LINE__,
+		copy_count < NUMBEROF(copies) && function->parameter_count <= MAXIMUM_HS_FUNCTION_PARAMETERS);
+	for (parameter_index = 0; parameter_index < function->parameter_count; parameter_index++)
+	{
+		copies[copy_count].types[parameter_index] = HS_FUNCTION_PARAMETER_TYPE(function, parameter_index);
+	}
+	copies[copy_count].function = function;
+
+	return copies[copy_count++].types;
+}
+
+#endif
 long *hs_macro_function_evaluate(
 	short function_index,
 	long thread_index,
@@ -1899,7 +2070,11 @@ long *hs_macro_function_evaluate(
 	return hs_arguments_evaluate(
 		thread_index,
 		function->parameter_count,
+#ifdef HALO_64BIT
+		hs_function_parameter_types(function),
+#else
 		function->parameter_types,
+#endif
 		initialize);
 }
 
@@ -1914,6 +2089,10 @@ void hs_evaluate_begin(
 
 	match_assert("c:\\halo\\source\\hs\\hs_library_internal_runtime.h", 0x15,
 		function_index==_hs_function_begin);
+
+	/* port: none on a stack overflow (hs_stack_overflow) */
+	if (!expression_index || !result)
+		return;
 
 	if (initialize)
 	{
@@ -1943,7 +2122,7 @@ void hs_evaluate_equality(
 {
 	short parameter_types[2];
 	long *arguments;
-	union hs_conversion_result result;
+	long result_long;
 	short type;
 
 	match_assert("c:\\halo\\source\\hs\\hs_library_internal_runtime.h", 0x131,
@@ -1961,8 +2140,9 @@ void hs_evaluate_equality(
 		if (function_index==_hs_function_not_equal)
 			equal = !equal;
 
-		result.boolean = equal;
-		hs_return(thread_index, result.long_integer);
+		result_long = 0;
+		*(boolean *)&result_long = equal;
+		hs_return(thread_index, result_long);
 	}
 
 	return;
@@ -1985,7 +2165,7 @@ void hs_evaluate_inequality(
 	arguments = hs_arguments_evaluate(thread_index, 2, parameter_types, initialize);
 	if (arguments)
 	{
-		union hs_conversion_result result;
+		long result_long;
 		boolean comparison;
 		real value0;
 		real value1;
@@ -2006,8 +2186,9 @@ void hs_evaluate_inequality(
 			break;
 		}
 
-		result.boolean = comparison;
-		hs_return(thread_index, result.long_integer);
+		result_long = 0;
+		*(boolean *)&result_long = comparison;
+		hs_return(thread_index, result_long);
 	}
 
 	return;
@@ -2023,10 +2204,14 @@ void hs_evaluate_logical(
 	boolean *value = hs_stack_allocate(thread_index, sizeof(long));
 	boolean *result = hs_stack_allocate(thread_index, sizeof(boolean));
 	boolean and = function_index==_hs_function_and;
-	union hs_conversion_result value_out;
+	long result_long;
 
 	match_assert("c:\\halo\\source\\hs\\hs_library_internal_runtime.h", 0xcf,
 		function_index==_hs_function_and || function_index==_hs_function_or);
+
+	/* port: none on a stack overflow (hs_stack_overflow) */
+	if (!expression_index || !value || !result)
+		return;
 
 	if (initialize)
 	{
@@ -2051,9 +2236,10 @@ void hs_evaluate_logical(
 	}
 	else
 	{
-		value_out.boolean = *result;
+		result_long = 0;
+		*(boolean *)&result_long = *result;
 
-		hs_return(thread_index, value_out.long_integer);
+		hs_return(thread_index, result_long);
 	}
 
 	return;
@@ -2065,24 +2251,28 @@ void hs_evaluate_if(
 	boolean initialize)
 {
 	struct hs_thread_datum *thread = hs_thread_get(thread_index);
-	union hs_conversion_result *condition = hs_stack_allocate(thread_index, sizeof(long));
+	long *condition = hs_stack_allocate(thread_index, sizeof(long));
 	long *expression_index = hs_stack_allocate(thread_index, sizeof(long));
 	long *result = hs_stack_allocate(thread_index, sizeof(long));
 
 	match_assert("c:\\halo\\source\\hs\\hs_library_internal_runtime.h", 0x77,
 		function_index==_hs_function_if);
 
+	/* port: none on a stack overflow (hs_stack_overflow) */
+	if (!condition || !expression_index || !result)
+		return;
+
 	if (initialize)
 	{
-		condition->long_integer = 0;
+		*condition = 0;
 		*expression_index = NONE;
 		hs_evaluate(thread_index, hs_syntax_get(hs_syntax_get(
 			thread->stack->expression_index)->data)->next_node_index,
-			&condition->long_integer);
+			condition);
 	}
 	else if (*expression_index==NONE)
 	{
-		if (condition->boolean)
+		if ((boolean)*condition)
 		{
 			*expression_index = hs_syntax_get(hs_syntax_get(hs_syntax_get(
 				thread->stack->expression_index)->data)->next_node_index)->next_node_index;
@@ -2118,11 +2308,30 @@ void hs_evaluate_set(
 	struct hs_thread_datum *thread = hs_thread_get(thread_index);
 	long variable_expression_index = hs_syntax_get(hs_syntax_get(
 		thread->stack->expression_index)->data)->next_node_index;
-	struct hs_syntax_node *variable = hs_syntax_get(variable_expression_index);
+	/* port: (none to get when there's no variable) */
+	struct hs_syntax_node *variable = variable_expression_index!=NONE ?
+		hs_syntax_get(variable_expression_index) :
+		NULL;
 	short type;
 	long global_index;
 
-	hs_stack_allocate(thread_index, sizeof(long));
+	/* port: a variable that isn't a global's name ends the thread: its
+	index would pick the global (the external one too) written through. Only
+	a damaged map's are (the compiler and hs_scenario_functions_check let
+	none run) */
+	if (!variable ||
+		!TEST_FLAG(variable->flags, _hs_syntax_node_primitive_bit) ||
+		!TEST_FLAG(variable->flags, _hs_syntax_node_global_bit) ||
+		hs_global_get_type((short)variable->data)==_hs_unparsed)
+	{
+		hs_syntax_error(thread_index);
+
+		return;
+	}
+
+	/* port: none on a stack overflow (hs_stack_overflow) */
+	if (!hs_stack_allocate(thread_index, sizeof(long)))
+		return;
 	type = hs_global_get_type((short)variable->data);
 
 	if (initialize)
@@ -2139,7 +2348,7 @@ void hs_evaluate_set(
 		hs_evaluate(thread_index,
 			hs_syntax_get(variable_expression_index)->next_node_index,
 			&((struct hs_global_datum *)datum_get(hs_global_data,
-				global_index))->value.long_integer);
+				global_index))->value);
 	}
 	else
 	{
@@ -2158,28 +2367,37 @@ void hs_evaluate_inspect(
 	long thread_index,
 	boolean initialize)
 {
-	char string[1024];
+	char string[HS_INSPECT_BUFFER_SIZE];
 	struct hs_thread_datum *thread = hs_thread_get(thread_index);
-	union hs_conversion_result *value = hs_stack_allocate(thread_index, sizeof(long));
+	long *value = hs_stack_allocate(thread_index, sizeof(long));
 
 	match_assert("c:\\halo\\source\\hs\\hs_library_internal_runtime.h", 0x2bc,
 		function_index==_hs_function_inspect);
+
+	/* port: none on a stack overflow (hs_stack_overflow) */
+	if (!value)
+		return;
 
 	if (initialize)
 	{
 		hs_evaluate(thread_index, hs_syntax_get(hs_syntax_get(
 			thread->stack->expression_index)->data)->next_node_index,
-			&value->long_integer);
+			value);
 	}
 	else
 	{
 		struct hs_syntax_node *expression = hs_syntax_get(hs_syntax_get(hs_syntax_get(
 			thread->stack->expression_index)->data)->next_node_index);
 
-		if (hs_type_inspectors[expression->type])
+		/* port: (the type was checked as the value was evaluated: checked
+		again before it picks an inspector) */
+		if (hs_type_valid(expression->type) && hs_type_inspectors[expression->type])
 		{
 			hs_type_inspectors[expression->type](expression->type, *value, string);
-			console_printf(FALSE, string);
+			/* (port: a scenario script's inspect is the game's chatter, as
+			print is, hs_print) */
+			if (terminal_shows(terminal_command_running ? _terminal_message_serious : _terminal_message_chatter))
+				console_printf(FALSE, "%s", string);
 		}
 
 		hs_return(thread_index, 0);
@@ -2198,7 +2416,11 @@ void hs_evaluate_arithmetic(
 	long *expression_index = hs_stack_allocate(thread_index, sizeof(long));
 	real *value = hs_stack_allocate(thread_index, sizeof(real));
 	real *result = hs_stack_allocate(thread_index, sizeof(real));
-	union hs_conversion_result value_out;
+	long result_long;
+
+	/* port: none on a stack overflow (hs_stack_overflow) */
+	if (!argument_index || !expression_index || !value || !result)
+		return;
 
 	if (initialize)
 	{
@@ -2253,9 +2475,9 @@ void hs_evaluate_arithmetic(
 	}
 	else
 	{
-		value_out.real = *result;
+		*(real *)&result_long = *result;
 
-		hs_return(thread_index, value_out.long_integer);
+		hs_return(thread_index, result_long);
 	}
 
 	return;
@@ -2272,6 +2494,10 @@ void hs_evaluate_object_cast_up(
 	match_assert("c:\\halo\\source\\hs\\hs_library_internal_runtime.h", 0x2dc,
 		function_index>=_hs_function_object_to_unit &&
 		function_index<=_hs_function_object_to_unit);
+
+	/* port: none on a stack overflow (hs_stack_overflow) */
+	if (!object_index)
+		return;
 
 	if (initialize)
 	{
@@ -2317,6 +2543,10 @@ void hs_evaluate_begin_random(
 
 	match_assert("c:\\halo\\source\\hs\\hs_library_internal_runtime.h", 0x45,
 		function_index==_hs_function_begin_random);
+
+	/* port: none on a stack overflow (hs_stack_overflow) */
+	if (!argument_count || !evaluated || !result)
+		return;
 
 	if (initialize)
 	{
@@ -2372,6 +2602,10 @@ void hs_evaluate_debug_string(
 		(function_index>=_hs_function_debug_string__first) &&
 		(function_index<=_hs_function_debug_string__last));
 
+	/* port: none on a stack overflow (hs_stack_overflow) */
+	if (!expression_index || !argument_count || !arguments)
+		return;
+
 	if (initialize)
 	{
 		*expression_index = hs_syntax_get(hs_syntax_get(
@@ -2387,7 +2621,11 @@ void hs_evaluate_debug_string(
 
 		hs_evaluate(thread_index, *expression_index, &argument);
 		*expression_index = hs_syntax_get(*expression_index)->next_node_index;
+#ifdef HALO_64BIT
+		arguments[*argument_count] = xbox_pointer(argument);
+#else
 		arguments[*argument_count] = (char const *)argument;
+#endif
 		*argument_count += 1;
 	}
 	else
@@ -2427,8 +2665,8 @@ void hs_evaluate_sleep_until(
 	boolean initialize)
 {
 	struct hs_thread_datum *thread = hs_thread_get(thread_index);
-	union hs_conversion_result *condition = hs_stack_allocate(thread_index, sizeof(long));
-	union hs_conversion_result *ticks = hs_stack_allocate(thread_index, sizeof(long));
+	long *condition = hs_stack_allocate(thread_index, sizeof(long));
+	long *ticks = hs_stack_allocate(thread_index, sizeof(long));
 	long *timeout = hs_stack_allocate(thread_index, sizeof(long));
 	long *start_time = hs_stack_allocate(thread_index, sizeof(long));
 	short *argument_index = hs_stack_allocate(thread_index, sizeof(short));
@@ -2438,17 +2676,21 @@ void hs_evaluate_sleep_until(
 	match_assert("c:\\halo\\source\\hs\\hs_library_internal_runtime.h", 0x1e5,
 		function_index==_hs_function_sleep_until);
 
+	/* port: none on a stack overflow (hs_stack_overflow) */
+	if (!condition || !ticks || !timeout || !start_time || !argument_index)
+		return;
+
 	if (initialize)
 	{
-		condition->boolean = FALSE;
+		*(boolean *)condition = FALSE;
 		*start_time = game_time_get();
 		*argument_index = 0;
-		ticks->short_integer = 30;
+		*(short *)ticks = 30;
 		*timeout = NONE;
 
 		if (expression_index!=NONE)
 		{
-			hs_evaluate(thread_index, expression_index, &ticks->long_integer);
+			hs_evaluate(thread_index, expression_index, ticks);
 
 			return;
 		}
@@ -2473,7 +2715,7 @@ void hs_evaluate_sleep_until(
 
 	if (*argument_index==1)
 	{
-		if (condition->boolean ||
+		if ((boolean)*condition ||
 			(*timeout!=NONE && game_time_get()>=*timeout+*start_time))
 		{
 			hs_return(thread_index, 0);
@@ -2482,9 +2724,9 @@ void hs_evaluate_sleep_until(
 		{
 			hs_evaluate(thread_index, hs_syntax_get(hs_syntax_get(
 				thread->stack->expression_index)->data)->next_node_index,
-				&condition->long_integer);
+				condition);
 
-			thread->sleep_until = game_time_get()+MAX(1, ticks->short_integer);
+			thread->sleep_until = game_time_get()+MAX(1, (short)*ticks);
 			if (*timeout!=NONE)
 			{
 				thread->sleep_until = MIN(*timeout+*start_time, thread->sleep_until);
@@ -2508,6 +2750,10 @@ void hs_evaluate_sleep(
 
 	match_assert("c:\\halo\\source\\hs\\hs_library_internal_runtime.h", 0x189,
 		function_index==_hs_function_sleep);
+
+	/* port: none on a stack overflow (hs_stack_overflow) */
+	if (!ticks || !script_index || !argument_index)
+		return;
 
 	if (initialize)
 	{
@@ -2595,10 +2841,30 @@ static void hs_thread_main(
 {
 	struct hs_thread_datum *thread = hs_thread_get(thread_index);
 	struct hs_script *script = NULL;
+	long *root_result;
 
 	hs_runtime_globals.executing_thread_index = (short)thread_index;
 	if (thread->type==_hs_thread_type_script)
 	{
+		/* port: a corrupted thread's script index halted the whole game from
+	   the assert inside tag_block_get_element (observed on a10 with the
+	   sound cache under pressure); drop the bad thread and keep running */
+		if (thread->script_index<0 ||
+			thread->script_index>=global_scenario_get()->hs_scripts.count)
+		{
+			error(_error_silent, "hs thread #%08lX has a bad script index #%08lX; dropping it",
+				(unsigned long)thread_index, (unsigned long)thread->script_index);
+			thread->type = _hs_thread_type_console_command;
+			thread->script_index = NONE;
+			thread->sleep_until = 0;
+			thread->stack = (struct hs_stack_frame *)thread->stack_data;
+			thread->stack->previous = NULL;
+			thread->stack->size = 0;
+			thread->stack->expression_index = NONE;
+			hs_thread_delete(thread_index);
+			hs_runtime_globals.executing_thread_index = NONE;
+			return;
+		}
 		script = TAG_BLOCK_GET_ELEMENT(
 			&global_scenario_get()->hs_scripts,
 			thread->script_index,
@@ -2607,6 +2873,15 @@ static void hs_thread_main(
 			script->script_type!=_hs_script_static &&
 			script->script_type!=_hs_script_stub,
 			"found a static script at toplevel.");
+		/* port: a script that doesn't run (hs_scenario_functions_check)
+		gets no thread; one a saved game brings back sleeps for good */
+		if (hs_scenario_script_disabled((short)thread->script_index))
+		{
+			thread->sleep_until = NONE;
+			hs_runtime_globals.executing_thread_index = NONE;
+
+			return;
+		}
 	}
 
 	match_hs_assert("c:\\halo\\SOURCE\\hs\\hs_runtime.c", 0x2bd, thread_index,
@@ -2618,8 +2893,10 @@ static void hs_thread_main(
 		match_assert("c:\\halo\\SOURCE\\hs\\hs_runtime.c", 0x2c3, script);
 
 		thread->stack->size = 0;
-		hs_evaluate(thread_index, script->root_expression_index,
-			hs_stack_allocate(thread_index, sizeof(long)));
+		/* port: (the base frame, just emptied, has room) */
+		root_result = hs_stack_allocate(thread_index, sizeof(long));
+		if (root_result)
+			hs_evaluate(thread_index, script->root_expression_index, root_result);
 	}
 
 	while (thread->stack!=(struct hs_stack_frame *)thread->stack_data &&
@@ -2629,11 +2906,22 @@ static void hs_thread_main(
 	{
 		struct hs_syntax_node *expression = hs_syntax_get(thread->stack->expression_index);
 		boolean initialize = TEST_FLAG(thread->flags, _hs_thread_in_function_call_bit);
+		long index_count;
 
 		thread->stack->size = 0;
 		SET_FLAG(thread->flags, _hs_thread_in_function_call_bit, FALSE);
 
-		if (!TEST_FLAG(expression->flags, _hs_syntax_node_script_bit))
+		/* port: a function or script that isn't there isn't called, and the
+		thread is ended. hs_evaluate pushes only nodes whose index was
+		checked, but this index picks a function pointer */
+		index_count = TEST_FLAG(expression->flags, _hs_syntax_node_script_bit) ?
+			global_scenario_get()->hs_scripts.count :
+			hs_function_table_count;
+		if (expression->index<0 || expression->index>=index_count)
+		{
+			hs_syntax_error(thread_index);
+		}
+		else if (!TEST_FLAG(expression->flags, _hs_syntax_node_script_bit))
 		{
 			struct hs_function_definition const *function = hs_function_get(expression->index);
 
@@ -2647,6 +2935,15 @@ static void hs_thread_main(
 		else
 		{
 			hs_script_evaluate(expression->index, thread_index, initialize);
+		}
+
+		/* port: a stack overflow (hs_stack_overflow) ends the thread: its
+		frames are let go, and a script's thread doesn't run again */
+		if (TEST_FLAG(thread->flags, _hs_thread_stack_overflow_bit))
+		{
+			thread->stack = (struct hs_stack_frame *)thread->stack_data;
+			thread->flags = 0;
+			thread->sleep_until = thread->type==_hs_thread_type_script ? NONE : 0;
 		}
 	}
 
@@ -2683,12 +2980,65 @@ static void hs_script_evaluate(
 	struct hs_thread_datum *thread = hs_thread_get(thread_index);
 	long *result = hs_stack_allocate(thread_index, sizeof(long));
 
-	if (initialize)
+	/* port: none on a stack overflow (hs_stack_overflow) */
+	if (!result)
+		return;
+
+	/* port: a static script that calls a function a map's scripts may not
+	isn't evaluated: it returns its type's default
+	(hs_scenario_functions_check) */
+	if (hs_scenario_script_disabled(script_index))
+		hs_return(thread_index, hs_type_default_value(script->return_type));
+	else if (initialize)
 		hs_evaluate(thread_index, script->root_expression_index, result);
 	else
 		hs_return(thread_index, *result);
 
 	return;
+}
+
+static long hs_type_default_value(
+	short type)
+{
+	union
+	{
+		real real_value;
+		long long_value;
+	} real_default;
+
+	switch (type)
+	{
+	case _hs_type_void:
+		return 0;
+	case _hs_type_boolean:
+		return _hs_type_boolean_default;
+	case _hs_type_real:
+		real_default.real_value = _hs_type_real_default;
+		return real_default.long_value;
+	case _hs_type_short_integer:
+		return _hs_type_short_integer_default;
+	case _hs_type_long_integer:
+		return _hs_type_long_integer_default;
+	case _hs_type_string:
+#ifdef HALO_64BIT
+	{
+		/* (a string value is an Xbox address: an empty string there) */
+		static char *empty_string;
+
+		if (!empty_string)
+			empty_string = malloc(1);
+		if (!empty_string)
+			return 0;
+		empty_string[0] = 0;
+		return (long)xbox_address(empty_string);
+	}
+#else
+		return (long)_hs_type_string_default;
+#endif
+	default:
+		/* (the rest's defaults, hs.c's _hs_type_*_default, are all NONE) */
+		return NONE;
+	}
 }
 
 static void *hs_stack_allocate(
@@ -2722,6 +3072,18 @@ static void *hs_stack_allocate(
 	match_hs_assert("c:\\halo\\SOURCE\\hs\\hs_runtime.c", 0x37f, thread_index,
 		frame->data+offset+size<=thread->stack_data+HS_THREAD_STACK_SIZE,
 		"stack overflow.");
+
+	/* port: none past the thread's stack (hs_stack_overflow); the caller
+	returns on NULL. From offset: the frame's size, which the 3DS aligns
+	above (Halo3DS: an unaligned value there faulted on its hardware) */
+	if (size<0 ||
+		size>thread->stack_data+HS_THREAD_STACK_SIZE-(frame->data+offset) ||
+		TEST_FLAG(thread->flags, _hs_thread_stack_overflow_bit))
+	{
+		hs_stack_overflow(thread_index);
+
+		return NULL;
+	}
 
 	result = frame->data+offset;
 	frame->size = (short)(offset+size);
@@ -2790,6 +3152,18 @@ static void hs_evaluate(
 		valid_thread(thread), "corrupted stack.");
 	match_assert("c:\\halo\\SOURCE\\hs\\hs_runtime.c", 0x300, destination);
 
+	/* port: only a node with a value's type is evaluated. Those are the
+	ones hs_compile_postprocess checked: their function or script index, and
+	the type a constant or global casts from. A node that isn't there, or a
+	function's name (left unchecked, and never in a value's place in the
+	shipped maps), comes only from a damaged map: the thread is ended */
+	if (!expression || !hs_type_valid(expression->type))
+	{
+		hs_syntax_error(thread_index);
+
+		return;
+	}
+
 	if (TEST_FLAG(hs_syntax_get(expression_index)->flags, _hs_syntax_node_primitive_bit))
 	{
 		if (TEST_FLAG(expression->flags, _hs_syntax_node_global_bit))
@@ -2812,9 +3186,12 @@ static void hs_evaluate(
 	else
 	{
 		thread->stack->result = destination;
-		hs_stack_push(thread_index);
-		SET_FLAG(thread->flags, _hs_thread_in_function_call_bit, TRUE);
-		thread->stack->expression_index = expression_index;
+		/* port: not pushed on a stack overflow (hs_stack_overflow) */
+		if (hs_stack_push(thread_index))
+		{
+			SET_FLAG(thread->flags, _hs_thread_in_function_call_bit, TRUE);
+			thread->stack->expression_index = expression_index;
+		}
 	}
 
 	return;
@@ -2843,197 +3220,197 @@ static void hs_global_reconcile_read(
 		switch (hs_global_get_type(global_designator))
 		{
 		case _hs_type_boolean:
-			global->value.boolean = external->address
+			*(boolean *)&global->value = external->address
 				? *(boolean *)external->address
 				: _hs_type_boolean_default;
 			break;
 		case _hs_type_real:
-			global->value.real = external->address
+			*(real *)&global->value = external->address
 				? *(real *)external->address
 				: _hs_type_real_default;
 			break;
 		case _hs_type_short_integer:
-			global->value.short_integer = external->address
+			*(short *)&global->value = external->address
 				? *(short *)external->address
 				: _hs_type_short_integer_default;
 			break;
 		case _hs_type_long_integer:
-			global->value.long_integer = external->address
+			global->value = external->address
 				? *(long *)external->address
 				: _hs_type_long_integer_default;
 			break;
 		case _hs_type_string:
-			global->value.string = external->address
+			*(char const **)&global->value = external->address
 				? *(char const * *)external->address
 				: _hs_type_string_default;
 			break;
 		case _hs_type_script:
-			global->value.short_integer = external->address
+			*(short *)&global->value = external->address
 				? *(short *)external->address
 				: _hs_type_script_default;
 			break;
 		case _hs_type_trigger_volume:
-			global->value.short_integer = external->address
+			*(short *)&global->value = external->address
 				? *(short *)external->address
 				: _hs_type_trigger_volume_default;
 			break;
 		case _hs_type_cutscene_flag:
-			global->value.short_integer = external->address
+			*(short *)&global->value = external->address
 				? *(short *)external->address
 				: _hs_type_cutscene_flag_default;
 			break;
 		case _hs_type_cutscene_camera_point:
-			global->value.short_integer = external->address
+			*(short *)&global->value = external->address
 				? *(short *)external->address
 				: _hs_type_cutscene_camera_point_default;
 			break;
 		case _hs_type_cutscene_title:
-			global->value.short_integer = external->address
+			*(short *)&global->value = external->address
 				? *(short *)external->address
 				: _hs_type_cutscene_title_default;
 			break;
 		case _hs_type_cutscene_recording:
-			global->value.short_integer = external->address
+			*(short *)&global->value = external->address
 				? *(short *)external->address
 				: _hs_type_cutscene_recording_default;
 			break;
 		case _hs_type_device_group:
-			global->value.short_integer = external->address
+			*(short *)&global->value = external->address
 				? *(short *)external->address
 				: _hs_type_device_group_default;
 			break;
 		case _hs_type_ai:
-			global->value.long_integer = external->address
+			global->value = external->address
 				? *(long *)external->address
 				: _hs_type_ai_default;
 			break;
 		case _hs_type_ai_command_list:
-			global->value.short_integer = external->address
+			*(short *)&global->value = external->address
 				? *(short *)external->address
 				: _hs_type_ai_command_list_default;
 			break;
 		case _hs_type_starting_profile:
-			global->value.short_integer = external->address
+			*(short *)&global->value = external->address
 				? *(short *)external->address
 				: _hs_type_starting_profile_default;
 			break;
 		case _hs_type_conversation:
-			global->value.short_integer = external->address
+			*(short *)&global->value = external->address
 				? *(short *)external->address
 				: _hs_type_conversation_default;
 			break;
 		case _hs_type_navpoint:
-			global->value.short_integer = external->address
+			*(short *)&global->value = external->address
 				? *(short *)external->address
 				: _hs_type_navpoint_default;
 			break;
 		case _hs_type_hud_message:
-			global->value.short_integer = external->address
+			*(short *)&global->value = external->address
 				? *(short *)external->address
 				: _hs_type_hud_message_default;
 			break;
 		case _hs_type_object_list:
-			global->value.long_integer = external->address
+			global->value = external->address
 				? *(long *)external->address
 				: _hs_type_object_list_default;
 			break;
 		case _hs_type_sound:
-			global->value.long_integer = external->address
+			global->value = external->address
 				? *(long *)external->address
 				: _hs_type_sound_default;
 			break;
 		case _hs_type_effect:
-			global->value.long_integer = external->address
+			global->value = external->address
 				? *(long *)external->address
 				: _hs_type_effect_default;
 			break;
 		case _hs_type_damage:
-			global->value.long_integer = external->address
+			global->value = external->address
 				? *(long *)external->address
 				: _hs_type_damage_default;
 			break;
 		case _hs_type_looping_sound:
-			global->value.long_integer = external->address
+			global->value = external->address
 				? *(long *)external->address
 				: _hs_type_looping_sound_default;
 			break;
 		case _hs_type_animation_graph:
-			global->value.long_integer = external->address
+			global->value = external->address
 				? *(long *)external->address
 				: _hs_type_animation_graph_default;
 			break;
 		case _hs_type_actor_variant:
-			global->value.long_integer = external->address
+			global->value = external->address
 				? *(long *)external->address
 				: _hs_type_actor_variant_default;
 			break;
 		case _hs_type_damage_effect:
-			global->value.long_integer = external->address
+			global->value = external->address
 				? *(long *)external->address
 				: _hs_type_damage_effect_default;
 			break;
 		case _hs_type_object_definition:
-			global->value.long_integer = external->address
+			global->value = external->address
 				? *(long *)external->address
 				: _hs_type_object_definition_default;
 			break;
 		case _hs_type_enum_game_difficulty:
-			global->value.short_integer = external->address
+			*(short *)&global->value = external->address
 				? *(short *)external->address
 				: _hs_type_enum_game_difficulty_default;
 			break;
 		case _hs_type_enum_team:
-			global->value.short_integer = external->address
+			*(short *)&global->value = external->address
 				? *(short *)external->address
 				: _hs_type_enum_team_default;
 			break;
 		case _hs_type_enum_ai_default_state:
-			global->value.short_integer = external->address
+			*(short *)&global->value = external->address
 				? *(short *)external->address
 				: _hs_type_enum_ai_default_state_default;
 			break;
 		case _hs_type_enum_actor_type:
-			global->value.short_integer = external->address
+			*(short *)&global->value = external->address
 				? *(short *)external->address
 				: _hs_type_enum_actor_type_default;
 			break;
 		case _hs_type_enum_hud_corner:
-			global->value.short_integer = external->address
+			*(short *)&global->value = external->address
 				? *(short *)external->address
 				: _hs_type_enum_hud_corner_default;
 			break;
 		case _hs_type_object:
-			global->value.long_integer = external->address
+			global->value = external->address
 				? *(long *)external->address
 				: _hs_type_object_default;
 			break;
 		case _hs_type_unit:
-			global->value.long_integer = external->address
+			global->value = external->address
 				? *(long *)external->address
 				: _hs_type_unit_default;
 			break;
 		case _hs_type_vehicle:
-			global->value.long_integer = external->address
+			global->value = external->address
 				? *(long *)external->address
 				: _hs_type_vehicle_default;
 			break;
 		case _hs_type_weapon:
-			global->value.long_integer = external->address
+			global->value = external->address
 				? *(long *)external->address
 				: _hs_type_weapon_default;
 			break;
 		case _hs_type_device:
-			global->value.long_integer = external->address
+			global->value = external->address
 				? *(long *)external->address
 				: _hs_type_device_default;
 			break;
 		case _hs_type_scenery:
-			global->value.long_integer = external->address
+			global->value = external->address
 				? *(long *)external->address
 				: _hs_type_scenery_default;
 			break;
 		case _hs_type_object_name:
-			global->value.short_integer = external->address
+			*(short *)&global->value = external->address
 				? *(short *)external->address
 				: _hs_type_object_name_default;
 			break;
@@ -3072,160 +3449,160 @@ static void hs_global_reconcile_write(
 		{
 		case _hs_type_boolean:
 			if (external->address)
-				*(boolean *)external->address = global->value.boolean;
+				*(boolean *)external->address = (boolean)global->value;
 			break;
 		case _hs_type_real:
-			value = global->value.real;
+			value = *(real *)&global->value;
 			if (external->address)
 				*(real *)external->address = value;
 			break;
 		case _hs_type_short_integer:
 			if (external->address)
-				*(short *)external->address = global->value.short_integer;
+				*(short *)external->address = (short)global->value;
 			break;
 		case _hs_type_long_integer:
 			if (external->address)
-				*(long *)external->address = global->value.long_integer;
+				*(long *)external->address = global->value;
 			break;
 		case _hs_type_string:
 			if (external->address)
-				*(char const **)external->address = global->value.string;
+				*(char const **)external->address = (char const *)xbox_pointer(global->value);
 			break;
 		case _hs_type_script:
 			if (external->address)
-				*(short *)external->address = global->value.short_integer;
+				*(short *)external->address = (short)global->value;
 			break;
 		case _hs_type_trigger_volume:
 			if (external->address)
-				*(short *)external->address = global->value.short_integer;
+				*(short *)external->address = (short)global->value;
 			break;
 		case _hs_type_cutscene_flag:
 			if (external->address)
-				*(short *)external->address = global->value.short_integer;
+				*(short *)external->address = (short)global->value;
 			break;
 		case _hs_type_cutscene_camera_point:
 			if (external->address)
-				*(short *)external->address = global->value.short_integer;
+				*(short *)external->address = (short)global->value;
 			break;
 		case _hs_type_cutscene_title:
 			if (external->address)
-				*(short *)external->address = global->value.short_integer;
+				*(short *)external->address = (short)global->value;
 			break;
 		case _hs_type_cutscene_recording:
 			if (external->address)
-				*(short *)external->address = global->value.short_integer;
+				*(short *)external->address = (short)global->value;
 			break;
 		case _hs_type_device_group:
 			if (external->address)
-				*(short *)external->address = global->value.short_integer;
+				*(short *)external->address = (short)global->value;
 			break;
 		case _hs_type_ai:
 			if (external->address)
-				*(long *)external->address = global->value.long_integer;
+				*(long *)external->address = global->value;
 			break;
 		case _hs_type_ai_command_list:
 			if (external->address)
-				*(short *)external->address = global->value.short_integer;
+				*(short *)external->address = (short)global->value;
 			break;
 		case _hs_type_starting_profile:
 			if (external->address)
-				*(short *)external->address = global->value.short_integer;
+				*(short *)external->address = (short)global->value;
 			break;
 		case _hs_type_conversation:
 			if (external->address)
-				*(short *)external->address = global->value.short_integer;
+				*(short *)external->address = (short)global->value;
 			break;
 		case _hs_type_navpoint:
 			if (external->address)
-				*(short *)external->address = global->value.short_integer;
+				*(short *)external->address = (short)global->value;
 			break;
 		case _hs_type_hud_message:
 			if (external->address)
-				*(short *)external->address = global->value.short_integer;
+				*(short *)external->address = (short)global->value;
 			break;
 		case _hs_type_object_list:
 			if (external->address)
-				*(long *)external->address = global->value.long_integer;
+				*(long *)external->address = global->value;
 			break;
 		case _hs_type_sound:
 			if (external->address)
-				*(long *)external->address = global->value.long_integer;
+				*(long *)external->address = global->value;
 			break;
 		case _hs_type_effect:
 			if (external->address)
-				*(long *)external->address = global->value.long_integer;
+				*(long *)external->address = global->value;
 			break;
 		case _hs_type_damage:
 			if (external->address)
-				*(long *)external->address = global->value.long_integer;
+				*(long *)external->address = global->value;
 			break;
 		case _hs_type_looping_sound:
 			if (external->address)
-				*(long *)external->address = global->value.long_integer;
+				*(long *)external->address = global->value;
 			break;
 		case _hs_type_animation_graph:
 			if (external->address)
-				*(long *)external->address = global->value.long_integer;
+				*(long *)external->address = global->value;
 			break;
 		case _hs_type_actor_variant:
 			if (external->address)
-				*(long *)external->address = global->value.long_integer;
+				*(long *)external->address = global->value;
 			break;
 		case _hs_type_damage_effect:
 			if (external->address)
-				*(long *)external->address = global->value.long_integer;
+				*(long *)external->address = global->value;
 			break;
 		case _hs_type_object_definition:
 			if (external->address)
-				*(long *)external->address = global->value.long_integer;
+				*(long *)external->address = global->value;
 			break;
 		case _hs_type_enum_game_difficulty:
 			if (external->address)
-				*(short *)external->address = global->value.short_integer;
+				*(short *)external->address = (short)global->value;
 			break;
 		case _hs_type_enum_team:
 			if (external->address)
-				*(short *)external->address = global->value.short_integer;
+				*(short *)external->address = (short)global->value;
 			break;
 		case _hs_type_enum_ai_default_state:
 			if (external->address)
-				*(short *)external->address = global->value.short_integer;
+				*(short *)external->address = (short)global->value;
 			break;
 		case _hs_type_enum_actor_type:
 			if (external->address)
-				*(short *)external->address = global->value.short_integer;
+				*(short *)external->address = (short)global->value;
 			break;
 		case _hs_type_enum_hud_corner:
 			if (external->address)
-				*(short *)external->address = global->value.short_integer;
+				*(short *)external->address = (short)global->value;
 			break;
 		case _hs_type_object:
 			if (external->address)
-				*(long *)external->address = global->value.long_integer;
+				*(long *)external->address = global->value;
 			break;
 		case _hs_type_unit:
 			if (external->address)
-				*(long *)external->address = global->value.long_integer;
+				*(long *)external->address = global->value;
 			break;
 		case _hs_type_vehicle:
 			if (external->address)
-				*(long *)external->address = global->value.long_integer;
+				*(long *)external->address = global->value;
 			break;
 		case _hs_type_weapon:
 			if (external->address)
-				*(long *)external->address = global->value.long_integer;
+				*(long *)external->address = global->value;
 			break;
 		case _hs_type_device:
 			if (external->address)
-				*(long *)external->address = global->value.long_integer;
+				*(long *)external->address = global->value;
 			break;
 		case _hs_type_scenery:
 			if (external->address)
-				*(long *)external->address = global->value.long_integer;
+				*(long *)external->address = global->value;
 			break;
 		case _hs_type_object_name:
 			if (external->address)
-				*(short *)external->address = global->value.short_integer;
+				*(short *)external->address = (short)global->value;
 			break;
 		default:
 			display_assert(NULL, "c:\\halo\\SOURCE\\hs\\hs_runtime.c", 0x671, TRUE);
@@ -3254,7 +3631,7 @@ static long hs_global_evaluate(
 	}
 
 	return ((struct hs_global_datum *)datum_get(hs_global_data, global_index))->
-		value.long_integer;
+		value;
 }
 
 static long *hs_arguments_evaluate(
@@ -3267,6 +3644,11 @@ static long *hs_arguments_evaluate(
 	long *values = hs_stack_allocate(thread_index, formal_parameter_count*sizeof(long));
 	short *argument_index = hs_stack_allocate(thread_index, sizeof(short));
 	long *expression_index = hs_stack_allocate(thread_index, sizeof(long));
+
+	/* port: none on a stack overflow (hs_stack_overflow): as for arguments
+	still being evaluated, the caller returns on NULL */
+	if (!values || !argument_index || !expression_index)
+		return NULL;
 
 	if (initialize)
 	{

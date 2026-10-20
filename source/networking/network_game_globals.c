@@ -89,7 +89,7 @@ symbols in this file:
 00283D80 0021:
 	??_C@_0CB@MPOLIODB@global_network_game_server?$DN?$DNNULL@ (0000)
 0030A988 00da:
-	_data_0030a988 (0000)
+	_player_action_packet_definition_fields (0000)
 	_player_action_packet_definition (0028)
 	_player_action_collection_definition (00c4)
 004566DC 0010:
@@ -112,6 +112,9 @@ symbols in this file:
 #include "network_game_manager.h"
 #include "network_game_globals.h"
 #include "network_server_manager_internal.h"
+#ifdef HALO_64BIT
+#include "cseries/cseries_windows.h"
+#endif
 
 /* ---------- constants */
 
@@ -143,7 +146,11 @@ struct player_action_collection
 typedef char network_player_action_collection_size_assert[
 	sizeof(struct player_action_collection) == 0x80 ? 1 : -1];
 
+#ifdef HALO_64BIT
+/* the Xbox packing only matched January's .data layout; native here */
+#else
 #pragma pack(push, 2)
+#endif
 struct player_action_collection_definition
 {
 	char const *name;
@@ -155,7 +162,9 @@ struct player_action_collection_definition
 	byte __padding11[3];
 	short previous_client_state;
 };
+#ifndef HALO_64BIT
 #pragma pack(pop)
+#endif
 
 struct player_action_packet_definition_storage
 {
@@ -164,11 +173,13 @@ struct player_action_packet_definition_storage
 	struct data_packet_field collection_fields[13];
 	short __padding9a;
 };
+#ifndef HALO_64BIT
 
 typedef char player_action_collection_definition_size_assert[
 	sizeof(struct player_action_collection_definition) == 0x16 ? 1 : -1];
 typedef char player_action_packet_definition_storage_size_assert[
 	sizeof(struct player_action_packet_definition_storage) == 0x9C ? 1 : -1];
+#endif
 
 struct client_game_update_message
 {
@@ -178,33 +189,18 @@ struct client_game_update_message
 	byte update[0x80];
 };
 
-struct network_machine
-{
-	byte __unknown0[0x40];
-	char machine_index;
-};
-
 struct local_network_player
 {
 	byte __unknown0[0x1C];
 	boolean machine_index;
 };
 
-struct network_game
-{
-	byte __unknown0[0x226];
-	struct network_player players[16];
-	byte __unknown426[2];
-	long random_seed;
-	long number_of_games_played;
-};
-
 typedef char network_machine_index_offset_assert[
 	offsetof(struct network_machine, machine_index) == 0x40 ? 1 : -1];
 typedef char network_game_players_offset_assert[
-	offsetof(struct network_game, players) == 0x226 ? 1 : -1];
+	offsetof(struct network_game, players) == HALO_PORT_NETWORK_GAME_PLAYERS_OFFSET ? 1 : -1];
 typedef char network_game_random_seed_offset_assert[
-	offsetof(struct network_game, random_seed) == 0x428 ? 1 : -1];
+	offsetof(struct network_game, random_seed) == HALO_PORT_NETWORK_GAME_RANDOM_SEED_OFFSET ? 1 : -1];
 
 struct network_game_globals
 {
@@ -216,21 +212,20 @@ struct network_game_globals
 	byte __padding0b;
 	unsigned long last_client_update_time;
 };
+#ifndef HALO_64BIT
 
 typedef char network_game_globals_size_assert[
 	sizeof(struct network_game_globals) == 0x10 ? 1 : -1];
+#endif
 
 /* ---------- prototypes */
 
-unsigned long *get_global_local_random_seed_address(
-	void);
-unsigned short seed_random(
-	unsigned long *seed);
-
 /* ---------- globals */
 
-struct network_game_globals bss_004566dc = { 0 };
-struct data_packet_field data_0030a988[4] =
+static struct network_game_globals bss_004566dc = { 0 };
+/* name from the 2003 PC demo PDB and the HCEX PDB (file static struct data_packet_field[4]); January's
+ * 40 bytes are identical to the demo's and it has no public for it (static) */
+static struct data_packet_field player_action_packet_definition_fields[4] =
 {
 	{ _data_packet_field_longs, 6, 0, 0, 0 },
 	{ _data_packet_field_shorts, 3, 0, 0, 0 },
@@ -244,7 +239,7 @@ struct player_action_packet_definition_storage player_action_packet_definition =
 		0,
 		0x20,
 		1,
-		data_0030a988,
+		player_action_packet_definition_fields,
 		FALSE,
 	},
 	0,
@@ -278,6 +273,58 @@ struct player_action_collection_definition player_action_collection_definition =
 };
 
 /* ---------- public code */
+
+/* the distributed netcode's per-tick state (port/linux/game/network_distributed.c),
+unreliably to the host, as the game update is */
+boolean network_distributed_client_send(
+	void *message,
+	word size)
+{
+	byte buffer[0x1000];
+
+	if (!global_network_game_client || size > sizeof(buffer))
+		return FALSE;
+	/* (the write swaps the header in place) */
+	csmemcpy(buffer, message, size);
+	/* (no address: the client's datagram socket is connected to the host,
+	network_connection_connect, and sends there) */
+	return network_game_client_write(network_game_client_get_connection(global_network_game_client),
+		(message_header *)buffer, size, NULL, 0);
+}
+
+/* ... reliably (a client's players' hits, network_damage.c) */
+boolean network_distributed_client_send_reliably(
+	void *message,
+	word size)
+{
+	byte buffer[0x1000];
+
+	if (!global_network_game_client || size > sizeof(buffer))
+		return FALSE;
+	/* (the write swaps the header in place) */
+	csmemcpy(buffer, message, size);
+	return network_game_client_write(network_game_client_get_connection(global_network_game_client),
+		(message_header *)buffer, size, NULL, 1);
+}
+
+/* a client of the distributed netcode, which decides nothing the host does */
+boolean network_game_distributed_client(
+	void)
+{
+	return game_connection() == _game_connection_network_client;
+}
+
+int config_boolean(char const *name);
+
+boolean network_game_solo_game(
+	void)
+{
+	static short solo = NONE;
+
+	if (solo == NONE)
+		solo = config_boolean("debug.solo_game") ? TRUE : FALSE;
+	return solo;
+}
 
 boolean network_game_is_active(
 	void)
@@ -497,6 +544,16 @@ boolean network_game_client_start_frame(
 		main_goto_main_menu();
 		result = TRUE;
 	}
+	else if (!global_network_game_client)
+	{
+		/* port: no client (the menus let it go, as a lobby's last player
+		leaving does, without changing the connection): no network game, as
+		network_game_client_end_frame has it, which only a frame in a game
+		reaches */
+		game_connection_set(0);
+		main_menu_ensure_player_queues_exist();
+		result = TRUE;
+	}
 	else
 	{
 		result = network_game_client_idle(global_network_game_client);
@@ -559,7 +616,6 @@ boolean network_game_client_end_frame(
 {
 	struct player_action_collection update;
 	struct client_game_update_message message;
-	struct transport_address remote_server_address;
 	unsigned long now;
 	message_header *encoded_message;
 	boolean result;
@@ -573,23 +629,21 @@ boolean network_game_client_end_frame(
 	else if (network_game_client_get_state(global_network_game_client, NULL) == _network_game_client_state_ingame)
 	{
 		now = system_milliseconds();
-		if (now-bss_004566dc.last_client_update_time >= 0x10 &&
+		if (now-bss_004566dc.last_client_update_time >=
+			/* (the input goes in its own message, network_distributed.c,
+			and the host takes its own players' at each tick,
+			update_server_next_update: this one only says the client is
+			there) */
+			100 &&
 			network_game_client_server_has_started_game(global_network_game_client))
 		{
-			network_game_client_get_next_update_number(global_network_game_client);
-			network_game_client_get_game(global_network_game_client);
 			update_client_build_client_update(&update);
 
-			if (network_client_get_oos(global_network_game_client))
-			{
-				message.update_number = network_game_client_get_next_update_number(
-					global_network_game_client) | 0x80000000;
-			}
-			else
-			{
-				message.update_number = network_game_client_get_next_update_number(
-					global_network_game_client) & 0x7FFFFFFF;
-			}
+			/* (the out-of-sync bit, 0x80000000, went with the lockstep
+			netcode: a machine no longer simulates others' players to go
+			out of sync with) */
+			message.update_number = network_game_client_get_next_update_number(
+				global_network_game_client) & 0x7FFFFFFF;
 
 			csmemcpy(message.update, &update, sizeof(update));
 			message.local_player_count = local_player_count();
@@ -599,14 +653,13 @@ boolean network_game_client_end_frame(
 				sizeof(message));
 			if (encoded_message)
 			{
-				network_game_client_get_remote_server_address(
-					global_network_game_client,
-					&remote_server_address);
+				/* (to the host: the client's datagram socket is connected to
+				it, network_distributed_client_send) */
 				result = network_game_client_write(
 					network_game_client_get_connection(global_network_game_client),
 					encoded_message,
 					GET_MESSAGE_SIZE(*encoded_message),
-					&remote_server_address,
+					NULL,
 					0);
 				if (!result)
 					network_event("failed to send a game update to the server");
@@ -659,7 +712,7 @@ void network_game_client_local_player_quit(
 		{
 			player_index = 0;
 			player_machine_index = &game->players[0].machine_index;
-			while (player_index < 16)
+			while (player_index < HALO_PORT_MAXIMUM_NETWORK_PLAYERS)
 			{
 				test_player = (struct network_player *)(
 					player_machine_index - offsetof(struct network_player, machine_index));

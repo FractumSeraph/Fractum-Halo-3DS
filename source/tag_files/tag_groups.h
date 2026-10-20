@@ -36,9 +36,11 @@ enum tag_field_type
 /* ---------- macros */
 
 #ifdef HALO_N3DS
+/* port: (Halo3DS) a block's elements checked by the 3DS port */
 #define TAG_BLOCK_GET_ELEMENT(block_address, index, type) ((type *)n3ds_tag_block_element((block_address), (index), sizeof(type)))
 #else
-#define TAG_BLOCK_GET_ELEMENT(block_address, index, type) ((type *)tag_block_get_element_with_size((block_address), (index), sizeof(type)))
+/* port: tag_block_get_element_fast (below) */
+#define TAG_BLOCK_GET_ELEMENT(block_address, index, type) ((type *)tag_block_get_element_fast((block_address), (index), sizeof(type)))
 #endif
 
 /* ---------- structures */
@@ -92,17 +94,27 @@ struct tag_block_definition
 struct tag_block
 {
 	long count;
-	void *address;
-	struct tag_block_definition *definition;
+	XPTR(void) address;
+	XPTR(struct tag_block_definition) definition;
 };
+#ifdef HALO_64BIT
+
+typedef char tag_block_size_assert[
+	sizeof(struct tag_block) == 0xC ? 1 : -1];
+#endif
 
 struct tag_reference
 {
 	unsigned long group_tag;
-	char *name;
+	XPTR(char) name;
 	long name_length;
 	long index;
 };
+#ifdef HALO_64BIT
+
+typedef char tag_reference_size_assert[
+	sizeof(struct tag_reference) == 0x10 ? 1 : -1];
+#endif
 
 struct tag_reference_definition
 {
@@ -111,21 +123,34 @@ struct tag_reference_definition
 	unsigned long *group_tags;
 };
 
+#ifndef HALO_64BIT
 typedef char tag_reference_definition_size_assert[
 	sizeof(struct tag_reference_definition) == 0xC ? 1 : -1];
 
+#endif
 struct tag_data
 {
 	long size;
 	unsigned long pad;
 	long file_offset;
-	void *address;
-	struct tag_data_definition *definition;
+	XPTR(void) address;
+	XPTR(struct tag_data_definition) definition;
 };
+#ifdef HALO_64BIT
+
+typedef char tag_data_size_assert[
+	sizeof(struct tag_data) == 0x14 ? 1 : -1];
+
+#define TAG_BLOCK_ADDRESS(block) XBOX_POINTER(void, (block)->address)
+#define TAG_DATA_ADDRESS(data) XBOX_POINTER(void, (data)->address)
+#define TAG_REFERENCE_NAME(reference) XBOX_POINTER(char, (reference)->name)
+#endif
 
 /* ---------- prototypes/TAG_GROUPS.C */
 
 long verify_tag_reference(struct tag_reference const *reference);
+/* port: zeros in place of an element, data or tag that is not there */
+void *tag_empty_data(void);
 void *tag_data_get_pointer(struct tag_data const *data, long offset, long size);
 void *tag_block_get_element_with_size(struct tag_block const *block, long index, long element_size);
 #ifdef HALO_N3DS
@@ -141,6 +166,42 @@ static inline void *n3ds_tag_block_element(const struct tag_block *block,long in
 }
 #endif
 
+
+/* port: tag_block_get_element_with_size without a call where all it checks
+holds (the game's most frequent call: a fortieth of the web build's frame),
+and that function where something does not, which notes and handles it
+(__inline__: msvc_comdat.c makes __inline weak, which a static function
+cannot be) */
+#ifdef HALO_CUSTOM_EDITION
+extern boolean cache_file_is_ce;
+#endif
+static __inline__ void *tag_block_get_element_fast(
+	struct tag_block const *block,
+	long index,
+	long element_size)
+{
+	/* (xbox_pointer: the 64-bit builds' blocks hold Xbox addresses. A
+	Custom Edition map's block is the slow path's, which finds it only in the
+	map's tag cache (ce_tags_pointer); and a definition is read only where
+	that path reads one: the 64-bit builds' hold no address of this
+	program's, and a Custom Edition map's hold Halo PC's, which point at
+	nothing here: reading one stopped the 64-bit dedicated server at a Custom
+	Edition sound) */
+	if (block && index >= 0 && index < block->count && block->address &&
+#ifdef HALO_CUSTOM_EDITION
+		!cache_file_is_ce &&
+#endif
+#ifdef HALO_64BIT
+		TRUE)
+#else
+		(!block->definition ||
+			((struct tag_block_definition const *)xbox_pointer(block->definition))->element_size == element_size))
+#endif
+	{
+		return (char *)xbox_pointer(block->address) + index * element_size;
+	}
+	return tag_block_get_element_with_size(block, index, element_size);
+}
 
 /* ---------- prototypes/CACHE_FILES.C */
 

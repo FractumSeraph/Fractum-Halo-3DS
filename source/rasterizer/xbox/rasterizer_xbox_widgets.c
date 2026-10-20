@@ -78,12 +78,14 @@ symbols in this file:
 #include "math/real_math.h"
 #include "rasterizer/common/rasterizer_common.h"
 #include "rasterizer/rasterizer_geometry.h"
-#include "rasterizer/rasterizer_transparent_geometry.h"
 
 #include <xtl.h>
 #include "rasterizer/xbox/rasterizer_xbox.h"
+#include "rasterizer/xbox/rasterizer_xbox_pixel_shader.h"
 #include "rasterizer/rasterizer_widgets.h"
 #include "rasterizer/rasterizer.h"
+#include "rasterizer/rasterizer_transparent_geometry.h"
+#include "rasterizer/rasterizer_console_vars.h"
 
 /* ---------- constants */
 
@@ -108,8 +110,23 @@ struct bitmap_data;
 struct shader;
 struct vertex_buffer;
 
+#ifdef HALO_64BIT
+struct rasterizer_widget_window_parameters
+#else
 struct transparent_geometry_group
+#endif
 {
+#ifdef HALO_64BIT
+	byte reserved00[8];
+	real_point3d camera_position;
+	real_vector3d camera_forward;
+	byte reserved20[0x14];
+	rectangle2d viewport_bounds;
+	byte reserved3C[0x30];
+	real_matrix4x3 world_to_view;
+	byte reservedA0[0x100];
+	real projection_matrix[4][4];
+#else
 	unsigned long geometry_flags;
 	long object_index;
 	long source_object_index;
@@ -143,65 +160,19 @@ struct transparent_geometry_group
 	byte reserved9C;
 	boolean cortana_hack;
 	byte reserved9E[2];
+#endif
 };
 
-typedef char transparent_geometry_group_size_assert[
-	sizeof(struct transparent_geometry_group) == 0xA0 ? 1 : -1];
-
-struct rasterizer_widget_window_parameters
-{
-	byte reserved00[8];
-	real_point3d camera_position;
-	real_vector3d camera_forward;
-	byte reserved20[0x14];
-	rectangle2d viewport_bounds;
-	byte reserved3C[0x30];
-	real_matrix4x3 world_to_view;
-	byte reservedA0[0x100];
-	real projection_matrix[4][4];
-};
-
+#ifdef HALO_64BIT
 typedef char rasterizer_widget_window_parameters_offset_assert[
 	offsetof(
 		struct rasterizer_widget_window_parameters,
 		projection_matrix) == 0x1A0 ? 1 : -1];
+#else
+typedef char transparent_geometry_group_size_assert[
+	sizeof(struct transparent_geometry_group) == 0xA0 ? 1 : -1];
 
-struct rasterizer_debug_options
-{
-	byte reserved00[0x44];
-	boolean lens_flare_occlusion_enabled;
-	boolean lens_flare_occlusion_debug;
-	byte reserved46[0xE];
-	unsigned long zbias;
-	byte reserved58[0x10];
-};
-
-typedef char rasterizer_debug_options_size_assert[
-	sizeof(struct rasterizer_debug_options) == 0x68 ? 1 : -1];
-typedef char rasterizer_debug_options_zbias_offset_assert[
-	offsetof(struct rasterizer_debug_options, zbias) == 0x54 ? 1 : -1];
-
-struct pixel_shader_definition
-{
-	unsigned long alpha_inputs[8];
-	unsigned long final_combiner_inputs_abcd;
-	unsigned long final_combiner_inputs_efg;
-	unsigned long constant_0[8];
-	unsigned long constant_1[8];
-	unsigned long alpha_outputs[8];
-	unsigned long rgb_inputs[8];
-	unsigned long compare_mode;
-	unsigned long final_combiner_constant_0;
-	unsigned long final_combiner_constant_1;
-	unsigned long rgb_outputs[8];
-	unsigned long combiner_count;
-	unsigned long texture_modes;
-	unsigned long dot_mapping;
-	unsigned long input_texture;
-	unsigned long c0_mapping;
-	unsigned long c1_mapping;
-	unsigned long final_combiner_constants;
-};
+#endif
 
 /* ---------- prototypes */
 
@@ -214,11 +185,66 @@ static boolean rasterizer_widget_project_billboard(
 /* ---------- globals */
 
 extern D3DDevice *global_d3d_device;
-extern struct rasterizer_debug_options rasterizer_debug_options;
-extern struct rasterizer_widget_window_parameters global_window_parameters;
 extern struct pixel_shader_definition pixel_shader;
 
 static boolean warned_about_too_many_transparent_geometry_groups;
+
+/* port: the 3D sprites of a light volume (a plasma bolt's glow, a couple
+of hundred of them) as one list of quads, instead of a draw each: each
+draw is a call into the browser on the web, and work for the driver
+everywhere; the Xbox drew them from its push buffer. Only the sprites'
+own registers differ between them (rasterizer_widget_batch_sprites). */
+#define WIDGET_SPRITE_BATCH_MAXIMUM 256
+
+struct widget_sprite_batch_vertex
+{
+	real x, y, z;
+	short u, v;
+};
+
+static struct
+{
+	unsigned long color;
+	struct widget_sprite_batch_vertex vertices[4];
+} widget_sprite_batch[WIDGET_SPRITE_BATCH_MAXIMUM];
+static short widget_sprite_batch_count = 0;
+static boolean widget_sprite_batching = FALSE;
+
+/* port: draws the sprites batched (widget_sprite_batch) */
+static void rasterizer_widget_draw_sprite_batch(
+	void)
+{
+	short sprite_index;
+	short vertex_index;
+
+	if (!widget_sprite_batch_count)
+		return;
+	IDirect3DDevice8_Begin(global_d3d_device, D3DPT_QUADLIST);
+	for (sprite_index = 0; sprite_index < widget_sprite_batch_count; sprite_index++)
+	{
+		IDirect3DDevice8_SetVertexDataColor(global_d3d_device, 9, widget_sprite_batch[sprite_index].color);
+		for (vertex_index = 0; vertex_index < 4; vertex_index++)
+		{
+			struct widget_sprite_batch_vertex const *vertex = &widget_sprite_batch[sprite_index].vertices[vertex_index];
+
+			IDirect3DDevice8_SetVertexData2s(global_d3d_device, 4, vertex->u, vertex->v);
+			IDirect3DDevice8_SetVertexData4f(global_d3d_device, 0, vertex->x, vertex->y, vertex->z, 1.0f);
+		}
+	}
+	IDirect3DDevice8_End(global_d3d_device);
+	widget_sprite_batch_count = 0;
+
+	return;
+}
+
+void rasterizer_widget_batch_sprites(
+	boolean batch)
+{
+	rasterizer_widget_draw_sprite_batch();
+	widget_sprite_batching = batch;
+
+	return;
+}
 
 /* ---------- public code */
 
@@ -226,6 +252,7 @@ static boolean warned_about_too_many_transparent_geometry_groups;
 void _rasterizer_widget_end(
 	void)
 {
+	rasterizer_widget_batch_sprites(FALSE); /* port: (widget_sprite_batch) */
 	return;
 }
 
@@ -312,9 +339,9 @@ void _rasterizer_widget_submit(
 			centroid);
 		if (group)
 		{
-			camera_to_centroid.i = centroid->x - global_window_parameters.camera_position.x;
-			camera_to_centroid.j = centroid->y - global_window_parameters.camera_position.y;
-			camera_to_centroid.k = centroid->z - global_window_parameters.camera_position.z;
+			camera_to_centroid.i = centroid->x - global_window_parameters.camera.position.x;
+			camera_to_centroid.j = centroid->y - global_window_parameters.camera.position.y;
+			camera_to_centroid.k = centroid->z - global_window_parameters.camera.position.z;
 			group->geometry_flags = 0;
 			group->object_index = 0;
 			group->source_object_index = 0;
@@ -333,9 +360,9 @@ void _rasterizer_widget_submit(
 			null_plane.n.k = 0.0f;
 			null_plane.d = 0.0f;
 			group->z_sort = -(
-				global_window_parameters.camera_forward.i * camera_to_centroid.i +
-				global_window_parameters.camera_forward.j * camera_to_centroid.j +
-				global_window_parameters.camera_forward.k * camera_to_centroid.k);
+				global_window_parameters.camera.forward.i * camera_to_centroid.i +
+				global_window_parameters.camera.forward.j * camera_to_centroid.j +
+				global_window_parameters.camera.forward.k * camera_to_centroid.k);
 			group->centroid = *centroid;
 			group->plane = null_plane;
 			group->model_base_map_scale.i = group->model_base_map_scale.j = 1.0f;
@@ -415,10 +442,10 @@ void _rasterizer_widget_begin(
 				0x38,
 				_rasterizer_vertex_type_dynamic_unlit,
 				0);
-			viewport_width = global_window_parameters.viewport_bounds.x1 -
-				global_window_parameters.viewport_bounds.x0;
-			viewport_height = global_window_parameters.viewport_bounds.y1 -
-				global_window_parameters.viewport_bounds.y0;
+			viewport_width = global_window_parameters.camera.viewport_bounds.x1 -
+				global_window_parameters.camera.viewport_bounds.x0;
+			viewport_height = global_window_parameters.camera.viewport_bounds.y1 -
+				global_window_parameters.camera.viewport_bounds.y0;
 			vertex_constants[0][0] = 1.0f / viewport_width * 2.0f;
 			vertex_constants[0][1] = 0.0f;
 			vertex_constants[0][2] = 0.0f;
@@ -506,10 +533,10 @@ void _rasterizer_widget_begin(
 				0x38,
 				_rasterizer_vertex_type_dynamic_unlit,
 				0);
-			viewport_width = global_window_parameters.viewport_bounds.x1 -
-				global_window_parameters.viewport_bounds.x0;
-			viewport_height = global_window_parameters.viewport_bounds.y1 -
-				global_window_parameters.viewport_bounds.y0;
+			viewport_width = global_window_parameters.camera.viewport_bounds.x1 -
+				global_window_parameters.camera.viewport_bounds.x0;
+			viewport_height = global_window_parameters.camera.viewport_bounds.y1 -
+				global_window_parameters.camera.viewport_bounds.y0;
 			vertex_constants[0][0] = 1.0f / viewport_width * 2.0f;
 			vertex_constants[0][1] = 0.0f;
 			vertex_constants[0][2] = 0.0f;
@@ -608,6 +635,7 @@ boolean _rasterizer_widget_set_texture(
 		"c:\\halo\\SOURCE\\rasterizer\\xbox\\rasterizer_xbox_widgets.c",
 		285,
 		global_d3d_device);
+	rasterizer_widget_draw_sprite_batch(); /* port: (widget_sprite_batch) */
 	if (bitmap_group_index != NONE)
 		success = rasterizer_set_texture_non_blocking(
 			stage_index,
@@ -660,6 +688,7 @@ void _rasterizer_widget_set_tint_factor(
 		"c:\\halo\\SOURCE\\rasterizer\\xbox\\rasterizer_xbox_widgets.c",
 		318,
 		global_d3d_device);
+	rasterizer_widget_draw_sprite_batch(); /* port: (widget_sprite_batch) */
 	IDirect3DDevice8_SetVertexData2f(
 		global_d3d_device,
 		10,
@@ -676,6 +705,7 @@ void _rasterizer_widget_set_zbuffer_enable(
 		"c:\\halo\\SOURCE\\rasterizer\\xbox\\rasterizer_xbox_widgets.c",
 		334,
 		global_d3d_device);
+	rasterizer_widget_draw_sprite_batch(); /* port: (widget_sprite_batch) */
 	D3DDevice_SetRenderState_ZEnable(zbuffer_enable);
 
 	return;
@@ -850,6 +880,35 @@ void _rasterizer_widget_draw_sprite3d(
 			scale_x = scale_y = 1.0f;
 		}
 
+		/* port: (widget_sprite_batch) */
+		if (widget_sprite_batching)
+		{
+			struct widget_sprite_batch_vertex *vertices;
+
+			if (widget_sprite_batch_count == WIDGET_SPRITE_BATCH_MAXIMUM)
+				rasterizer_widget_draw_sprite_batch();
+			widget_sprite_batch[widget_sprite_batch_count].color = color;
+			vertices = widget_sprite_batch[widget_sprite_batch_count].vertices;
+			vertices[0].x = projected_center.x - scale_x * axis_x;
+			vertices[0].y = projected_center.y - scale_y * axis_y;
+			vertices[0].u = 0;
+			vertices[0].v = 0;
+			vertices[1].x = projected_center.x + scale_x * axis_y;
+			vertices[1].y = projected_center.y - scale_y * axis_x;
+			vertices[1].u = 1;
+			vertices[1].v = 0;
+			vertices[2].x = projected_center.x + scale_x * axis_x;
+			vertices[2].y = projected_center.y + scale_y * axis_y;
+			vertices[2].u = 1;
+			vertices[2].v = 1;
+			vertices[3].x = projected_center.x - scale_x * axis_y;
+			vertices[3].y = projected_center.y + scale_y * axis_x;
+			vertices[3].u = 0;
+			vertices[3].v = 1;
+			vertices[0].z = vertices[1].z = vertices[2].z = vertices[3].z = projected_center.z;
+			widget_sprite_batch_count++;
+			return;
+		}
 		IDirect3DDevice8_Begin(
 			global_d3d_device,
 			D3DPT_TRIANGLEFAN);
@@ -1043,41 +1102,41 @@ static boolean rasterizer_widget_project_billboard(
 
 	if (radius > 0.0f)
 	{
-		viewport_width = global_window_parameters.viewport_bounds.x1 -
-			global_window_parameters.viewport_bounds.x0;
-		viewport_height = global_window_parameters.viewport_bounds.y1 -
-			global_window_parameters.viewport_bounds.y0;
+		viewport_width = global_window_parameters.camera.viewport_bounds.x1 -
+			global_window_parameters.camera.viewport_bounds.x0;
+		viewport_height = global_window_parameters.camera.viewport_bounds.y1 -
+			global_window_parameters.camera.viewport_bounds.y0;
 		matrix4x3_transform_point(
-			&global_window_parameters.world_to_view,
+			&global_window_parameters.frustum.world_to_view,
 			point,
 			&view_point);
 
 		clip_y =
-			global_window_parameters.projection_matrix[0][1] * view_point.x +
-			global_window_parameters.projection_matrix[1][1] * view_point.y +
-			global_window_parameters.projection_matrix[2][1] * view_point.z +
-			global_window_parameters.projection_matrix[3][1];
+			global_window_parameters.frustum.projection_matrix[0][1] * view_point.x +
+			global_window_parameters.frustum.projection_matrix[1][1] * view_point.y +
+			global_window_parameters.frustum.projection_matrix[2][1] * view_point.z +
+			global_window_parameters.frustum.projection_matrix[3][1];
 		clip_z =
-			global_window_parameters.projection_matrix[0][2] * view_point.x +
-			global_window_parameters.projection_matrix[1][2] * view_point.y +
-			global_window_parameters.projection_matrix[2][2] * view_point.z +
-			global_window_parameters.projection_matrix[3][2];
+			global_window_parameters.frustum.projection_matrix[0][2] * view_point.x +
+			global_window_parameters.frustum.projection_matrix[1][2] * view_point.y +
+			global_window_parameters.frustum.projection_matrix[2][2] * view_point.z +
+			global_window_parameters.frustum.projection_matrix[3][2];
 		projected_radius_x =
-			global_window_parameters.projection_matrix[0][0] * radius;
+			global_window_parameters.frustum.projection_matrix[0][0] * radius;
 		projected_radius_y =
-			global_window_parameters.projection_matrix[1][1] * radius;
+			global_window_parameters.frustum.projection_matrix[1][1] * radius;
 		if (clip_z > 0.0f)
 		{
 			inverse_w = 1.0f / (
-				global_window_parameters.projection_matrix[0][3] * view_point.x +
-				global_window_parameters.projection_matrix[1][3] * view_point.y +
-				global_window_parameters.projection_matrix[2][3] * view_point.z +
-				global_window_parameters.projection_matrix[3][3]);
+				global_window_parameters.frustum.projection_matrix[0][3] * view_point.x +
+				global_window_parameters.frustum.projection_matrix[1][3] * view_point.y +
+				global_window_parameters.frustum.projection_matrix[2][3] * view_point.z +
+				global_window_parameters.frustum.projection_matrix[3][3]);
 			projected_center->x = (((
-				global_window_parameters.projection_matrix[0][0] * view_point.x +
-				global_window_parameters.projection_matrix[1][0] * view_point.y +
-				global_window_parameters.projection_matrix[2][0] * view_point.z +
-				global_window_parameters.projection_matrix[3][0]) *
+				global_window_parameters.frustum.projection_matrix[0][0] * view_point.x +
+				global_window_parameters.frustum.projection_matrix[1][0] * view_point.y +
+				global_window_parameters.frustum.projection_matrix[2][0] * view_point.z +
+				global_window_parameters.frustum.projection_matrix[3][0]) *
 				inverse_w + 1.0f) * viewport_width - 1.0f) * 0.5f;
 			projected_center->y =
 				((1.0f - clip_y * inverse_w) * viewport_height - 1.0f) * 0.5f;

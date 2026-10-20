@@ -77,8 +77,7 @@ symbols in this file:
 #include "interface/hud_draw.h"
 #include "bitmaps/bitmaps_inlines.h"
 #include "rasterizer.h"
-#include "rasterizer/rasterizer_debug_options.h"
-#include "rasterizer/rasterizer_frame_statistics.h"
+#include "rasterizer/rasterizer_console_vars.h"
 #include "rasterizer/rasterizer_model_types.h"
 #include "rasterizer/rasterizer_transparent_geometry.h"
 #include "render/render_cameras.h"
@@ -165,6 +164,7 @@ enum
 		(struct shader *)(shader), _shader_type_effect))
 
 /* ---------- structures */
+#ifndef HALO_64BIT
 
 struct transparent_geometry_group
 {
@@ -210,6 +210,7 @@ typedef char transparent_geometry_group_plane_offset_assert[
 	offsetof(struct transparent_geometry_group, plane) == 0x80 ? 1 : -1];
 typedef char transparent_geometry_group_cortana_hack_offset_assert[
 	offsetof(struct transparent_geometry_group, cortana_hack) == 0x9D ? 1 : -1];
+#endif
 
 struct rasterizer_meter_parameters
 {
@@ -239,8 +240,8 @@ static void submit_screen_vertex(
 
 /* ---------- globals */
 
-extern struct rasterizer_window_begin_parameters global_window_parameters;
-boolean reported_too_many_transparent_geometry_groups = FALSE;
+/* port: (rasterizer.h) */
+boolean rasterizer_screen_quad_alpha_weighted = FALSE;
 
 /* ---------- public code */
 
@@ -276,7 +277,7 @@ void _rasterizer_psuedo_dynamic_screen_quad_draw(
 		756,
 		global_d3d_device);
 
-	if (!rasterizer_debug_options.dynamic_screen_geometry)
+	if (!rasterizer_debug_options.draw_dynamic_screen_geometry)
 	{
 		return;
 	}
@@ -643,7 +644,10 @@ void _rasterizer_psuedo_dynamic_screen_quad_draw(
 		}
 
 		pixel_shader.combiner_count = combiner_index | 0x00011100;
-		pixel_shader.final_combiner_inputs_abcd = 0x0000000C;
+		/* port: r0 times its alpha, as the meters' final combiner takes r0
+		times t0's, for a Halo PC map's HUD overlays (rasterizer.h;
+		OpenCE's) */
+		pixel_shader.final_combiner_inputs_abcd = rasterizer_screen_quad_alpha_weighted ? 0x0C1C0000 : 0x0000000C;
 		pixel_shader.final_combiner_inputs_efg = 0x00001C00;
 	}
 
@@ -699,7 +703,7 @@ void _rasterizer_dynamic_unlit_geometry_draw(
 		global_d3d_device);
 #endif
 
-	if (!rasterizer_debug_options.dynamic_unlit_geometry)
+	if (!rasterizer_debug_options.draw_dynamic_unlit_geometry)
 	{
 		return;
 	}
@@ -762,7 +766,7 @@ void _rasterizer_dynamic_unlit_geometry_draw(
 		group->lighting = NULL;
 		group->animation = NULL;
 
-		if (rasterizer_debug_options.stats == _rasterizer_statistics_mode_geometry)
+		if (rasterizer_debug_options.statistics_mode == _rasterizer_statistics_mode_geometry)
 		{
 			rasterizer_frame_statistics.dynamic_unlit_draw_count++;
 			rasterizer_frame_statistics.dynamic_unlit_triangle_count += triangle_count;

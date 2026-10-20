@@ -20,11 +20,16 @@ enum
 {
 	MAXIMUM_RENDERED_DISTANT_LIGHTS = 2,
 	MAXIMUM_RENDERED_POINT_LIGHTS = 2,
-	MAXIMUM_RENDERED_ENVIRONMENT_SURFACES = 16384,
+	/* the native builds' (halo_port_capacity.h: the Xbox's 16384 on Android
+	and the Xbox builds) */
+	MAXIMUM_RENDERED_ENVIRONMENT_SURFACES = HALO_PORT_MAXIMUM_RENDERED_ENVIRONMENT_SURFACES,
 	MAXIMUM_RENDERED_CLUSTERS = 128,
 	MAXIMUM_SURFACES_PER_STRUCTURE = 0x20000,
-	MAXIMUM_RENDERED_LIGHTS = 128,
-	MAXIMUM_LIGHTS_PER_MAP = 896,
+	/* the native builds' (halo_port_capacity.h: the Xbox's 128 on Android
+	and the Xbox builds) */
+	MAXIMUM_RENDERED_LIGHTS = HALO_PORT_MAXIMUM_RENDERED_LIGHTS,
+	/* the native builds' larger light pool (halo_port_capacity.h) */
+	MAXIMUM_LIGHTS_PER_MAP = HALO_PORT_MAXIMUM_LIGHTS_PER_MAP,
 	MAXIMUM_LENS_FLARES_PER_LIGHT = 8,
 	MAXIMUM_QUEUED_LENS_FLARES = 8,
 };
@@ -51,6 +56,17 @@ struct render_lighting
 	real_argb_color reflection_tint_color;
 	real_vector3d shadow_vector;
 	real_rgb_color shadow_color;
+};
+
+/* HCEX and the PC-demo PDB type node_matrices as a non-const `real_matrix4x3 *`.
+   It is declared const here because its users store const node-matrix pointers
+   into it (transparent_geometry_group.node_matrices is const in HCEX as well);
+   the qualifier changes no emitted byte, and the non-const spelling would add
+   eleven C4090 const-qualifier warnings in five translation units. */
+struct render_skinning
+{
+	real_matrix4x3 const *node_matrices;
+	short node_matrix_count;
 };
 
 
@@ -82,7 +98,8 @@ struct render_globals
 	struct rendered_cluster rendered_clusters[MAXIMUM_RENDERED_CLUSTERS];
 	short rendered_cluster_count;
 	unsigned long environment_surface_flags[MAXIMUM_SURFACES_PER_STRUCTURE];
-	short environment_surface_count;
+	/* port: a long, as a short would wrap at the raised count */
+	long environment_surface_count;
 	long environment_surface_indices[MAXIMUM_RENDERED_ENVIRONMENT_SURFACES];
 };
 
@@ -130,6 +147,13 @@ void render_objects_initialize_for_new_map(
 void render_objects_dispose_from_old_map(
 	void);
 void render_objects_dispose(
+	void);
+struct render_lighting *object_get_cached_render_lighting(
+	long object_index,
+	real level_of_detail_pixels);
+void render_objects(
+	void);
+void render_object_shadows(
 	void);
 
 /* ---------- globals */

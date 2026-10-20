@@ -101,7 +101,7 @@ void biped_reset(
 boolean biped_flying_through_air(
 	long biped_index);
 void biped_adjust_placement(
-	long biped_index,
+	long object_index,
 	struct object_placement_data *data);
 void biped_export_function_values(
 	long biped_index);
@@ -136,6 +136,11 @@ boolean biped_fix_position(
 	boolean fix_below_new_position,
 	boolean dont_teleport,
 	boolean use_radius_as_multiplier);
+/* port: the next biped_fix_position calls skip other players, so a co-op
+script can stand someone on a spot a teammate already occupies. Cleared by
+the caller before it returns. */
+void biped_fix_ignore_players(
+	boolean ignore);
 void biped_accelerate(
 	long biped_index,
 	real_vector3d *acceleration);

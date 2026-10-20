@@ -29,13 +29,19 @@ symbols in this file:
 #include "tag_files/tag_groups.h"
 #include "units/unit_definitions.h"
 #include "units/units.h"
+#include "view_fov.h" /* port: port/linux/game/view_fov.c */
 
 /* ---------- constants */
 
 enum
 {
-	MAXIMUM_RENDERED_PARTICLES = 1024,
-	MAXIMUM_RENDERED_PARTICLE_GROUPS = 512,
+	/* render_particles lists every visible particle in an array of this size
+	without a bound check, so it must stay the size of the native builds'
+	particle pool (effects/particles.c, halo_port_capacity.h) */
+	MAXIMUM_RENDERED_PARTICLES = HALO_PORT_MAXIMUM_PARTICLES,
+	/* the native builds' (halo_port_capacity.h: the Xbox's 512 on Android
+	and the Xbox builds) */
+	MAXIMUM_RENDERED_PARTICLE_GROUPS = HALO_PORT_MAXIMUM_RENDERED_PARTICLE_GROUPS,
 };
 
 /* ---------- macros */
@@ -58,7 +64,7 @@ typedef char rendered_particle_size_assert[
 
 /* ---------- globals */
 
-struct profile_section render_particles_section =
+static struct profile_section render_particles_section =
 {
 	"render_particles",
 	NONE,
@@ -102,7 +108,7 @@ boolean local_player_is_first_person(
 	return result;
 }
 
-int __cdecl compare_rendered_particles(
+static int __cdecl compare_rendered_particles(
 	void const *left_pointer,
 	void const *right_pointer)
 {
@@ -163,7 +169,10 @@ void render_particles(
 			boolean owned_by_local_player =
 				particle->local_player_index == local_player_index;
 
+			/* port: not the first-person weapon's with it hidden (view_fov.c) */
 			if (render_location_visible(&particle->location) &&
+				viewmodel_draws_geometry(owned_by_local_player &&
+					TEST_FLAG(particle->flags, _particle_datum_dont_draw_third_person_bit)) &&
 				(!TEST_FLAG(
 					particle->flags,
 					_particle_datum_dont_draw_first_person_bit) ||
@@ -202,7 +211,7 @@ void render_particles(
 			{
 				struct rendered_particle_datum *rendered_particle =
 					rendered_particles;
-				short *current_sprite_group;
+				short *current_sprite_group = NULL;
 				short previous_definition_index = NONE;
 				short previous_cluster_index = NONE;
 				boolean previous_attached_to_first_person_weapon = FALSE;
@@ -406,15 +415,9 @@ void render_particles(
 						rendered_particle++;
 					}
 
-					/* Native thinning/LOD can leave an empty group. Do not
-					 * feed a NaN radius into later material processing. */
 					((struct shader_effect_definition *)sprite_data.shader)->
-						secondary_map_radius =
-#ifdef HALO_N3DS
-						built_particle_count ? total_radius / built_particle_count : 0.f;
-#else
-                        total_radius / built_particle_count;
-#endif
+						secondary_map_radius = built_particle_count ?
+						total_radius / built_particle_count : 0.0f;
 					build_sprites_end(&sprite_data);
 				}
 			}

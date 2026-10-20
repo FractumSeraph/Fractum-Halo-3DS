@@ -1006,9 +1006,9 @@ boolean actor_combat_plan_grenade_trajectory(
 	struct actor_datum *actor = actor_get(actor_index);
 	struct actor_variant_definition *variant_definition =
 		actor_variant_definition_get(actor->meta.variant_definition_index);
-	real_point3d grenade_origin = actor->input.position.head_position;
+	real_point3d origin = actor->input.position.head_position;
 	real_vector3d aim_vector;
-	real_vector3d aim_velocity;
+	real_vector3d arc_initial_velocity;
 	real aim_speed;
 	real aim_ticks;
 	real aim_gravity;
@@ -1016,7 +1016,7 @@ boolean actor_combat_plan_grenade_trajectory(
 
 	if (actor_combat_build_grenade_trajectory(
 			variant_definition->grenade_combat.grenade_type,
-			&grenade_origin,
+			&origin,
 			variant_definition->grenade_combat.grenade_maximum_velocity,
 			grenade_target,
 			NULL,
@@ -1024,13 +1024,13 @@ boolean actor_combat_plan_grenade_trajectory(
 			&aim_vector,
 			&aim_speed,
 			&aim_ticks,
-			&aim_velocity,
+			&arc_initial_velocity,
 			&aim_gravity) &&
 		ai_test_ballistic_line_of_fire(
 			actor_index,
-			&grenade_origin,
+			&origin,
 			aim_ticks,
-			&aim_velocity,
+			&arc_initial_velocity,
 			aim_gravity,
 			grenade_ignore_object_index,
 			actor->input.vehicle_index != NONE))
@@ -1571,11 +1571,13 @@ long actor_aim_grenade(
 
 	actor_combat_reaim_grenade(actor_index, origin);
 
+	/* port: set in a vehicle too (January set it on foot only, and read it
+	unset in a vehicle) */
+	aim_vector = actor->control.grenade_current_aim_vector;
 	if (actor->input.vehicle_index == NONE)
 	{
 		real_vector2d horizontal_aim_vector;
 
-		aim_vector = actor->control.grenade_current_aim_vector;
 		horizontal_aim_vector = *(real_vector2d const *)&aim_vector;
 
 		if (normalize2d(&horizontal_aim_vector) > 0.0f &&
@@ -1608,12 +1610,6 @@ long actor_aim_grenade(
 		}
 	}
 
-	/* BUG (preserved for exact matching): aim_vector is assigned only on foot.
-	 * With actor->input.vehicle_index != NONE, January branches from its vehicle
-	 * test straight to this scale and reads the unassigned local; the 2011 HCEX
-	 * and later /Od builds keep the same path. A corrected build should start
-	 * from actor->control.grenade_current_aim_vector.
-	 */
 	scale_vector3d(
 		&aim_vector,
 		actor->control.grenade_current_aim_speed,

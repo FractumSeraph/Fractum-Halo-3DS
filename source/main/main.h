@@ -6,6 +6,10 @@ MAIN.H
 #define __MAIN_H
 #pragma once
 
+/* ---------- headers */
+
+#include "math/integer_math.h"
+
 /* ---------- constants */
 
 /* ---------- macros */
@@ -25,12 +29,12 @@ boolean n3ds_main_is_solo_multiplayer(void);
 float main_get_seconds_elapsed(
 	void);
 
+boolean gamepad_button_is_down(
+	short button_index);
+
 void set_window_camera_values(
 	struct render_window *window,
 	struct observer_result const *observer);
-
-void main_game_render(
-	double time_delta_since_tick_sec);
 
 void game_connection_set(
 	short connection);
@@ -119,10 +123,22 @@ void main_set_game_connection_to_film_playback(
 short main_get_current_solo_level(
 	void);
 
+boolean main_campaign_in_progress(
+	void);
+
 char const *main_get_solo_level_name(
 	short level);
 
 void main_run_demos(
+	void);
+
+void compute_window_bounds(
+	long player_index,
+	long num_players,
+	rectangle2d *pixel_bounds,
+	rectangle2d *safe_frame_bounds);
+
+short main_get_window_count(
 	void);
 
 void main_set_multiplayer_map_name(
@@ -173,6 +189,9 @@ void main_pregame_render(
 void main_framerate_render(
 	void);
 
+void main_loop_of_death(
+	void);
+
 void main_rasterizer_throttle(
 	void);
 
@@ -187,6 +206,9 @@ void main_reset_map(void);
 void main_stop_time(void);
 void main_start_time(void);
 
+void main_crash(
+	char const *str);
+
 void main_vertical_blank_interrupt_handler(
 	unsigned long);
 
@@ -195,7 +217,15 @@ void main_loop(void);
 /* ---------- globals */
 
 extern short player_spawn_count;
+extern boolean global_frame_rate_throttle;
+extern short global_screenshot_size;
+extern boolean debug_force_frame_rate_update;
+extern boolean debug_no_drawing;
 extern boolean debug_game_save;
+extern boolean debug_frame_rate;
+extern boolean display_framerate;
+extern boolean display_vblank_deltas;
+extern boolean display_precache_progress;
 
 /* ---------- public code */
 

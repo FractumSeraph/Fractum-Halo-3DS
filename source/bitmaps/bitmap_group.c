@@ -302,7 +302,6 @@ symbols in this file:
 
 #include "bitmaps/bitmap_group.h"
 #include "bitmaps/bitmaps.h"
-#include "bitmaps/bitmaps_internal.h"
 #include "cache/cache_files.h"
 #include "cseries/errors.h"
 #include "tag_files/tag_files.h"
@@ -370,17 +369,19 @@ struct tag_group
 	unsigned long child_group_tags[16];
 	short child_count;
 };
+#ifndef HALO_64BIT
 
 typedef char tag_group_size_assert[sizeof(struct tag_group) == 0x60 ? 1 : -1];
+#endif
 
 /* ---------- END OWNER HEADER PREREQUISITE */
 
 /* ---------- prototypes */
 
-boolean postprocess_bitmap(
-	void *bitmap,
+static boolean postprocess_bitmap(
+	void *bitmap, /* port: void *, the block postprocess type (Halo3DS) */
 	boolean editing);
-void delete_bitmap(
+static void delete_bitmap(
 	struct tag_block *block,
 	long element_index);
 static boolean postprocess_bitmap_group(
@@ -764,7 +765,22 @@ struct bitmap_data *bitmap_group_get_bitmap_from_sequence(
 		group = bitmap_group_get(bitmap_group_index);
 		if (group)
 		{
-			if (group->sequences.count > 0)
+			/* port: the asserts only log in release, and % keeps a negative
+			sequence negative. So a negative one (the map's, as hud elements
+			give it) has no sequence, and the frame is the bitmap, as with no
+			sequences at all. */
+			if (group->sequences.count > 0 && sequence_index < 0)
+			{
+				static boolean reported = FALSE;
+
+				if (!reported)
+				{
+					reported = TRUE;
+					error(_error_silent, "bitmap 0x%08lX asked for sequence #%d (none used)",
+						(unsigned long)bitmap_group_index, sequence_index);
+				}
+			}
+			else if (group->sequences.count > 0)
 			{
 				struct bitmap_group_sequence *sequence = TAG_BLOCK_GET_ELEMENT(
 					&group->sequences,
@@ -776,7 +792,7 @@ struct bitmap_data *bitmap_group_get_bitmap_from_sequence(
 					bitmap_index = (short)(frame_index % sequence->bitmap_count +
 						sequence->first_bitmap_index);
 				}
-				else if (sequence->sprites.count)
+				else if (sequence->sprites.count && frame_index >= 0) /* port: not below the first sprite */
 				{
 					bitmap_index = TAG_BLOCK_GET_ELEMENT(
 						&sequence->sprites,
@@ -810,30 +826,30 @@ short bitmap_group_add_bitmap(
 	short format,
 	short mipmap_count)
 {
-	struct bitmap_data new_bitmap_data;
+	struct bitmap_data fake_bitmap;
 	long pixels_end = 0;
 	long previous_count;
 	long pixel_data_size;
 
 	match_assert("c:\\halo\\SOURCE\\bitmaps\\bitmap_group.c", 0x2DB, group);
 
-	new_bitmap_data.type = type;
-	new_bitmap_data.flags = 0;
-	new_bitmap_data.registration_point.y = 0;
-	new_bitmap_data.registration_point.x = 0;
-	new_bitmap_data.mipmap_count = mipmap_count;
-	new_bitmap_data.pixels_offset = 0;
-	new_bitmap_data.hardware_format = NULL;
-	new_bitmap_data.base_address = NULL;
-	new_bitmap_data.signature = BITMAP_GROUP_TAG;
-	new_bitmap_data.width = width;
-	new_bitmap_data.height = height;
-	new_bitmap_data.depth = depth;
-	new_bitmap_data.format = format;
+	fake_bitmap.type = type;
+	fake_bitmap.flags = 0;
+	fake_bitmap.registration_point.y = 0;
+	fake_bitmap.registration_point.x = 0;
+	fake_bitmap.mipmap_count = mipmap_count;
+	fake_bitmap.pixels_offset = 0;
+	fake_bitmap.hardware_format = XBOX_NULL;
+	fake_bitmap.base_address = XBOX_NULL;
+	fake_bitmap.signature = BITMAP_GROUP_TAG;
+	fake_bitmap.width = width;
+	fake_bitmap.height = height;
+	fake_bitmap.depth = depth;
+	fake_bitmap.format = format;
 
 	if (group->type == _bitmap_group_type_interface_bitmaps)
 	{
-		SET_FLAG(new_bitmap_data.flags, _bitmap_linear_bit, TRUE);
+		SET_FLAG(fake_bitmap.flags, _bitmap_linear_bit, TRUE);
 	}
 	else if ((width & (width - 1)) ||
 		(height & (height - 1)) ||
@@ -861,18 +877,18 @@ short bitmap_group_add_bitmap(
 	else
 	{
 		SET_FLAG(
-			new_bitmap_data.flags,
+			fake_bitmap.flags,
 			_bitmap_has_power_of_two_dimensions_bit,
 			TRUE);
 	}
 
 	if (format >= _bitmap_format_dxt1 && format <= _bitmap_format_dxt5)
 	{
-		SET_FLAG(new_bitmap_data.flags, _bitmap_compressed_bit, TRUE);
+		SET_FLAG(fake_bitmap.flags, _bitmap_compressed_bit, TRUE);
 	}
 	if (format == _bitmap_format_p8_bump)
 	{
-		SET_FLAG(new_bitmap_data.flags, _bitmap_palettized_bit, TRUE);
+		SET_FLAG(fake_bitmap.flags, _bitmap_palettized_bit, TRUE);
 	}
 
 	/* January repeats these validation guards after assigning format flags. */
@@ -887,7 +903,7 @@ short bitmap_group_add_bitmap(
 		return NONE;
 	}
 	if (!TEST_FLAG(
-		new_bitmap_data.flags,
+		fake_bitmap.flags,
 		_bitmap_has_power_of_two_dimensions_bit) &&
 		group->type != _bitmap_group_type_interface_bitmaps)
 	{
@@ -901,7 +917,7 @@ short bitmap_group_add_bitmap(
 	}
 
 	previous_count = group->bitmaps.count;
-	pixel_data_size = bitmap_get_pixel_data_size(&new_bitmap_data);
+	pixel_data_size = bitmap_get_pixel_data_size(&fake_bitmap);
 	if (tag_block_resize(&group->bitmaps, group->bitmaps.count + 1) &&
 		tag_data_resize(&group->pixel_data, group->pixel_data.size + pixel_data_size))
 	{
@@ -926,15 +942,33 @@ short bitmap_group_add_bitmap(
 					0x34D,
 					!bitmap->hardware_format);
 				bitmap->base_address =
+#ifdef HALO_64BIT
+					xbox_address((byte *)xbox_pointer(group->pixel_data.address) + bitmap->pixels_offset);
+#else
 					(byte *)group->pixel_data.address + bitmap->pixels_offset;
+#endif
+#ifdef HALO_64BIT
+				match_assert(
+					"c:\\halo\\SOURCE\\bitmaps\\bitmap_group.c",
+					0x352,
+					(byte*)xbox_pointer(bitmap->base_address)>=(byte*)xbox_pointer(group->pixel_data.address));
+#else
 				match_assert(
 					"c:\\halo\\SOURCE\\bitmaps\\bitmap_group.c",
 					0x352,
 					(byte*)bitmap->base_address>=(byte*)group->pixel_data.address);
+#endif
+#ifdef HALO_64BIT
+				match_assert(
+					"c:\\halo\\SOURCE\\bitmaps\\bitmap_group.c",
+					0x354,
+					(byte*)xbox_pointer(bitmap->base_address) + bitmap_get_pixel_data_size(bitmap) <= (byte*)xbox_pointer(group->pixel_data.address) + group->pixel_data.size);
+#else
 				match_assert(
 					"c:\\halo\\SOURCE\\bitmaps\\bitmap_group.c",
 					0x354,
 					(byte*)bitmap->base_address + bitmap_get_pixel_data_size(bitmap) <= (byte*)group->pixel_data.address + group->pixel_data.size);
+#endif
 
 				if (previous_bitmap)
 				{
@@ -969,10 +1003,15 @@ short bitmap_group_add_bitmap(
 				"c:\\halo\\SOURCE\\bitmaps\\bitmap_group.c",
 				0x371,
 				new_bitmap);
-			csmemcpy(new_bitmap, &new_bitmap_data, sizeof(new_bitmap_data));
+			csmemcpy(new_bitmap, &fake_bitmap, sizeof(fake_bitmap));
 			new_bitmap->pixels_offset = pixels_end;
+#ifdef HALO_64BIT
+			new_bitmap->base_address = xbox_address((byte *)xbox_pointer(group->pixel_data.address) + pixels_end);
+			csmemset(xbox_pointer(new_bitmap->base_address), 0, pixel_data_size);
+#else
 			new_bitmap->base_address = (byte *)group->pixel_data.address + pixels_end;
 			csmemset(new_bitmap->base_address, 0, pixel_data_size);
+#endif
 		}
 
 		return (short)previous_count;
@@ -987,14 +1026,14 @@ short bitmap_group_add_bitmap(
 
 /* ---------- private code */
 
-boolean postprocess_bitmap(
-	void *bitmap,
+static boolean postprocess_bitmap(
+	void *bitmap, /* port: void *, the block postprocess type (Halo3DS) */
 	boolean editing)
 {
 	return TRUE;
 }
 
-void delete_bitmap(
+static void delete_bitmap(
 	struct tag_block *block,
 	long element_index)
 {

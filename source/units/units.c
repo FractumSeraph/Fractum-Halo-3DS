@@ -652,20 +652,23 @@ symbols in this file:
 #include "dialogue_definitions.h"
 #include "unit_definitions.h"
 
-#include "ai/actor_looking.h"
+#include "math/real_math.h"
 #include "ai/actors.h"
 #include "ai/ai_debug.h"
-#include "ai/ai_runtime.h"
+#include "ai/ai.h"
 #include "bitmaps/bitmaps.h"
 #include "cseries/errors.h"
 #include "cseries/profile.h"
+#include "devices/device_machines.h"
 #include "effects/effects.h"
 #include "effects/material_effect_definitions.h"
 #include "game/cheats.h"
+#include "game/game_allegiance.h"
 #include "game/game_globals.h"
 #include "game/game_engine.h"
 #include "game/players.h"
 #include "hs/object_lists.h"
+#include "interface/first_person_weapons.h"
 #include "items/equipment.h"
 #include "items/equipment_definitions.h"
 #include "items/projectiles.h"
@@ -674,9 +677,11 @@ symbols in this file:
 #include "main/console.h"
 #include "models/model_animation_definitions.h"
 #include "models/model_definitions.h"
+#include "models/models.h" /* port: model_find_node (the grenade throw's legs) */
 #include "objects/damage.h"
 #include "objects/damage_effect_definitions.h"
 #include "objects/object_lights.h"
+#include "physics/breakable_surfaces.h"
 #include "physics/collision_bsp.h"
 #include "physics/collision_models.h"
 #include "physics/collision_usage.h"
@@ -688,6 +693,20 @@ symbols in this file:
 #include "saved games/game_state.h"
 #include "sound/game_sound.h"
 #include "vehicles.h"
+#include "network_coop.h" /* port: port/linux/game/network_coop.c */
+#include "coop_scripts.h" /* port: port/linux/game/coop_scripts.c */
+#include "coop_enemies.h" /* port: port/linux/game/coop_enemies.c */
+
+/* port: the control and animation impulses the host's actors give their
+units go to the clients' copies (port/linux/game/network_actors.c) */
+void network_actors_note_control(long unit_index, struct unit_control_data const *control_data);
+void network_actors_note_impulse(long unit_index, short animation_impulse, real_vector2d const *alignment_vector);
+void network_actors_note_melee(long unit_index, real_vector2d const *alignment_vector);
+void network_actors_note_leap(long unit_index, real_vector2d const *alignment_vector);
+/* port/linux/game/network_objects.c: the host's pick of a flinch or death animation */
+short network_objects_damage_animation(long unit_index, short type, short animation_index);
+void network_actors_note_user_animation(long unit_index, long animation_graph_index, short animation_index,
+	boolean interpolate);
 
 /* ---------- constants */
 
@@ -730,14 +749,6 @@ enum
 enum
 {
 	_unit_debug_function_active_bit = 2,
-};
-
-enum
-{
-	_unit_damage_animation_soft_ping = 0,
-	_unit_damage_animation_hard_ping,
-	_unit_damage_animation_soft_kill,
-	_unit_damage_animation_hard_kill,
 };
 
 enum
@@ -818,10 +829,6 @@ struct unit_control_data
 typedef char unit_control_data_size_assert[
 	sizeof(struct unit_control_data) == 0x40 ? 1 : -1];
 
-
-typedef char unit_animation_update_data_size_assert[
-	sizeof(struct unit_animation_update_data) == 0x2 ? 1 : -1];
-
 struct unit_initial_weapon
 {
 	struct tag_reference weapon;
@@ -848,17 +855,7 @@ typedef char game_globals_flaming_death_offset_check[
 
 /* ---------- prototypes */
 
-void player_died(
-	long player_index);
-void actor_died(
-	long actor_index);
-void actor_swarm_unit_died(
-	long swarm_actor_index,
-	long unit_index);
-
 void unit_detach_from_parent(
-	long unit_index);
-void unit_start_running_blindly(
 	long unit_index);
 void unit_start_flaming_to_death(
 	long unit_index,
@@ -868,15 +865,6 @@ void unit_flame_to_death(
 boolean unit_unsuspecting(
 	long unit_index,
 	real_point3d const *point);
-void unit_impact_melee_damage(
-	long unit_index,
-	long target_object_index,
-	short node_index,
-	short region_index,
-	short material_index,
-	real_point3d const *position,
-	real_vector3d const *object_normal,
-	struct location const *location);
 void unit_cause_melee_damage(
 	long unit_index,
 	boolean melee_hit,
@@ -891,10 +879,6 @@ static short seat_label_to_base_seat_index(char const *seat_label);
 static char const *base_weapon_label_get(short base_weapon_index);
 
 static void unit_refresh_illumination(long unit_index);
-
-void unit_animation_start_action(
-	long unit_index,
-	short action);
 
 static boolean unit_euler_axis_doplan(
 	struct unit_acceleration_plan *plan,
@@ -961,21 +945,6 @@ static void unit_align_facing(
 	long unit_index,
 	real_vector2d const *alignment_vector);
 
-void player_control_set_desired_weapon(
-	long unit_index,
-	short desired_weapon_index);
-boolean ai_try_vehicle_eviction(
-	long actor_index,
-	long entering_unit_index,
-	boolean immediate);
-void biped_stop_melee_attack(
-	long unit_index);
-void first_person_weapon_message_from_unit(
-	long unit_index,
-	short message_type);
-void weapon_stop_reload(
-	long weapon_index);
-
 static short unit_weapon_next_index(long unit_index, short current_index, short delta);
 static void unit_ready_desired_weapon(
 	long unit_index,
@@ -999,9 +968,6 @@ static boolean unit_set_or_test_seat_and_weapon_label(
 static boolean unit_animation_set_state(
 	long unit_index,
 	short new_state);
-short unit_update_animation(
-	long unit_index,
-	struct unit_animation_update_data *data);
 
 static boolean unit_vectors_are_valid(long unit_index);
 static void unit_throw_grenade_release(long unit_index, boolean premature);
@@ -1014,6 +980,12 @@ static void unit_cause_continuous_melee_damage(long unit_index);
 
 static long unit_get_weapon(struct unit_datum *unit, short index);
 static void unit_drop_item(long unit_index, long item_index);
+/* port/linux/game/network_objects.c's */
+boolean network_objects_creating_host_object(void);
+/* port/linux/game/network_damage.c's */
+void network_damage_note_grenade(long unit_index, short grenade_type);
+/* network_game_globals.c's */
+boolean network_game_distributed_client(void);
 static void unit_drop_grenades(
 	long unit_index);
 static void unit_drop_inventory_weapons(
@@ -1024,32 +996,8 @@ static void unit_running_blind(long unit_index, real_vector3d *run_vector);
 
 static boolean unit_integrated_night_vision_is_active(long unit_index);
 
-boolean game_team_is_enemy(
-	short team_index0,
-	short team_index1);
-void player_died(
-	long player_index);
-void actor_died(
-	long actor_index);
-void actor_swarm_unit_died(
-	long swarm_actor_index,
-	long unit_index);
 void unit_detach_from_parent(
 	long unit_index);
-void unit_exit_seat_end(
-	long unit_index);
-void aiming_screen_apply(
-	struct animation const *animation,
-	struct animation_aiming_screen_bounds const *aiming_screen_bounds,
-	real yaw,
-	real pitch,
-	struct real_orientation *node_orientations);
-void biped_exit_seat_end(
-	long biped_index,
-	long parent_unit_index);
-short animation_choose_random_permutation(
-	long animation_graph_index,
-	short animation_index);
 
 extern char const *base_seat_labels[NUMBER_OF_UNIT_BASE_SEATS];
 
@@ -1333,7 +1281,8 @@ boolean unit_get_seat_entrance_point(
 							&animation_seat->animations)
 								[_unit_seat_animation_seat_enter].animation_index;
 
-						if (animation_index != NONE)
+						/* port: an animation the graph has (a map's index) */
+						if (VALID_INDEX(animation_index, animation_graph->animations.count))
 						{
 							struct animation *animation = TAG_BLOCK_GET_ELEMENT(
 								&animation_graph->animations,
@@ -1351,7 +1300,10 @@ boolean unit_get_seat_entrance_point(
 								&root_matrix,
 								&entrance_matrix);
 
-							csstrcpy(enter_hint_marker_name, seat->marker_name);
+							/* port: the marker name is a map's 32 bytes, which
+							needn't end; copied up to its length */
+							csstrncpy(enter_hint_marker_name, seat->marker_name, TAG_STRING_LENGTH);
+							enter_hint_marker_name[TAG_STRING_LENGTH] = 0;
 							csstrcat(enter_hint_marker_name, " enter-hint");
 							object_get_marker_by_name(
 								target_unit_index,
@@ -2080,6 +2032,10 @@ short unit_get_grenade_count(
 	{
 		match_assert("c:\\halo\\SOURCE\\units\\units.c", 7847, grenade_type==NONE || (grenade_type>=0 && grenade_type<NUMBER_OF_UNIT_GRENADE_TYPES));
 
+		/* port: a unit carries none of a type it doesn't have (a map's type) */
+		if (!VALID_INDEX(grenade_type, NUMBER_OF_UNIT_GRENADE_TYPES))
+			return 0;
+
 		return unit->unit.grenade_counts[grenade_type];
 	}
 
@@ -2172,6 +2128,12 @@ short unit_add_grenade_type_to_inventory(
 	match_assert("c:\\halo\\SOURCE\\units\\units.c", 7309, grenade_count>=0);
 	match_assert("c:\\halo\\SOURCE\\units\\units.c", 7310, (grenade_type >= 0) && (grenade_type < NUMBER_OF_UNIT_GRENADE_TYPES));
 
+	/* port: only the types a unit carries (an actor variant's type, map
+	data; the rest wrote past the unit). Not reported: the released maps'
+	warthog gunner variant has type 28786, with no grenades */
+	if (!VALID_INDEX(grenade_type, NUMBER_OF_UNIT_GRENADE_TYPES))
+		return 0;
+
 	unit->unit.grenade_counts[grenade_type] += grenade_count;
 	unit->unit.desired_grenade_index = grenade_type;
 	unit->unit.current_grenade_index = grenade_type;
@@ -2193,13 +2155,23 @@ boolean unit_add_grenade_to_inventory(
 		struct game_globals_grenade);
 	long local_player_index;
 	boolean result = FALSE;
+	static boolean grenade_type_reported = FALSE;
 
 	match_assert(
 		"c:\\halo\\SOURCE\\units\\units.c",
 		7282,
 		equipment_definition->equipment.powerup_type==_equipment_powerup_grenade);
 
+	/* port: only the types a unit carries (a map's type) */
+	if (!VALID_INDEX(equipment_definition->equipment.grenade_type, NUMBER_OF_UNIT_GRENADE_TYPES) &&
+		!grenade_type_reported)
+	{
+		grenade_type_reported = TRUE;
+		error(_error_silent, "### ERROR %s has grenade type %d; it can't be picked up",
+			tag_get_name(equipment->definition_index), equipment_definition->equipment.grenade_type);
+	}
 	if (grenade &&
+		VALID_INDEX(equipment_definition->equipment.grenade_type, NUMBER_OF_UNIT_GRENADE_TYPES) &&
 		unit->unit.grenade_counts[equipment_definition->equipment.grenade_type] <
 			grenade->maximum_count)
 	{
@@ -2329,6 +2301,8 @@ void unit_scripting_suspended(
 	long unit_index,
 	boolean suspended)
 {
+	/* port: co-op players the scripts can't name go with player0 */
+	coop_scripts_suspend_followers(unit_index, suspended);
 	if (unit_index!=NONE)
 	{
 		struct unit_datum *unit = unit_get(unit_index);
@@ -2386,6 +2360,7 @@ boolean unit_custom_animation_at_frame(
 		{
 			unit->object.animation.state.frame_index = frame_index;
 			success = TRUE;
+			network_coop_note_unit_animation_frame(unit_index, frame_index);
 		}
 	}
 
@@ -2488,6 +2463,10 @@ static void unit_add_initial_weapons(
 	struct unit_datum *unit = unit_get(unit_index);
 	struct unit_definition *unit_definition = unit_definition_get(unit->definition_index);
 
+	/* (a client of the distributed netcode making the host's unit: its
+	weapons are the host's objects, port/linux/game/network_objects.c) */
+	if (network_objects_creating_host_object())
+		return;
 	for (initial_weapon_index = 0;
 		initial_weapon_index < unit_definition->unit.initial_weapons.count;
 		initial_weapon_index++)
@@ -2886,13 +2865,13 @@ static void unit_drop_grenades(
 	unit = unit_get(unit_index);
 	grenade_count = unit->unit.grenade_counts;
 	grenade_count_negative_base =
-		0u - (unsigned long)unit->unit.grenade_counts;
+		0u - (unsigned long)POINTER_BITS(unit->unit.grenade_counts);
 	grenade_type_count = NUMBER_OF_UNIT_GRENADE_TYPES;
 	do
 	{
 		grenade = TAG_BLOCK_GET_ELEMENT(
 			&scenario_get_game_globals()->grenades,
-			grenade_count_negative_base + (unsigned long)grenade_count,
+			grenade_count_negative_base + (unsigned long)POINTER_BITS(grenade_count),
 			struct game_globals_grenade);
 		while (*grenade_count > 0)
 		{
@@ -3337,6 +3316,97 @@ void unit_impulse(
 	return;
 }
 
+/* the platform layer's (port/linux/src/port_config.c) */
+int config_boolean(const char *name);
+unsigned long config_changes(void);
+
+/* port: the animation enhancements (game.enhanced_animations, on unless
+config.toml turns them off) are for the player bipeds (cyborg and
+cyborg_mp), whose animations they were made with; every other unit keeps
+the original animations */
+static char const *const enhanced_animation_units[] =
+{
+	"cyborg",
+	"cyborg_mp",
+};
+
+boolean unit_animation_enhanced(
+	long unit_index)
+{
+	static boolean enhanced = TRUE;
+	static unsigned long read_at = (unsigned long)-1;
+	struct unit_datum *unit;
+	char const *name;
+	long name_index;
+
+	/* (read again when the settings change) */
+	if (read_at != config_changes())
+	{
+		read_at = config_changes();
+		enhanced = config_boolean("game.enhanced_animations") != 0;
+	}
+	if (!enhanced)
+	{
+		return FALSE;
+	}
+	unit = unit_get(unit_index);
+	name = tag_name_strip_path(tag_get_name(unit->definition_index));
+	for (name_index = 0; name_index < NUMBEROF(enhanced_animation_units); name_index++)
+	{
+		if (!_stricmp(name, enhanced_animation_units[name_index]))
+		{
+			return TRUE;
+		}
+	}
+
+	return FALSE;
+}
+
+/* port: a seat whose graph has no reload of its own (a Scorpion rider's)
+reloads with the standing seat's, the same weapon's: a reload is a
+replacement animation, which moves only the arms and the weapon */
+static short unit_standing_weapon_type_animation(
+	struct animation_graph *animation_graph,
+	struct animation_graph_weapon_class *weapon_class,
+	struct animation_graph_weapon_type *weapon_type,
+	short weapon_type_animation_index)
+{
+	short seat_index;
+
+	for (seat_index = 0; seat_index < animation_graph->unit_seats.count; seat_index++)
+	{
+		struct animation_graph_unit_seat *seat = TAG_BLOCK_GET_ELEMENT(&animation_graph->unit_seats, seat_index, struct animation_graph_unit_seat);
+		short class_index;
+
+		if (_stricmp(seat->label, "stand"))
+		{
+			continue;
+		}
+		for (class_index = 0; class_index < seat->weapon_classes.count; class_index++)
+		{
+			struct animation_graph_weapon_class *stand_class = TAG_BLOCK_GET_ELEMENT(&seat->weapon_classes, class_index, struct animation_graph_weapon_class);
+			short type_index;
+
+			if (_stricmp(stand_class->label, weapon_class->label))
+			{
+				continue;
+			}
+			for (type_index = 0; type_index < stand_class->weapon_types.count; type_index++)
+			{
+				struct animation_graph_weapon_type *stand_type = TAG_BLOCK_GET_ELEMENT(&stand_class->weapon_types, type_index, struct animation_graph_weapon_type);
+
+				if (!_stricmp(stand_type->label, weapon_type->label) &&
+					weapon_type_animation_index < stand_type->animations.count)
+				{
+					return animation_graph_animation_index_get(&stand_type->animations)[weapon_type_animation_index].animation_index;
+				}
+			}
+		}
+	}
+
+	return NONE;
+}
+
 void unit_animation_start_action(
 	long unit_index,
 	short action)
@@ -3415,7 +3485,17 @@ void unit_animation_start_action(
 				animation_index = NONE;
 			}
 		}
-
+		/* port: a seat with no reload borrows the standing one's */
+		if (animation_index == NONE &&
+			(weapon_type_animation_index == 0 || weapon_type_animation_index == 1) &&
+			unit_animation_enhanced(unit_index))
+		{
+			animation_index = unit_standing_weapon_type_animation(
+				animation_graph,
+				weapon_class,
+				weapon_type,
+				weapon_type_animation_index);
+		}
 		interpolation_frame_count = action_index==7 ? 0 : 6;
 
 		if (animation_index!=NONE)
@@ -3433,6 +3513,72 @@ void unit_animation_start_action(
 	}
 
 	return;
+}
+
+/* port: a player with no weapon (a gametype's loadout of none) swings as
+with a pistol: the player's biped has no melee of its own unarmed, so its
+blow showed nothing. Only the action's animation is the pistol's: its weapon
+class stays unarmed. */
+void unit_animation_start_unarmed_melee(
+	long unit_index)
+{
+	struct unit_datum *unit = unit_get(unit_index);
+	struct unit_definition *unit_definition = unit_definition_get(unit->definition_index);
+	struct animation_graph *animation_graph = animation_graph_definition_get(unit_definition->object.animation_graph.index);
+	struct animation_graph_unit_seat *unit_seat;
+	short class_index;
+	short animation_index = NONE;
+
+	if (unit->unit.animation.seat_index<0 || unit->unit.animation.seat_index>=animation_graph->unit_seats.count)
+		return;
+	unit_seat = TAG_BLOCK_GET_ELEMENT(&animation_graph->unit_seats, unit->unit.animation.seat_index, struct animation_graph_unit_seat);
+	/* (none where its own weapon class has a melee: unit_animation_start_action
+	played it) */
+	if (unit->unit.animation.weapon_index>=0 && unit->unit.animation.weapon_index<unit_seat->weapon_classes.count)
+	{
+		struct animation_graph_weapon_class *weapon_class = TAG_BLOCK_GET_ELEMENT(&unit_seat->weapon_classes,
+			unit->unit.animation.weapon_index, struct animation_graph_weapon_class);
+
+		if (unit->unit.animation.weapon_type_index>=0 &&
+			unit->unit.animation.weapon_type_index<weapon_class->weapon_types.count)
+		{
+			struct animation_graph_weapon_type *weapon_type = TAG_BLOCK_GET_ELEMENT(&weapon_class->weapon_types,
+				unit->unit.animation.weapon_type_index, struct animation_graph_weapon_type);
+
+			if (weapon_type->animations.count>8 &&
+				animation_graph_animation_index_get(&weapon_type->animations)[8].animation_index!=NONE)
+			{
+				return;
+			}
+		}
+	}
+	/* (the pistol's, else the first class's that has one) */
+	for (class_index = 0; class_index<unit_seat->weapon_classes.count; class_index++)
+	{
+		struct animation_graph_weapon_class *weapon_class = TAG_BLOCK_GET_ELEMENT(&unit_seat->weapon_classes, class_index, struct animation_graph_weapon_class);
+		struct animation_graph_weapon_type *weapon_type;
+		short index;
+
+		if (weapon_class->weapon_types.count<=0)
+			continue;
+		weapon_type = TAG_BLOCK_GET_ELEMENT(&weapon_class->weapon_types, 0, struct animation_graph_weapon_type);
+		if (weapon_type->animations.count<=8)
+			continue;
+		index = animation_graph_animation_index_get(&weapon_type->animations)[8].animation_index;
+		if (index==NONE)
+			continue;
+		if (animation_index==NONE || !strcmp(weapon_class->label, "pistol"))
+			animation_index = index;
+		if (!strcmp(weapon_class->label, "pistol"))
+			break;
+	}
+	if (animation_index!=NONE)
+	{
+		unit->unit.animation.action_animation.index = animation_choose_random_permutation_internal(TRUE,
+			unit_definition->object.animation_graph.index, animation_index);
+		unit->unit.animation.action_animation.frame_index = 0;
+		unit->unit.animation.action = 7; /* (the melee, unit_animation_start_action's) */
+	}
 }
 
 static void unit_animation_start_overlay_action(
@@ -3494,7 +3640,7 @@ static void unit_animation_start_overlay_action(
 				else if (debug_unit_animations && unit->object.type==_object_type_biped && unit->unit.animation.aiming_screen_index==NONE)
 				{
 					console_warning("MISSING: %s '%s %s'",
-						tag_name_strip_path(unit_definition->object.animation_graph.name),
+						tag_name_strip_path(xbox_pointer(unit_definition->object.animation_graph.name)),
 						unit_seat->label,
 						weapon_class->label,
 						weapon_type->label,
@@ -3751,6 +3897,7 @@ void unit_detach_from_parent(
 
 	if (unit->object.parent_object_index != NONE)
 	{
+		long parent_index = unit->object.parent_object_index;
 		real_point3d parent_origin;
 		real_point3d unit_origin;
 		real_vector3d velocity;
@@ -3780,6 +3927,10 @@ void unit_detach_from_parent(
 			&unit->object.translational_velocity);
 		object_set_visibility(unit_index, TRUE);
 		object_compute_node_matrices(unit_index);
+		/* port: a vehicle dropped by another comes with more in a large
+		co-op game (port/linux/game/network_coop.c) */
+		if (unit->object.type == _object_type_vehicle && object_get(parent_index)->object.type == _object_type_vehicle)
+			network_coop_vehicle_dropped(unit_index, parent_index);
 	}
 
 	return;
@@ -4096,6 +4247,13 @@ boolean unit_start_user_animation(
 							TRUE);
 						object_compute_node_matrices_recursive(unit_index);
 						animation_started = TRUE;
+						network_coop_note_unit_animation(unit_index, animation_graph_index, animation_index,
+							interpolate);
+						if (unit->unit.player_index == NONE)
+						{
+							network_actors_note_user_animation(unit_index, animation_graph_index, animation_index,
+								interpolate);
+						}
 					}
 				}
 			}
@@ -4146,9 +4304,98 @@ void unit_stop_custom_animation(
 	if (unit_index!=NONE && unit_get(unit_index)->unit.animation.state==_unit_state_user_animation)
 	{
 		unit_animation_set_state(unit_index, _unit_state_idle);
+		network_coop_note_unit_animation(unit_index, NONE, NONE, FALSE);
 	}
 
 	return;
+}
+
+/* port: a unit that feigned death gets back up (a Flood combat form). The
+host's does when its timer runs out (unit_update); a client's copy when the
+host's word on it says it is alive again (network_actors.c). */
+void unit_port_resurrect(
+	long unit_index)
+{
+	struct unit_datum *unit = unit_get(unit_index);
+	short new_state = TEST_FLAG(unit->unit.animation.flags, _unit_animation_fallen_on_front_bit) ?
+		_unit_state_resurrect_front : _unit_state_resurrect_back;
+
+	SET_FLAG(unit->object.damage_flags, _object_dead_bit, FALSE);
+	unit_set_actively_controlled(unit_index, TRUE);
+	unit_set_or_test_seat_and_weapon_label(unit_index, base_seat_label_get(_unit_animation_state_suspicious), NULL,
+		TRUE);
+	unit_animation_set_state(unit_index, new_state);
+	SET_FLAG(unit->unit.animation.flags, _unit_animation_ignore_translation_bit, FALSE);
+	if (unit->object.type == _object_type_biped)
+		biped_stop_limp_body_physics(unit_index);
+	unit_scream(unit_index, _unit_scream_resurrection);
+}
+
+/* how far into its own flinch or death animation a client's unit still
+switches to the host's pick */
+#define DAMAGE_ANIMATION_SWITCH_TICKS 10
+
+/* port: whether the unit plays a flinch or death animation of the type
+(the host's pick, port/linux/game/network_objects.c): it is switched to the
+host's if its own has only just begun. FALSE if it plays none. */
+boolean unit_port_correct_damage_animation(
+	long unit_index,
+	short type,
+	short animation_index)
+{
+	struct unit_datum *unit = unit_get(unit_index);
+	long animation_graph_index = unit_definition_get(unit->definition_index)->object.animation_graph.index;
+
+	if (type == _unit_damage_animation_soft_ping)
+	{
+		/* (an overlay, beside the unit's animation) */
+		if (unit->unit.animation.soft_ping_animation.index == NONE)
+			return FALSE;
+		if (unit->unit.animation.soft_ping_animation.frame_index < DAMAGE_ANIMATION_SWITCH_TICKS)
+			unit->unit.animation.soft_ping_animation.index = animation_index;
+		return TRUE;
+	}
+	if (type == _unit_damage_animation_hard_ping ?
+		unit->unit.animation.state != _unit_state_hard_ping :
+		unit->unit.animation.state != _unit_state_dying && unit->unit.animation.state != _unit_state_dying_airborne)
+	{
+		return FALSE;
+	}
+	if (unit->object.animation.state.index != animation_index &&
+		unit->object.animation.state.frame_index < DAMAGE_ANIMATION_SWITCH_TICKS)
+	{
+		unit_set_animation(unit_index, animation_graph_index, animation_index);
+		object_compute_node_matrices_recursive(unit_index);
+	}
+	return TRUE;
+}
+
+/* port: a co-op client plays the custom animation the host's unit started
+(network_coop.c): exactly that animation, not another random permutation */
+void unit_port_play_user_animation(
+	long unit_index,
+	long animation_graph_index,
+	short animation_index,
+	boolean interpolate,
+	short frame_index)
+{
+	struct unit_datum *unit = unit_get(unit_index);
+	struct animation_graph *animation_graph = animation_graph_definition_get(animation_graph_index);
+	struct animation *animation;
+
+	if (animation_index < 0 || animation_index >= animation_graph->animations.count)
+		return;
+	animation = TAG_BLOCK_GET_ELEMENT(&animation_graph->animations, animation_index, struct animation);
+	if (animation->type != _animation_base)
+		return;
+	if (interpolate)
+		object_start_interpolation(unit_index, 6);
+	unit->unit.animation.state = _unit_state_user_animation;
+	unit_set_animation(unit_index, animation_graph_index, animation_index);
+	SET_FLAG(unit->unit.animation.flags, _unit_animation_postpone_weapon_ik_until_interpolation_ends_bit, TRUE);
+	if (frame_index > 0 && frame_index < animation->frame_count)
+		unit->object.animation.state.frame_index = frame_index;
+	object_compute_node_matrices_recursive(unit_index);
 }
 
 boolean unit_melee_attack_begin(
@@ -4230,6 +4477,9 @@ boolean unit_melee_attack_begin(
 				else
 				{
 					unit->unit.melee_attack_state = 1;
+					/* port: the AI's swing, played on the clients too */
+					if (unit->unit.player_index == NONE)
+						network_actors_note_melee(unit_index, alignment_vector);
 				}
 				result = TRUE;
 			}
@@ -4283,6 +4533,9 @@ boolean unit_leap_begin(
 				{
 					unit_align_facing(unit_index, alignment_vector);
 				}
+				/* port: the AI's leap, played on the clients too */
+				if (unit->unit.player_index == NONE)
+					network_actors_note_leap(unit_index, alignment_vector);
 
 				result = TRUE;
 			}
@@ -4326,7 +4579,11 @@ boolean unit_throw_grenade_begin(
 			break;
 
 		default:
-			if (!weapon_prevents_grenade_throwing(weapon_index))
+			/* port: and with no weapon (a loadout of none), as melee
+			(bipeds.c), which weapon_prevents_grenade_throwing(NONE) prevents;
+			not from a vehicle's seat, which holds no weapon either */
+			if ((weapon_index == NONE && unit->unit.parent_seat_index == NONE) ||
+				(weapon_index != NONE && !weapon_prevents_grenade_throwing(weapon_index)))
 			{
 				struct animation_graph *animation_graph;
 				struct animation *animation;
@@ -4652,6 +4909,10 @@ void unit_scripting_enter_vehicle(
 					}
 				}
 			}
+
+			/* port: co-op players the scripts can't name board with player0 */
+			if (unit->object.parent_object_index == vehicle_index)
+				coop_scripts_board_followers(unit_index, vehicle_index, seat_name);
 		}
 	}
 
@@ -4764,10 +5025,13 @@ void unit_scripting_exit_vehicle(
 	if (unit_index!=NONE)
 	{
 		struct unit_datum *unit = unit_get(unit_index);
+		long vehicle_index = unit->object.parent_object_index;
 
 		if (unit->object.parent_object_index!=NONE && unit->unit.parent_seat_index!=NONE)
 		{
 			unit_try_and_exit_seat(unit_index);
+			/* port: co-op players the scripts can't name get out with player0 */
+			coop_scripts_exit_followers(unit_index, vehicle_index);
 		}
 	}
 
@@ -4905,20 +5169,16 @@ void unit_render_debug(
 		struct object_marker marker;
 		real mouth_aperture;
 
-		/*
-		 * BUG (original): January ignores the marker count and consumes the
-		 * output even when the requested head marker is absent. A safe,
-		 * intentionally nonmatching build should render only when this call
-		 * returns a value greater than zero.
-		 */
-		object_get_marker_by_name(unit_index, "head", &marker, 1);
-		mouth_aperture = unit->unit.mouth_aperture;
-		origin = marker.matrix.position;
-		render_debug_string_at_point(
-			FALSE,
-			&origin,
-			csprintf(temporary, "%.2f", mouth_aperture),
-			global_real_argb_orange);
+		if (object_get_marker_by_name(unit_index, "head", &marker, 1) > 0)
+		{
+			mouth_aperture = unit->unit.mouth_aperture;
+			origin = marker.matrix.position;
+			render_debug_string_at_point(
+				FALSE,
+				&origin,
+				csprintf(temporary, "%.2f", mouth_aperture),
+				global_real_argb_orange);
+		}
 	}
 
 	return;
@@ -5144,6 +5404,11 @@ short vehicle_scripting_load_magic(
 		short available_seat_count;
 		long reference_index;
 		long unit_index;
+		/* port: the riders left without a seat that network co-op keeps
+		(coop_enemies.c), erased once the list is gone through */
+		long unseated_actor_indices[64];
+		short unseated_count = 0;
+		short unseated_number;
 
 		available_seat_count = vehicle_scripting_find_available_seats(
 			vehicle_index,
@@ -5162,6 +5427,7 @@ short vehicle_scripting_load_magic(
 			{
 				struct unit_datum *unit = (struct unit_datum *)object;
 				short available_seat_index;
+				long loaded_before = loaded_count;
 
 				for (available_seat_index = 0;
 					available_seat_index<available_seat_count;
@@ -5197,9 +5463,33 @@ short vehicle_scripting_load_magic(
 						}
 					}
 				}
+
+				/* port: network co-op's extra enemies (coop_enemies.c): a
+				rider seated, or one left without a seat, kept until the
+				seated get out */
+				if (loaded_count > loaded_before)
+					coop_enemies_rider_seated(vehicle_index, unit_index);
+				else if (unit->object.parent_object_index == NONE && unit->unit.actor_index != NONE &&
+					unseated_count < (short)NUMBEROF(unseated_actor_indices) &&
+					coop_enemies_rider_unseated(vehicle_index, unit_index))
+				{
+					unseated_actor_indices[unseated_count++] = unit->unit.actor_index;
+				}
 			}
 
 			unit_index = object_list_get_next(object_list_index, &reference_index);
+		}
+		for (unseated_number = 0; unseated_number < unseated_count; unseated_number++)
+			actor_erase(unseated_actor_indices[unseated_number], FALSE);
+
+		/* port: co-op players the scripts can't name board with player0,
+		once this load's seats are taken */
+		for (unit_index = object_list_get_first(object_list_index, &reference_index);
+			unit_index != NONE;
+			unit_index = object_list_get_next(object_list_index, &reference_index))
+		{
+			if (object_get(unit_index)->object.parent_object_index == vehicle_index)
+				coop_scripts_board_followers(unit_index, vehicle_index, seat_name);
 		}
 	}
 
@@ -5211,6 +5501,7 @@ void unit_open(
 {
 	if (unit_index!=NONE)
 	{
+		network_coop_note_unit_open(unit_index, TRUE);
 		unit_animation_set_state(unit_index, _unit_state_opening);
 	}
 
@@ -5222,6 +5513,7 @@ void unit_close(
 {
 	if (unit_index!=NONE)
 	{
+		network_coop_note_unit_open(unit_index, FALSE);
 		unit_animation_set_state(unit_index, _unit_state_closing);
 	}
 
@@ -5495,32 +5787,7 @@ boolean unit_update(
 			{
 				if (unit->object.body_vitality>0.f)
 				{
-					short new_state = TEST_FLAG(
-							unit->unit.animation.flags,
-							_unit_animation_fallen_on_front_bit) ? _unit_state_resurrect_front : _unit_state_resurrect_back;
-
-					SET_FLAG(unit->object.damage_flags, _object_dead_bit, FALSE);
-
-					unit_set_actively_controlled(unit_index, TRUE);
-					unit_set_or_test_seat_and_weapon_label(
-						unit_index,
-						base_seat_label_get(_unit_animation_state_suspicious),
-						NULL,
-						TRUE
-					);
-					unit_animation_set_state(unit_index, new_state);
-
-					SET_FLAG(
-						unit->unit.animation.flags,
-						_unit_animation_ignore_translation_bit,
-						FALSE);
-
-					if (unit->object.type==_object_type_biped)
-					{
-						biped_stop_limp_body_physics(unit_index);
-					}
-
-					unit_scream(unit_index, _unit_scream_resurrection);
+					unit_port_resurrect(unit_index);
 				}
 				else
 				{
@@ -5839,7 +6106,17 @@ boolean unit_update(
 
 	if (!TEST_FLAG(unit_definition->unit.flags, _unit_simple_creature_bit))
 	{
+		static boolean powered_seats_reported = FALSE;
 		short seat_index;
+
+		if (unit_definition->unit.powered_seats.count>(long)NUMBEROF(unit->unit.seat_power) &&
+			!powered_seats_reported)
+		{
+			powered_seats_reported = TRUE;
+			error(_error_silent, "### ERROR %s has %ld powered seats; only the first %d get power",
+				tag_get_name(unit->definition_index), unit_definition->unit.powered_seats.count,
+				(int)NUMBEROF(unit->unit.seat_power));
+		}
 
 		if (TEST_FLAG(unit->unit.animation.flags, _unit_animation_showing_acceleration_bit))
 		{
@@ -5849,7 +6126,9 @@ boolean unit_update(
 			unit->unit.seat_acceleration.k = unit->unit.seat_desired_acceleration.k*0.3f + unit->unit.seat_acceleration.k*0.7f;
 		}
 
-		for (seat_index = 0; seat_index<unit_definition->unit.powered_seats.count; ++seat_index)
+		/* port: no more powered seats than the unit keeps power for (a map's
+		count; the rest wrote past the unit) */
+		for (seat_index = 0; seat_index<MIN(unit_definition->unit.powered_seats.count, (long)NUMBEROF(unit->unit.seat_power)); ++seat_index)
 		{
 			boolean v96 = FALSE;
 			struct powered_seat_definition *powered_seat = TAG_BLOCK_GET_ELEMENT(&unit_definition->unit.powered_seats, seat_index, struct powered_seat_definition);
@@ -6161,6 +6440,13 @@ void unit_record_damage(
 	short preserved_attacker_index;
 	short best_new_attacker_index;
 	boolean found_attacker;
+	struct player_datum *attacker_player = attacker_player_index != NONE ?
+		player_try_and_get(attacker_player_index) : NULL;
+
+	/* port: damage can outlive its player (an older checkpoint's): a handle
+	that is no player's now is neither recorded nor read */
+	if (!attacker_player)
+		attacker_player_index = NONE;
 
 	unit = unit_get(unit_index);
 	found_attacker = FALSE;
@@ -6241,9 +6527,10 @@ void unit_record_damage(
 	if (notify_ai && attacker_team != NONE &&
 		game_team_is_enemy(unit->object.owner_team_index, attacker_team))
 	{
-		if (attacker_player_index != NONE)
+		/* port: (the player looked up above) */
+		if (attacker_player)
 		{
-			player_unit_index = player_get(attacker_player_index)->unit_index;
+			player_unit_index = attacker_player->unit_index;
 			if (player_unit_index != NONE)
 			{
 				attacker_unit_index = player_unit_index;
@@ -6452,6 +6739,9 @@ static void unit_ping_animation(
 					animation_graph_index,
 					selected_damage_animation_index);
 			}
+			/* port: the host's pick on every machine (port/linux/game/network_objects.c) */
+			animation_index = network_objects_damage_animation(unit_index, _unit_damage_animation_soft_ping,
+				animation_index);
 
 			if (animation_index==NONE)
 			{
@@ -6576,6 +6866,8 @@ static void unit_ping_animation(
 					animation_graph_index,
 					selected_damage_animation_index);
 			}
+			/* port: the host's pick on every machine (port/linux/game/network_objects.c) */
+			animation_index = network_objects_damage_animation(unit_index, damage_animation_type, animation_index);
 
 			if (animation_index!=NONE)
 			{
@@ -6776,7 +7068,7 @@ void unit_damage_aftermath(
 			struct object_definition *owner_definition =
 				object_definition_get(owner_object->definition_index);
 			char const *separator = strrchr(
-				owner_definition->object.model.name,
+				xbox_pointer(owner_definition->object.model.name),
 				'\\');
 
 			if (separator)
@@ -6937,6 +7229,13 @@ void unit_damage_aftermath(
 			body_part,
 			direction_valid ? &damage_direction : NULL);
 	}
+
+#ifdef HALO_GAME_BROWSER
+	/* port: a Bomb carrier struck by a melee blow it lives through may drop
+	the bomb (game_engine_bomb.c, the host's) */
+	if (!lethal && damage_definition->category == 6 /* damage.c's _damage_category_melee */)
+		game_engine_bomb_unit_struck(unit_index);
+#endif
 
 	{
 		long owner_player_index = damage_data->owner_player_index;
@@ -7520,6 +7819,66 @@ boolean unit_drop_current_weapon(
 	return result;
 }
 
+/* port: a swap's weapon out: the one the player chose, though the weapon
+in hand is still being put away for it (a network player's choice gets to
+the host before the switch is done), not that one, their backup */
+boolean unit_drop_selected_weapon(
+	long unit_index)
+{
+	struct unit_datum *unit = unit_get(unit_index);
+	short slot = unit->unit.desired_weapon_index;
+	long weapon_index = unit_inventory_get_weapon(unit_index, slot);
+
+	if (weapon_index == NONE || slot == unit->unit.current_weapon_index ||
+		TEST_FLAG(weapon_definition_get(weapon_get(weapon_index)->definition_index)->weapon.flags,
+			_weapon_doesnt_count_toward_maximum_bit))
+	{
+		return unit_drop_current_weapon(unit_index, TRUE);
+	}
+	unit_drop_item(unit_index, weapon_index);
+	unit->unit.weapon_object_indices[slot] = NONE;
+	unit->unit.desired_weapon_index = unit->unit.current_weapon_index!=NONE ?
+		unit->unit.current_weapon_index : unit_weapon_next_index(unit_index, NONE, 0);
+	if (!weapon_can_be_fired(weapon_index))
+	{
+		object_delete(weapon_index);
+	}
+
+	return TRUE;
+}
+
+boolean unit_drop_weapon(
+	long unit_index,
+	long weapon_index)
+{
+	struct unit_datum *unit = unit_get(unit_index);
+	short slot;
+
+	for (slot = 0; slot < MAXIMUM_WEAPONS_PER_UNIT; slot++)
+	{
+		if (unit->unit.weapon_object_indices[slot] == weapon_index)
+			break;
+	}
+	if (slot == MAXIMUM_WEAPONS_PER_UNIT)
+		return FALSE;
+	if (slot == unit->unit.current_weapon_index)
+		first_person_weapon_message_from_unit(unit_index, 13);
+	unit_drop_item(unit_index, weapon_index);
+	/* (one holstered, in the unit's hand as it is dropped, is not in the
+	world yet) */
+	if (!TEST_FLAG(object_get(weapon_index)->object.flags, _object_connected_to_map_bit))
+		object_reconnect_to_map(weapon_index, NULL);
+	unit->unit.weapon_object_indices[slot] = NONE;
+	if (slot == unit->unit.current_weapon_index)
+		unit->unit.current_weapon_index = NONE;
+	if (slot == unit->unit.desired_weapon_index || unit->unit.current_weapon_index == NONE)
+	{
+		unit->unit.desired_weapon_index = unit->unit.current_weapon_index != NONE ?
+			unit->unit.current_weapon_index : unit_weapon_next_index(unit_index, NONE, 0);
+	}
+	return TRUE;
+}
+
 /* ---------- private code */
 
 char const *base_seat_labels[NUMBER_OF_UNIT_BASE_SEATS] = {"asleep", "alert", "stand", "crouch", "flee", "flaming"};
@@ -7661,8 +8020,20 @@ static void unit_throw_grenade_move_to_hand(
 		!actor_has_unlimited_grenades(unit->unit.actor_index)))
 	{
 		match_assert("c:\\halo\\SOURCE\\units\\units.c", 7966, unit->unit.current_grenade_index>=0 && unit->unit.current_grenade_index<NUMBER_OF_UNIT_GRENADE_TYPES);
+		/* port: a distributed client's grenade counts are the host's (what
+		every unit carries, network_objects.c), which can arrive between a
+		throw starting and the grenade reaching the hand, the throw already
+		counted there: the host's count stands */
+		if (network_game_distributed_client())
+		{
+			if (unit->unit.grenade_counts[unit->unit.current_grenade_index] > 0)
+				--unit->unit.grenade_counts[unit->unit.current_grenade_index];
+		}
+		else
+		{
 		match_assert("c:\\halo\\SOURCE\\units\\units.c", 7967, unit->unit.grenade_counts[unit->unit.current_grenade_index]>0);
 		--unit->unit.grenade_counts[unit->unit.current_grenade_index];
+		}
 	}
 
 	object_get_marker_by_name(unit_index, "left hand", &marker, 1);
@@ -7679,6 +8050,9 @@ static void unit_throw_grenade_move_to_hand(
 		object_attach_to_node(unit_index, object_index, marker.node_index);
 		unit->unit.grenade_object_index = object_index;
 		unit->unit.grenade_throw_state = _unit_grenade_throw_in_hand;
+		/* port: the host takes a client's report of the grenade's damage only
+		from a grenade thrown (network_damage.c) */
+		network_damage_note_grenade(unit_index, unit->unit.current_grenade_index);
 	}
 	else
 	{
@@ -8162,6 +8536,24 @@ boolean unit_add_weapon_to_inventory(
 	boolean added = FALSE;
 	short mode = (short)is_starting_weapon;
 
+	/* port: only a weapon goes in a unit's weapons. A map's tag reference
+	(a starting or initial weapon, an item collection) can name any object,
+	which was then used as a weapon. In the released maps they all name
+	weapons (224 initial weapons, 32 item collection entries, every
+	starting profile) */
+	if (weapon->object.type!=_object_type_weapon)
+	{
+		static boolean reported = FALSE;
+
+		if (!reported)
+		{
+			reported = TRUE;
+			error(_error_silent, "### ERROR %s isn't a weapon; it can't be carried",
+				tag_get_name(weapon->definition_index));
+		}
+		return FALSE;
+	}
+
 	if (TEST_FLAG(weapon->object.flags, _object_connected_to_map_bit) &&
 		weapon->object.parent_object_index==NONE &&
 		unit_can_use_weapon(unit_index, weapon_index) &&
@@ -8191,9 +8583,27 @@ boolean unit_add_weapon_to_inventory(
 				break;
 
 			case _unit_add_weapon_starting:
-				if (!TEST_FLAG(unit->unit.control_flags, _unit_control_weapon_primary_trigger_bit))
+				/* port: a second weapon, into the empty slot of a one-weapon
+				loadout, is the one in hand. While the trigger was down this
+				left the choice on the weapon already held, and the next
+				action put that choice back, so the new one stayed holstered. */
 				{
-					player_control_set_desired_weapon(unit_index, inventory_index);
+					boolean holding_another = FALSE;
+					short slot;
+
+					for (slot = 0; slot < MAXIMUM_WEAPONS_PER_UNIT; slot++)
+					{
+						if (slot != inventory_index &&
+							unit->unit.weapon_object_indices[slot] != NONE)
+						{
+							holding_another = TRUE;
+						}
+					}
+					if (holding_another ||
+						!TEST_FLAG(unit->unit.control_flags, _unit_control_weapon_primary_trigger_bit))
+					{
+						player_control_set_desired_weapon(unit_index, inventory_index);
+					}
 				}
 
 			case _unit_add_weapon_replace:
@@ -8493,6 +8903,8 @@ boolean unit_start_animation_impulse(
 				{
 					unit_align_facing(unit_index, alignment_vector);
 				}
+				if (unit->unit.player_index == NONE)
+					network_actors_note_impulse(unit_index, animation_impulse, alignment_vector);
 
 				result = TRUE;
 			}
@@ -8666,15 +9078,34 @@ enum
 	_collision_result_breakable_surface_bit = 3,
 };
 
-void breakable_surface_damage(
-	short breakable_surface_index,
-	struct damage_data *damage_data,
-	long seed_surface_index);
-void machine_try_to_open_with_damage(
-	long machine_index);
-void vehicle_accelerate(
-	long vehicle_index,
-	real_vector3d const *acceleration);
+/* the globals' first multiplayer weapon, NONE where there is none: a
+campaign map's globals list no multiplayer weapons (and its player starts
+some levels unarmed, a10's), so its unarmed blow stays the game's, none */
+static long unarmed_melee_weapon_definition_index(
+	void)
+{
+	struct game_globals *game_globals = scenario_get_game_globals();
+
+	return game_globals && game_globals->weapon_list.count>0 ?
+		list_index_to_weapon_definition_index(0) : NONE;
+}
+
+/* port: the melee damage of a unit with no weapon (a gametype's loadout of
+none): its own, else (a player's biped has none: players always had a
+weapon) the blow of the globals' first multiplayer weapon, the assault
+rifle's. network_damage.c takes it as the player's. */
+long unit_unarmed_melee_damage(
+	long unit_index)
+{
+	struct unit_definition *unit_definition = unit_definition_get(unit_get(unit_index)->definition_index);
+	long weapon_definition_index;
+
+	if (unit_definition->unit.melee_damage.index!=NONE)
+		return unit_definition->unit.melee_damage.index;
+	weapon_definition_index = unarmed_melee_weapon_definition_index();
+	return weapon_definition_index!=NONE ?
+		weapon_definition_get(weapon_definition_index)->weapon.melee_attack_damage.index : NONE;
+}
 
 void unit_cause_player_melee_damage(
 	long unit_index)
@@ -8692,6 +9123,9 @@ void unit_cause_player_melee_damage(
 	real best_object_fraction;
 	long outer_index;
 	long outer_count;
+#ifdef HALO_GAME_BROWSER
+	real melee_reach;
+#endif
 
 	unit = unit_get(unit_index);
 	unit_definition = unit_definition_get(unit->definition_index);
@@ -8713,6 +9147,10 @@ void unit_cause_player_melee_damage(
 		global_current_collision_user_depth < MAXIMUM_COLLISION_USER_STACK_DEPTH);
 	global_current_collision_users[global_current_collision_user_depth++] = 8;
 	facing = &unit->unit.aiming_vector;
+#ifdef HALO_GAME_BROWSER
+	melee_reach = unit->unit.player_index!=NONE ?
+		game_engine_traits_melee_multiplier(unit->unit.player_index) : 1.f;
+#endif
 
 	{
 		real_vector3d perpendicular;
@@ -8741,6 +9179,11 @@ void unit_cause_player_melee_damage(
 					((real)inner_component_i + (real)outer_index * perpendicular.j) * 0.1f;
 				ray.k = unit->unit.aiming_vector.k * 0.8f +
 					((real)outer_index * perpendicular.k + (real)inner_index * cross.k) * 0.1f;
+#ifdef HALO_GAME_BROWSER
+				/* port: a Bomb game type's melee reach trait (game_engine_bomb.c) */
+				if (melee_reach!=1.f)
+					scale_vector3d(&ray, melee_reach, &ray);
+#endif
 
 				if (collision_test_vector(
 					_collision_test_for_projectiles_flags,
@@ -8843,6 +9286,20 @@ void unit_cause_player_melee_damage(
 		if (melee_damage_effect_index==NONE)
 		{
 			melee_damage_effect_index = unit_definition->unit.melee_damage.index;
+		}
+		/* port: a player with no weapon (a gametype's loadout of none), whose
+		biped has no blow of its own: unit_unarmed_melee_damage's, and its
+		response */
+		if (melee_damage_effect_index==NONE)
+		{
+			long weapon_definition_index = unarmed_melee_weapon_definition_index();
+
+			melee_damage_effect_index = unit_unarmed_melee_damage(unit_index);
+			if (weapon_definition_index!=NONE && melee_response_effect_index==NONE)
+			{
+				melee_response_effect_index =
+					weapon_definition_get(weapon_definition_index)->weapon.melee_attack_response.index;
+			}
 		}
 
 		if (best_object_index!=NONE)
@@ -10399,7 +10856,7 @@ static boolean unit_animation_set_state(
 			console_warning(
 				"MISSING: %s '%s %s %s'",
 				tag_name_strip_path(
-					unit_definition->object.animation_graph.name),
+					xbox_pointer(unit_definition->object.animation_graph.name)),
 				unit_seat->label,
 				seat_or_weapon_class_name,
 				weapon_animation_name);
@@ -10478,7 +10935,7 @@ static boolean unit_animation_set_state(
 				console_warning(
 					"MISSING: %s '%s %s %s'",
 					tag_name_strip_path(
-						unit_definition->object.animation_graph.name),
+						xbox_pointer(unit_definition->object.animation_graph.name)),
 					unit_seat->label,
 					weapon_class->label,
 					animation_list_get_string(
@@ -10522,7 +10979,7 @@ static boolean unit_animation_set_state(
 				console_warning(
 					"MISSING: %s '%s %s'",
 					tag_name_strip_path(
-						unit_definition->object.animation_graph.name),
+						xbox_pointer(unit_definition->object.animation_graph.name)),
 					unit_seat->label,
 					animation_list_get_string(
 						&unit_seat_animation_list,
@@ -10544,6 +11001,455 @@ static boolean unit_animation_set_state(
 done:
 	return result;
 }
+
+/* port: a unit throwing a grenade on the move keeps its lower body (the
+pelvis and the legs) in the movement animation; the throw keeps the spine
+and everything above it. The throw is a base animation, which sets every
+node, so the legs of the original game stop while the unit slides. */
+static boolean unit_node_is_at_or_below(
+	struct model *model,
+	short node_index,
+	short ancestor_node_index)
+{
+	while (node_index != NONE)
+	{
+		if (node_index == ancestor_node_index)
+		{
+			return TRUE;
+		}
+		node_index = TAG_BLOCK_GET_ELEMENT(&model->nodes, node_index, struct model_node)->parent_node_index;
+	}
+
+	return FALSE;
+}
+
+/* the speed, in world units per second, at and above which the legs move
+fully; below it they blend toward the rest pose */
+#define GRENADE_THROW_FULL_MOVE_SPEED 0.75f
+/* the ticks the legs take to blend fully in or out, as the engine's own
+transitions between animation states */
+#define GRENADE_THROW_BLEND_TICKS 6
+#define GRENADE_THROW_MAXIMUM_TRACKED_UNITS 2048
+
+static real grenade_throw_leg_weights[GRENADE_THROW_MAXIMUM_TRACKED_UNITS];
+static long grenade_throw_leg_weight_times[GRENADE_THROW_MAXIMUM_TRACKED_UNITS];
+static real grenade_throw_air_weights[GRENADE_THROW_MAXIMUM_TRACKED_UNITS];
+static long grenade_throw_air_weight_times[GRENADE_THROW_MAXIMUM_TRACKED_UNITS];
+static long grenade_throw_ik_release_times[GRENADE_THROW_MAXIMUM_TRACKED_UNITS];
+
+/* a weight eased toward its target by a step a tick; a new throw starts
+at the target */
+static real unit_grenade_throw_ease(
+	real *weights,
+	long *times,
+	long unit_index,
+	real target)
+{
+	long absolute_index = DATUM_INDEX_TO_ABSOLUTE_INDEX(unit_index);
+	long now = game_time_get();
+	real weight = target;
+
+	if (absolute_index >= 0 && absolute_index < GRENADE_THROW_MAXIMUM_TRACKED_UNITS)
+	{
+		if (times[absolute_index] == now)
+		{
+			weight = weights[absolute_index];
+		}
+		else
+		{
+			if (times[absolute_index] == now - 1)
+			{
+				real step = 1.f / GRENADE_THROW_BLEND_TICKS;
+
+				weight = weights[absolute_index] + PIN(target - weights[absolute_index], -step, step);
+			}
+			weights[absolute_index] = weight;
+			times[absolute_index] = now;
+		}
+	}
+
+	return weight;
+}
+
+/* port: a rider's hands leave the vehicle's grips while throwing a grenade
+or playing an action (a reload, readying or putting away a weapon, a
+melee), and through the interpolation back to the seat after it, which the
+grips would otherwise snap */
+static boolean unit_grenade_throw_releases_vehicle_ik(
+	long unit_index)
+{
+	struct unit_datum *unit = unit_get(unit_index);
+	long absolute_index = DATUM_INDEX_TO_ABSOLUTE_INDEX(unit_index);
+	long now = game_time_get();
+	long elapsed;
+	boolean releasing =
+		unit->unit.animation.state == _unit_state_throw_grenade ||
+		unit->unit.animation.action != 0;
+
+	if (!unit_animation_enhanced(unit_index))
+	{
+		return FALSE;
+	}
+	if (absolute_index < 0 || absolute_index >= GRENADE_THROW_MAXIMUM_TRACKED_UNITS)
+	{
+		return releasing;
+	}
+	if (releasing)
+	{
+		grenade_throw_ik_release_times[absolute_index] = now + 1;
+		return TRUE;
+	}
+	if (grenade_throw_ik_release_times[absolute_index] == 0)
+	{
+		return FALSE;
+	}
+	elapsed = now + 1 - grenade_throw_ik_release_times[absolute_index];
+
+	return elapsed >= 0 && elapsed <= GRENADE_THROW_BLEND_TICKS;
+}
+
+/* one of the weapon class's base animations, NULL where the graph has none
+that fits the model */
+static struct animation *unit_weapon_class_base_animation(
+	struct model *model,
+	struct animation_graph *animation_graph,
+	struct animation_graph_weapon_class *weapon_class,
+	short slot)
+{
+	short animation_index;
+	struct animation *animation;
+
+	if (slot < 0 || slot >= weapon_class->animations.count)
+	{
+		return NULL;
+	}
+	animation_index = animation_graph_animation_index_get(&weapon_class->animations)[slot].animation_index;
+	if (animation_index == NONE)
+	{
+		return NULL;
+	}
+
+	animation = TAG_BLOCK_GET_ELEMENT(&animation_graph->animations, animation_index, struct animation);
+	if (animation->type != _animation_base ||
+		animation->frame_count < 1 ||
+		animation->node_count != model->nodes.count)
+	{
+		return NULL;
+	}
+
+	return animation;
+}
+
+/* port: the nodes a unit's orientations hold: its model's, no more than a
+model can have (object_new sizes them from the model) */
+short unit_animation_model_node_count(
+	long unit_index)
+{
+	struct object_datum *object = object_get(unit_index);
+	struct object_definition *object_definition = object_definition_get(object->definition_index);
+	short model_node_count = 0;
+
+	if (object_definition->object.model.index!=NONE)
+	{
+		model_node_count = (short)PIN(
+			model_definition_get(object_definition->object.model.index)->nodes.count,
+			0, MAXIMUM_NODES_PER_MODEL);
+	}
+
+	return model_node_count;
+}
+
+/* port: the graph's animation, or NULL for one the graph doesn't have or
+one with more nodes than the model, which is all the orientations hold (a
+map's index and animation; the apply wrote past them). In the released
+maps every unit and vehicle animation has its model's node count */
+struct animation *unit_animation_get_fitting(
+	struct animation_graph *animation_graph,
+	short animation_index,
+	short model_node_count)
+{
+	static boolean reported = FALSE;
+	struct animation *animation = NULL;
+
+	if (VALID_INDEX(animation_index, animation_graph->animations.count))
+	{
+		animation = TAG_BLOCK_GET_ELEMENT(
+			&animation_graph->animations,
+			animation_index,
+			struct animation);
+
+		if (animation->node_count>model_node_count)
+		{
+			if (!reported)
+			{
+				reported = TRUE;
+				error(_error_silent, "### ERROR animation '%s' has %d nodes, more than its model's %d; it is skipped",
+					animation->name, animation->node_count, model_node_count);
+			}
+			animation = NULL;
+		}
+	}
+
+	return animation;
+}
+
+/* the animation's pose at a point (0 to 1) through its cycle */
+static void unit_animation_pose_at_phase(
+	struct model *model,
+	struct animation *animation,
+	real phase,
+	struct real_orientation *orientations)
+{
+	long frame_index = (long)(phase * animation->frame_count);
+
+	frame_index = PIN(frame_index, 0, animation->frame_count - 1);
+	animation_get_node_orientations(model, animation, (short)frame_index, orientations);
+
+	return;
+}
+
+static void unit_node_orientations_blend(
+	short node_count,
+	struct real_orientation const *from,
+	struct real_orientation const *to,
+	real fraction,
+	struct real_orientation *result)
+{
+	short node_index;
+
+	for (node_index = 0; node_index < node_count; node_index++)
+	{
+		quaternions_interpolate_and_normalize(
+			&from[node_index].rotation,
+			&to[node_index].rotation,
+			fraction,
+			&result[node_index].rotation);
+		points_interpolate(
+			&from[node_index].translation,
+			&to[node_index].translation,
+			fraction,
+			&result[node_index].translation);
+		scalars_interpolate(
+			from[node_index].scale,
+			to[node_index].scale,
+			fraction,
+			&result[node_index].scale);
+	}
+
+	return;
+}
+
+static void unit_grenade_throw_keep_legs_moving(
+	long unit_index,
+	struct real_orientation *node_orientations)
+{
+	struct unit_datum *unit = unit_get(unit_index);
+	struct unit_definition *unit_definition = unit_definition_get(unit->definition_index);
+	struct animation_graph *animation_graph;
+	struct animation_graph_unit_seat *unit_seat;
+	struct animation_graph_weapon_class *weapon_class;
+	struct model *model;
+	struct animation *idle_animation;
+	struct animation *air_animation;
+	struct animation *front_animation;
+	struct animation *forward_animation;
+	struct animation *side_animation;
+	struct real_orientation rest_orientations[MAXIMUM_NODES_PER_MODEL];
+	struct real_orientation forward_orientations[MAXIMUM_NODES_PER_MODEL];
+	struct real_orientation side_orientations[MAXIMUM_NODES_PER_MODEL];
+	struct real_orientation move_orientations[MAXIMUM_NODES_PER_MODEL];
+	struct real_orientation legs_orientations[MAXIMUM_NODES_PER_MODEL];
+	struct real_orientation air_orientations[MAXIMUM_NODES_PER_MODEL];
+	struct real_orientation *legs;
+	real_vector3d left;
+	real forward_speed;
+	real left_speed;
+	real target_weight;
+	real move_weight;
+	real air_weight;
+	real side_weight;
+	real phase;
+	long now;
+	boolean airborne;
+	boolean crouching;
+	boolean moving;
+	short spine;
+	short node_index;
+
+	if (unit->unit.animation.state != _unit_state_throw_grenade ||
+		unit->unit.animation.seat_index == NONE ||
+		!unit_animation_enhanced(unit_index))
+	{
+		return;
+	}
+
+	animation_graph = animation_graph_definition_get(unit_definition->object.animation_graph.index);
+	unit_seat = TAG_BLOCK_GET_ELEMENT(&animation_graph->unit_seats, unit->unit.animation.seat_index, struct animation_graph_unit_seat);
+	weapon_class = TAG_BLOCK_GET_ELEMENT(&unit_seat->weapon_classes, unit->unit.animation.weapon_index, struct animation_graph_weapon_class);
+	model = model_definition_get(unit_definition->object.model.index);
+	now = game_time_get();
+	if (model->nodes.count > MAXIMUM_NODES_PER_MODEL)
+	{
+		return;
+	}
+
+	/* the throw keeps the spine and everything above it */
+	spine = model_find_node(unit_definition->object.model.index, "bip01 spine");
+	if (spine == NONE)
+	{
+		return;
+	}
+
+	/* port: a rider throwing from a vehicle's seat stays seated: the lower
+	body keeps the seat's own idle pose, as the throw is the standing one */
+	if (unit->object.parent_object_index != NONE)
+	{
+		struct animation *seated_animation = unit_weapon_class_base_animation(
+			model,
+			animation_graph,
+			weapon_class,
+			_unit_weapon_class_animation_idle);
+
+		if (seated_animation)
+		{
+			unit_animation_pose_at_phase(
+				model,
+				seated_animation,
+				(real)(now % seated_animation->frame_count) / (real)seated_animation->frame_count,
+				rest_orientations);
+			for (node_index = 0; node_index < model->nodes.count; node_index++)
+			{
+				if (!unit_node_is_at_or_below(model, node_index, spine))
+				{
+					node_orientations[node_index] = rest_orientations[node_index];
+				}
+			}
+		}
+
+		return;
+	}
+
+	/* in the air the legs float as in a jump, and do not run; both ease in
+	and out over a few ticks */
+	airborne = unit_flying_through_air(unit_index);
+	air_weight = unit_grenade_throw_ease(
+		grenade_throw_air_weights,
+		grenade_throw_air_weight_times,
+		unit_index,
+		airborne ? 1.f : 0.f);
+
+	/* the unit's real speed along its facing and to its left, per second */
+	cross_product3d(&unit->object.up, &unit->object.forward, &left);
+	forward_speed = dot_product3d(&unit->object.translational_velocity, &unit->object.forward) * TICKS_PER_SECOND;
+	left_speed = dot_product3d(&unit->object.translational_velocity, &left) * TICKS_PER_SECOND;
+	target_weight = square_root(forward_speed * forward_speed + left_speed * left_speed) / GRENADE_THROW_FULL_MOVE_SPEED;
+	target_weight = airborne ? 0.f : PIN(target_weight, 0.f, 1.f);
+	move_weight = unit_grenade_throw_ease(
+		grenade_throw_leg_weights,
+		grenade_throw_leg_weight_times,
+		unit_index,
+		target_weight);
+
+	/* the rest pose: the crouching idle when crouched, else the throw's own legs */
+	crouching = unit->unit.animation.base_seat_index == _unit_base_seat_crouch;
+	idle_animation = crouching ?
+		unit_weapon_class_base_animation(model, animation_graph, weapon_class, _unit_weapon_class_animation_idle) :
+		NULL;
+	if (!idle_animation && move_weight <= 0.f && air_weight <= 0.f)
+	{
+		return;
+	}
+	if (idle_animation)
+	{
+		unit_animation_pose_at_phase(
+			model,
+			idle_animation,
+			(real)(now % idle_animation->frame_count) / (real)idle_animation->frame_count,
+			rest_orientations);
+	}
+	else
+	{
+		for (node_index = 0; node_index < model->nodes.count; node_index++)
+		{
+			rest_orientations[node_index] = node_orientations[node_index];
+		}
+	}
+
+	/* the movement pose: the forward or back walk blended with the left or
+	right walk by how much of the movement is sideways, all at one point in
+	the walk cycle so the feet stay in step */
+	front_animation = unit_weapon_class_base_animation(model, animation_graph, weapon_class, _unit_weapon_class_animation_moving_front);
+	phase = front_animation ?
+		(real)(now % front_animation->frame_count) / (real)front_animation->frame_count :
+		0.f;
+	forward_animation = unit_weapon_class_base_animation(
+		model,
+		animation_graph,
+		weapon_class,
+		forward_speed >= 0.f ? _unit_weapon_class_animation_moving_front : _unit_weapon_class_animation_moving_back);
+	side_animation = unit_weapon_class_base_animation(
+		model,
+		animation_graph,
+		weapon_class,
+		left_speed > 0.f ? _unit_weapon_class_animation_moving_left : _unit_weapon_class_animation_moving_right);
+	side_weight = (real)(fabs(forward_speed) + fabs(left_speed));
+	side_weight = side_weight > 0.f ? (real)fabs(left_speed) / side_weight : 0.f;
+
+	moving = FALSE;
+	if (move_weight > 0.f)
+	{
+		if (forward_animation && side_animation)
+		{
+			unit_animation_pose_at_phase(model, forward_animation, phase, forward_orientations);
+			unit_animation_pose_at_phase(model, side_animation, phase, side_orientations);
+			unit_node_orientations_blend(model->nodes.count, forward_orientations, side_orientations, side_weight, move_orientations);
+			moving = TRUE;
+		}
+		else if (forward_animation)
+		{
+			unit_animation_pose_at_phase(model, forward_animation, phase, move_orientations);
+			moving = TRUE;
+		}
+		else if (side_animation)
+		{
+			unit_animation_pose_at_phase(model, side_animation, phase, move_orientations);
+			moving = TRUE;
+		}
+	}
+
+	legs = rest_orientations;
+	if (moving)
+	{
+		unit_node_orientations_blend(model->nodes.count, rest_orientations, move_orientations, move_weight, legs_orientations);
+		legs = legs_orientations;
+	}
+
+	/* the floating legs of a jump over all of it */
+	air_animation = air_weight > 0.f ?
+		unit_weapon_class_base_animation(model, animation_graph, weapon_class, _unit_weapon_class_animation_airborne) :
+		NULL;
+	if (air_animation)
+	{
+		unit_animation_pose_at_phase(
+			model,
+			air_animation,
+			(real)(now % air_animation->frame_count) / (real)air_animation->frame_count,
+			air_orientations);
+		unit_node_orientations_blend(model->nodes.count, legs, air_orientations, air_weight, forward_orientations);
+		legs = forward_orientations;
+	}
+
+	for (node_index = 0; node_index < model->nodes.count; node_index++)
+	{
+		if (!unit_node_is_at_or_below(model, node_index, spine))
+		{
+			node_orientations[node_index] = legs[node_index];
+		}
+	}
+
+	return;
+}
+
 void unit_preprocess_node_orientations(
 	long unit_index,
 	struct real_orientation *node_orientations)
@@ -10553,41 +11459,44 @@ void unit_preprocess_node_orientations(
 	struct animation_graph_unit_seat *unit_seat;
 	real_matrix4x3 matrix;
 	struct unit_definition *unit_definition;
+	struct animation *animation;
+	short model_node_count;
 
 	unit = unit_get(unit_index);
 	unit_definition = unit_definition_get(unit->definition_index);
 	animation_graph = animation_graph_definition_get(
 		unit_definition->object.animation_graph.index);
+	/* port: every animation below is one the graph has and that fits the
+	model (unit_animation_get_fitting) */
+	model_node_count = unit_animation_model_node_count(unit_index);
+	unit_grenade_throw_keep_legs_moving(unit_index, node_orientations);
 
-	if (unit->unit.animation.action_animation.index != NONE)
+	if (unit->unit.animation.action_animation.index != NONE &&
+		(animation = unit_animation_get_fitting(animation_graph,
+			unit->unit.animation.action_animation.index, model_node_count)) != NULL)
 	{
 		replacement_animation_apply(
-			TAG_BLOCK_GET_ELEMENT(
-				&animation_graph->animations,
-				unit->unit.animation.action_animation.index,
-				struct animation),
+			animation,
 			unit->unit.animation.action_animation.frame_index,
 			node_orientations);
 	}
 
-	if (unit->unit.animation.overlay_action_animation.index != NONE)
+	if (unit->unit.animation.overlay_action_animation.index != NONE &&
+		(animation = unit_animation_get_fitting(animation_graph,
+			unit->unit.animation.overlay_action_animation.index, model_node_count)) != NULL)
 	{
 		overlay_animation_apply(
-			TAG_BLOCK_GET_ELEMENT(
-				&animation_graph->animations,
-				unit->unit.animation.overlay_action_animation.index,
-				struct animation),
+			animation,
 			unit->unit.animation.overlay_action_animation.frame_index,
 			node_orientations);
 	}
 
-	if (unit->unit.animation.soft_ping_animation.index != NONE)
+	if (unit->unit.animation.soft_ping_animation.index != NONE &&
+		(animation = unit_animation_get_fitting(animation_graph,
+			unit->unit.animation.soft_ping_animation.index, model_node_count)) != NULL)
 	{
 		overlay_animation_apply(
-			TAG_BLOCK_GET_ELEMENT(
-				&animation_graph->animations,
-				unit->unit.animation.soft_ping_animation.index,
-				struct animation),
+			animation,
 			unit->unit.animation.soft_ping_animation.frame_index,
 			node_orientations);
 	}
@@ -10623,13 +11532,10 @@ void unit_preprocess_node_orientations(
 				animation_index = unit->unit.override_emotion_animation_index;
 			}
 
-			if (animation_index != NONE)
+			if (animation_index != NONE &&
+				(animation = unit_animation_get_fitting(animation_graph,
+					animation_index, model_node_count)) != NULL)
 			{
-				struct animation *animation = TAG_BLOCK_GET_ELEMENT(
-					&animation_graph->animations,
-					animation_index,
-					struct animation);
-
 				if (unit->unit.animation.emotion_index >= 0 &&
 					unit->unit.animation.emotion_index < animation->frame_count)
 				{
@@ -10649,13 +11555,10 @@ void unit_preprocess_node_orientations(
 			animation_index = animation_graph_animation_index_get(
 				&unit_seat->animations)[_unit_seat_animation_mouth_aperture].animation_index;
 
-			if (animation_index != NONE)
+			if (animation_index != NONE &&
+				(animation = unit_animation_get_fitting(animation_graph,
+					animation_index, model_node_count)) != NULL)
 			{
-				struct animation *animation = TAG_BLOCK_GET_ELEMENT(
-					&animation_graph->animations,
-					animation_index,
-					struct animation);
-
 				overlay_animation_apply_scaled(
 					animation,
 					0,
@@ -10686,13 +11589,10 @@ void unit_preprocess_node_orientations(
 							_unit_seat_animation_acceleration_front_back +
 							acceleration_index].animation_index;
 
-					if (animation_index != NONE)
+					if (animation_index != NONE &&
+						(animation = unit_animation_get_fitting(animation_graph,
+							animation_index, model_node_count)) != NULL)
 					{
-						struct animation *animation = TAG_BLOCK_GET_ELEMENT(
-							&animation_graph->animations,
-							animation_index,
-							struct animation);
-
 						overlay_animation_apply_continuous(
 							animation,
 							(animation->frame_count - 1) *
@@ -10715,7 +11615,9 @@ void unit_preprocess_node_orientations(
 
 			relative_aiming_angles = *global_zero_angles2d;
 
-			if (unit->unit.animation.aiming_screen_index != NONE)
+			if (unit->unit.animation.aiming_screen_index != NONE &&
+				(animation = unit_animation_get_fitting(animation_graph,
+					unit->unit.animation.aiming_screen_index, model_node_count)) != NULL)
 			{
 				real_vector3d relative_aiming_vector;
 				struct animation_aiming_screen_bounds const *aiming_bounds =
@@ -10773,10 +11675,7 @@ void unit_preprocess_node_orientations(
 					aiming_bounds->positive_pitch_frame_count *
 					aiming_bounds->positive_pitch_delta;
 				aiming_screen_apply(
-					TAG_BLOCK_GET_ELEMENT(
-						&animation_graph->animations,
-						unit->unit.animation.aiming_screen_index,
-						struct animation),
+					animation,
 					aiming_bounds,
 					relative_aiming_angles.yaw,
 					relative_aiming_angles.pitch,
@@ -10789,7 +11688,9 @@ void unit_preprocess_node_orientations(
 				struct animation_aiming_screen_bounds const *looking_bounds =
 					&unit_seat->looking_screen_bounds;
 
-				if (unit->unit.animation.looking_screen_index != NONE)
+				if (unit->unit.animation.looking_screen_index != NONE &&
+					(animation = unit_animation_get_fitting(animation_graph,
+						unit->unit.animation.looking_screen_index, model_node_count)) != NULL)
 				{
 					real_vector3d relative_looking_vector;
 					real_euler_angles2d relative_looking_angles;
@@ -10843,10 +11744,7 @@ void unit_preprocess_node_orientations(
 						looking_bounds->positive_pitch_frame_count *
 						looking_bounds->positive_pitch_delta;
 					aiming_screen_apply(
-						TAG_BLOCK_GET_ELEMENT(
-							&animation_graph->animations,
-							unit->unit.animation.looking_screen_index,
-							struct animation),
+						animation,
 						looking_bounds,
 						relative_looking_angles.yaw,
 						relative_looking_angles.pitch,
@@ -10893,7 +11791,8 @@ void unit_postprocess_node_matrices(
 				struct animation_graph_weapon_class);
 
 		if (unit->object.parent_object_index!=NONE &&
-			unit_animation_vehicle_ik(&unit->unit.animation))
+			unit_animation_vehicle_ik(&unit->unit.animation) &&
+			!unit_grenade_throw_releases_vehicle_ik(unit_index))
 		{
 			ik_points = &unit_seat->ik_points;
 			ik_point_index = 0;
@@ -10968,6 +11867,9 @@ void unit_control(
 	struct unit_control_data const *control_data)
 {
 	struct unit_datum *unit = unit_get(unit_index);
+
+	if (unit->unit.player_index == NONE)
+		network_actors_note_control(unit_index, control_data);
 
 	match_assert(
 		"c:\\halo\\SOURCE\\units\\units.c",
@@ -11285,9 +12187,15 @@ static void unit_drop_item(
 	
 	if (item->object.parent_object_index==NONE)
 	{
-		object_reconnect_to_map(item_index, 0);
-		object_set_visibility(item_index, 1);
-		object_attach_to_marker(unit_index, "left hand", item_index, "");
+		/* port: not one in the world already, though the unit holds it (a
+		script moved it: hs_object_orient lets go of it first, with
+		unit_release_item), which would be connected to the map twice */
+		if (!TEST_FLAG(item->object.flags, _object_connected_to_map_bit))
+		{
+			object_reconnect_to_map(item_index, 0);
+			object_set_visibility(item_index, 1);
+			object_attach_to_marker(unit_index, "left hand", item_index, "");
+		}
 	}
 	else
 	{
@@ -11705,4 +12613,94 @@ static boolean unit_integrated_night_vision_is_active(
 
 /* Verify the public seat-helper declaration without perturbing this legacy
  * translation unit's authenticated function-declaration order. */
-#include "vehicle_scripting.h"
+/* the distributed netcode (port/linux/game/network_objects.c): a client's
+unit carries the host's weapons, the same objects, moved in and out as the
+host's unit had them (the host has applied the game's rules) */
+
+void unit_network_forget_weapon(long unit_index, short slot);
+
+/* the weapon into the slot, as unit_add_weapon_to_inventory puts one in */
+void unit_network_add_weapon(
+	long unit_index,
+	long weapon_index,
+	short slot)
+{
+	struct unit_datum *unit = unit_get(unit_index);
+	struct weapon_datum *weapon = weapon_get(weapon_index);
+
+	if (weapon->object.parent_object_index != NONE)
+		object_detach(weapon_index);
+	if (TEST_FLAG(weapon->object.flags, _object_connected_to_map_bit))
+		object_disconnect_from_map(weapon_index);
+	object_set_visibility(weapon_index, FALSE);
+	item_in_unit_inventory(weapon_index, unit_index);
+	unit->unit.weapon_object_indices[slot] = weapon_index;
+	unit->unit.weapon_last_used_at_game_time[slot] = 0;
+}
+
+/* the slot's weapon out onto the ground, as unit_drop_current_weapon drops
+one (where the host has it the objects' states say) */
+void unit_network_drop_weapon(
+	long unit_index,
+	short slot)
+{
+	struct unit_datum *unit = unit_get(unit_index);
+	long weapon_index = unit->unit.weapon_object_indices[slot];
+
+	if (weapon_index == NONE)
+		return;
+	if (unit->unit.current_weapon_index == slot)
+		first_person_weapon_message_from_unit(unit_index, 13);
+	unit_drop_item(unit_index, weapon_index);
+	unit_network_forget_weapon(unit_index, slot);
+}
+
+/* the slot emptied, its weapon about to be deleted */
+void unit_network_forget_weapon(
+	long unit_index,
+	short slot)
+{
+	struct unit_datum *unit = unit_get(unit_index);
+
+	unit->unit.weapon_object_indices[slot] = NONE;
+	if (unit->unit.current_weapon_index == slot)
+		unit->unit.current_weapon_index = NONE;
+	if (unit->unit.desired_weapon_index == slot || unit->unit.desired_weapon_index == NONE)
+		unit->unit.desired_weapon_index = unit_weapon_next_index(unit_index, NONE, 0);
+}
+
+/* port: a weapon a unit holds, let go of before a script moves it
+(object_teleport; a Custom Edition map's scripts send a carried ball back
+to its spawn when it goes out of bounds): dropped, as a carrier drops it,
+so that no unit holds a weapon that is out in the world (its next drop
+reconnected it to the map twice, which halted debug builds). FALSE when
+no unit holds it */
+boolean unit_release_item(
+	long item_index)
+{
+	struct object_iterator iterator;
+	struct unit_datum *unit;
+	struct item_datum *item = item_try_and_get(item_index);
+
+	if (!item || item->object.type != _object_type_weapon ||
+		!TEST_FLAG(item->item.flags, _item_attached_to_unit_bit))
+	{
+		return FALSE;
+	}
+	object_iterator_new(&iterator, _object_mask_unit, 0);
+	while ((unit = object_iterator_next(&iterator))!=NULL)
+	{
+		short slot;
+
+		for (slot = 0; slot < MAXIMUM_WEAPONS_PER_UNIT; slot++)
+		{
+			if (unit->unit.weapon_object_indices[slot] == item_index)
+			{
+				unit_network_drop_weapon(iterator.index, slot);
+				return TRUE;
+			}
+		}
+	}
+
+	return FALSE;
+}

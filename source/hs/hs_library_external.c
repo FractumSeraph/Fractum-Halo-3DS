@@ -19,7 +19,7 @@ symbols in this file:
 000B8BE0 00a0:
 	_hs_objects_can_see_flag (0000)
 000B8C80 00b0:
-	_code_000b8c80 (0000)
+	_object_is_or_contains_player (0000)
 000B8D30 0050:
 	_hs_object_create (0000)
 000B8D80 0040:
@@ -29,7 +29,7 @@ symbols in this file:
 000B8DF0 00c0:
 	_hs_object_destroy_all (0000)
 000B8EB0 0080:
-	_code_000b8eb0 (0000)
+	_hs_object_iterate_names_containing (0000)
 000B8F30 0020:
 	_hs_object_create_containing (0000)
 000B8F50 0020:
@@ -53,7 +53,7 @@ symbols in this file:
 000B92D0 0060:
 	_hs_damage_object (0000)
 000B9330 0080:
-	_code_000b9330 (0000)
+	_hs_sound_get_gain_reference (0000)
 000B93B0 0020:
 	_hs_sound_get_gain (0000)
 000B93D0 0020:
@@ -67,7 +67,7 @@ symbols in this file:
 000B94E0 0020:
 	_hs_object_create_anew_containing (0000)
 000B9500 0290:
-	_code_000b9500 (0000)
+	_hs_object_orient (0000)
 000B9790 0020:
 	_hs_object_teleport (0000)
 000B97B0 0020:
@@ -90,19 +90,23 @@ symbols in this file:
 
 #include "cseries.h"
 #include "cseries/errors.h"
+#include "interface/terminal.h"
 #include "main/console.h"
 #include "memory/data.h"
 #include "models/model_definitions.h"
 #include "objects/damage.h"
 #include "objects/objects.h"
 #include "effects/effects.h"
-#include "game/player_control.h"
 #include "game/players.h"
 #include "items/items.h"
 #include "scenario/scenario.h"
 #include "scenario/scenario_definitions.h"
 #include "sound/sound_definitions.h"
 #include "units/units.h"
+#include "hs/hs.h"
+#include "object_lists.h"
+#include "network_coop.h" /* port: port/linux/game/network_coop.c */
+#include "coop_scripts.h" /* port: port/linux/game/coop_scripts.c */
 
 /* ---------- constants */
 
@@ -116,15 +120,6 @@ symbols in this file:
 	((struct item_datum *)(object))
 
 /* ---------- structures */
-
-struct scenario_cutscene_flag
-{
-	long runtime_unused;
-	char name[TAG_STRING_LENGTH];
-	real_point3d position;
-	real_euler_angles2d facing;
-	byte unused[0x24];
-};
 
 struct hs_sound_definition
 {
@@ -147,19 +142,6 @@ struct hs_looping_sound_definition
 
 /* ---------- prototypes */
 
-long object_index_from_name_index(
-	short name_index);
-long object_list_new(
-	void);
-void object_list_add(
-	long object_list_index,
-	long object_index);
-long object_list_get_first(
-	long object_list_index,
-	long *reference_index);
-long object_list_get_next(
-	long object_list_index,
-	long *reference_index);
 boolean hs_trigger_volume_test_objects(
 	short trigger_volume_index,
 	long object_list_index,
@@ -170,19 +152,10 @@ void hs_object_create_anew(
 	short object_name_index);
 void hs_object_destroy(
 	long object_index);
-void terminal_printf(
-	union real_argb_color const *color,
-	char const *format,
-	...);
-void area_of_effect_cause_damage(
-	struct damage_data *damage,
-	long unlucky_object_index);
-boolean player_teleport(
-	long player_index,
-	long source_unit_index,
-	real_point3d const *position);
-void unit_exit_seat_end(
-	long unit_index);
+boolean hs_unit_can_see_flag(
+	long unit_index,
+	short cutscene_flag_index,
+	real degrees);
 
 /* ---------- globals */
 
@@ -199,7 +172,11 @@ boolean hs_not(
 void hs_print(
 	char const *message)
 {
-	terminal_printf(global_real_argb_green, message);
+	/* (port: a scenario script's print is the game's chatter, which the
+	Xbox never showed: on screen as config.toml's game.console_log says;
+	print typed at the console, always) */
+	if (terminal_shows(terminal_command_running ? _terminal_message_serious : _terminal_message_chatter))
+		terminal_printf(global_real_argb_green, "%s", message);
 
 	return;
 }
@@ -230,6 +207,7 @@ boolean hs_trigger_volume_test_objects(
 	long object_list_index,
 	boolean all)
 {
+	static boolean reported = FALSE;
 	long reference_index;
 	long object_index;
 	boolean result;
@@ -259,7 +237,17 @@ boolean hs_trigger_volume_test_objects(
 			&reference_index);
 	}
 
-	BIT_VECTOR_SET_FLAG(hs_debug_data, trigger_volume_index, result);
+	/* port: only the volumes hs_debug_data has bits for (a script's index,
+	map data; released maps have at most 158 volumes) */
+	if (VALID_INDEX(trigger_volume_index, MAXIMUM_TRIGGER_VOLUMES_PER_SCENARIO))
+	{
+		BIT_VECTOR_SET_FLAG(hs_debug_data, trigger_volume_index, result);
+	}
+	else if (!reported)
+	{
+		reported = TRUE;
+		error(_error_silent, "### ERROR a script tests trigger volume #%d", trigger_volume_index);
+	}
 
 	return result;
 }
@@ -290,6 +278,32 @@ boolean hs_unit_can_see_object(
 	return result;
 }
 
+/* port: in network co-op a test of the players (the scripts' player0)
+passes for any player, as volume_test_objects_all does (coop_scripts.c), so
+the a10 tutorial's panels light for whoever looks at them: whether any
+player's unit sees the object, or with object_index NONE the cutscene flag */
+static boolean hs_any_player_can_see(
+	long object_index,
+	short cutscene_flag_index,
+	real degrees)
+{
+	struct data_iterator iterator;
+	struct player_datum *player;
+
+	data_iterator_new(&iterator, player_data);
+	while ((player = data_iterator_next(&iterator)) != NULL)
+	{
+		if (player->unit_index != NONE &&
+			(object_index != NONE ? hs_unit_can_see_object(player->unit_index, object_index, degrees) :
+				hs_unit_can_see_flag(player->unit_index, cutscene_flag_index, degrees)))
+		{
+			return TRUE;
+		}
+	}
+
+	return FALSE;
+}
+
 boolean hs_objects_can_see_object(
 	long object_list_index,
 	long object_index,
@@ -299,6 +313,8 @@ boolean hs_objects_can_see_object(
 	long unit_index;
 	boolean result;
 
+	if (object_index != NONE && coop_scripts_any_player_will_do(object_list_index))
+		return hs_any_player_can_see(object_index, NONE, degrees);
 	result = FALSE;
 	unit_index = object_list_get_first(object_list_index, &reference_index);
 	while (unit_index != NONE)
@@ -348,6 +364,8 @@ boolean hs_objects_can_see_flag(
 	long reference_index;
 	long unit_index;
 
+	if (coop_scripts_any_player_will_do(object_list_index))
+		return hs_any_player_can_see(NONE, cutscene_flag_index, degrees);
 	unit_index = object_list_get_first(object_list_index, &reference_index);
 	while (unit_index != NONE)
 	{
@@ -365,7 +383,7 @@ boolean hs_objects_can_see_flag(
 	return FALSE;
 }
 
-boolean code_000b8c80(
+static boolean object_is_or_contains_player(
 	long object_index)
 {
 	struct object_datum *object;
@@ -383,7 +401,7 @@ boolean code_000b8c80(
 			struct object_datum *child_object;
 
 			child_object = object_get(child_object_index);
-			if (code_000b8c80(child_object_index))
+			if (object_is_or_contains_player(child_object_index))
 			{
 				result = TRUE;
 				break;
@@ -458,7 +476,7 @@ void hs_object_destroy(
 {
 	if (object_index != NONE)
 	{
-		if (!code_000b8c80(object_index))
+		if (!object_is_or_contains_player(object_index))
 		{
 			object_delete(object_index);
 			return;
@@ -518,7 +536,7 @@ void hs_object_destroy_all(
 			object = object_iterator_next(&iterator))
 		{
 			if (object->object.parent_object_index == NONE &&
-				!code_000b8c80(iterator.index))
+				!object_is_or_contains_player(iterator.index))
 			{
 				object_delete(iterator.index);
 			}
@@ -528,7 +546,7 @@ void hs_object_destroy_all(
 	return;
 }
 
-static void code_000b8eb0(
+static void hs_object_iterate_names_containing(
 	char const *name_string,
 	void (*iterator)(short object_name_index))
 {
@@ -562,7 +580,7 @@ static void code_000b8eb0(
 void hs_object_create_containing(
 	char const *name_string)
 {
-	code_000b8eb0(name_string, hs_object_create);
+	hs_object_iterate_names_containing(name_string, hs_object_create);
 
 	return;
 }
@@ -570,7 +588,7 @@ void hs_object_create_containing(
 void hs_object_destroy_containing(
 	char const *name_string)
 {
-	code_000b8eb0(name_string, hs_object_destroy_by_name);
+	hs_object_iterate_names_containing(name_string, hs_object_destroy_by_name);
 
 	return;
 }
@@ -615,7 +633,7 @@ void hs_object_set_shield(
 void hs_object_set_permutation(
 	long object_index,
 	char const *region_name,
-	char *permutation_name)
+	char const *permutation_name)
 {
 	if (object_index != NONE)
 	{
@@ -703,6 +721,8 @@ void hs_effect_new(
 	struct scenario_cutscene_flag *cutscene_flag;
 	real_vector3d forward;
 
+	/* port: and on network co-op's clients (port/linux/game/network_coop.c) */
+	network_coop_note_effect(effect_definition_index, cutscene_flag_index);
 	cutscene_flag = TAG_BLOCK_GET_ELEMENT(
 		&global_scenario_get()->cutscene_flags,
 		cutscene_flag_index,
@@ -735,6 +755,9 @@ void hs_effect_new_from_object_marker(
 		if (object_index != NONE)
 		{
 			struct object_marker marker;
+
+			/* port: and on network co-op's clients (port/linux/game/network_coop.c) */
+			network_coop_note_object_effect(effect_definition_index, object_index, marker_name);
 
 			if (object_get_marker_by_name(
 				object_index,
@@ -805,7 +828,7 @@ void hs_damage_object(
 	return;
 }
 
-static real *code_000b9330(
+static real *hs_sound_get_gain_reference(
 	char const *tag_name)
 {
 	long sound_index;
@@ -843,7 +866,7 @@ real hs_sound_get_gain(
 {
 	real *gain_reference;
 
-	gain_reference = code_000b9330(tag_name);
+	gain_reference = hs_sound_get_gain_reference(tag_name);
 	if (gain_reference)
 		return *gain_reference;
 
@@ -856,7 +879,7 @@ void hs_sound_set_gain(
 {
 	real *gain_reference;
 
-	gain_reference = code_000b9330(tag_name);
+	gain_reference = hs_sound_get_gain_reference(tag_name);
 	if (gain_reference)
 		*gain_reference = gain;
 
@@ -867,10 +890,17 @@ boolean hs_trigger_volume_test_objects_all(
 	short trigger_volume_index,
 	long object_list_index)
 {
-	return hs_trigger_volume_test_objects(
-		trigger_volume_index,
-		object_list_index,
-		TRUE);
+	boolean inside;
+
+	if (!coop_scripts_any_player_will_do(object_list_index))
+		return hs_trigger_volume_test_objects(trigger_volume_index, object_list_index, TRUE);
+	/* port: in network co-op, waiting for every player means waiting for
+	any one of them, and the rest are brought to them (coop_scripts.c) */
+	inside = hs_trigger_volume_test_objects(trigger_volume_index, object_list_index, FALSE);
+	if (inside && hs_runtime_waiting_on_call())
+		coop_scripts_gather_in_volume(trigger_volume_index, object_list_index);
+
+	return inside;
 }
 
 boolean hs_trigger_volume_test_objects_any(
@@ -903,12 +933,12 @@ void hs_object_create_anew(
 void hs_object_create_anew_containing(
 	char const *name_string)
 {
-	code_000b8eb0(name_string, hs_object_create_anew);
+	hs_object_iterate_names_containing(name_string, hs_object_create_anew);
 
 	return;
 }
 
-static void code_000b9500(
+static void hs_object_orient(
 	long object_index,
 	short cutscene_flag_index,
 	boolean set_position,
@@ -934,6 +964,10 @@ static void code_000b9500(
 			0x1CC,
 			&flag->position);
 
+		/* port: a weapon a unit holds is dropped first, so the unit
+		holds none that is out in the world (units.c, unit_release_item) */
+		if (set_position && unit_release_item(object_index))
+			object = object_get(object_index);
 		if (set_position && object->object.parent_object_index != NONE)
 		{
 			unit = unit_try_and_get(object_index);
@@ -1008,7 +1042,18 @@ void hs_object_teleport(
 	long object_index,
 	short cutscene_flag_index)
 {
-	code_000b9500(object_index, cutscene_flag_index, TRUE, TRUE);
+	/* port: followers go to the flag, not to wherever player0 was left when
+	that teleport did not fit */
+	if (object_index != NONE)
+	{
+		struct scenario_cutscene_flag *flag = TAG_BLOCK_GET_ELEMENT(
+			&global_scenario_get()->cutscene_flags,
+			cutscene_flag_index,
+			struct scenario_cutscene_flag);
+
+		hs_object_orient(object_index, cutscene_flag_index, TRUE, TRUE);
+		coop_scripts_teleport_followers(object_index, &flag->position);
+	}
 
 	return;
 }
@@ -1017,7 +1062,7 @@ void hs_object_set_facing(
 	long object_index,
 	short cutscene_flag_index)
 {
-	code_000b9500(object_index, cutscene_flag_index, FALSE, TRUE);
+	hs_object_orient(object_index, cutscene_flag_index, FALSE, TRUE);
 
 	return;
 }
@@ -1027,6 +1072,20 @@ void hs_teleport_players_not_in_trigger_volume(
 	short cutscene_flag_index)
 {
 	long player_index;
+	/* port: in network co-op the host spreads players around the flag.
+	A client does not move them; the host's copies arrive with the units. */
+	long arrived[HALO_PORT_MAXIMUM_NETWORK_PLAYERS];
+	short arrived_count = 0;
+	boolean coop = network_coop_active();
+	struct scenario_cutscene_flag *flag = NULL;
+
+	if (coop && game_connection() == _game_connection_network_server)
+	{
+		flag = TAG_BLOCK_GET_ELEMENT(
+			&global_scenario_get()->cutscene_flags,
+			cutscene_flag_index,
+			struct scenario_cutscene_flag);
+	}
 
 	for (player_index = data_next_index(player_data, NONE);
 		player_index != NONE;
@@ -1035,17 +1094,35 @@ void hs_teleport_players_not_in_trigger_volume(
 		struct player_datum *player;
 
 		player = player_get(player_index);
-		if (player->unit_index != NONE &&
-			!scenario_trigger_volume_test_object(
+		if (player->unit_index == NONE ||
+			scenario_trigger_volume_test_object(
 				trigger_volume_index,
 				player->unit_index))
 		{
-			code_000b9500(
-				player->unit_index,
-				cutscene_flag_index,
-				TRUE,
-				TRUE);
+			continue;
 		}
+		if (coop && !flag)
+			continue;
+		if (flag)
+		{
+			boolean here = FALSE;
+			real_point3d origin;
+
+			if (arrived_count == 0)
+				hs_object_orient(player->unit_index, cutscene_flag_index, TRUE, TRUE);
+			here = coop_scripts_unit_near(player->unit_index, &flag->position) &&
+				!player_position_switches_bsp(object_get_origin(player->unit_index, &origin));
+			if (!here)
+				here = coop_scripts_arrive_at(player_index, &flag->position, arrived, arrived_count);
+			if (here && arrived_count < NUMBEROF(arrived))
+				arrived[arrived_count++] = player->unit_index;
+			continue;
+		}
+		hs_object_orient(
+			player->unit_index,
+			cutscene_flag_index,
+			TRUE,
+			TRUE);
 	}
 
 	return;

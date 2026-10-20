@@ -79,6 +79,7 @@ symbols in this file:
 #include "effects/particle_system_definitions.h"
 
 #include "bitmaps/bitmap_group.h"
+#include "cseries/errors.h"
 #include "math/real_math.h"
 #include "memory/data.h"
 #include "objects/object_lights.h"
@@ -88,14 +89,16 @@ symbols in this file:
 #include "render/render_sprite.h"
 #include "saved games/game_state.h"
 #include "scenario/scenario.h"
+#include "tag_files/tag_files.h"
 
 /* ---------- constants */
 
 enum
 {
-	MAXIMUM_PARTICLE_SYSTEMS = 64,
+	/* the native builds' larger particle system pools (halo_port_capacity.h) */
+	MAXIMUM_PARTICLE_SYSTEMS = HALO_PORT_MAXIMUM_PARTICLE_SYSTEMS,
 	PARTICLE_SYSTEM_DATUM_SIZE = 0x158,
-	MAXIMUM_SYSTEM_PARTICLES = 512,
+	MAXIMUM_SYSTEM_PARTICLES = HALO_PORT_MAXIMUM_SYSTEM_PARTICLES,
 	SYSTEM_PARTICLE_DATUM_SIZE = 0x80,
 };
 
@@ -125,18 +128,18 @@ static void particle_system_delete(
 	long system_index);
 static boolean particle_system_initialize(
 	long system_index);
-void particle_system_update_default(
+static void particle_system_update_default(
 	struct particle_system_datum *system,
 	real delta_time);
-void particle_system_update_explosion(
+static void particle_system_update_explosion(
 	struct particle_system_datum *system,
 	real delta_time);
-void particle_system_new_particle_default(
+static void particle_system_new_particle_default(
 	struct particle_system_datum const *system,
 	short type_index,
 	struct ps_particle_datum *particle,
 	struct object_marker const *marker);
-void particle_system_update(
+static void particle_system_update(
 	real delta_time,
 	long system_index);
 static void particle_system_render(
@@ -148,17 +151,17 @@ static void particle_system_next_type_state_index(
 static void particle_system_next_particle_state_index(
 	struct ps_particle_datum *particle,
 	struct particle_system_type const *type_definition);
-void particle_system_new_particle_explosion(
+static void particle_system_new_particle_explosion(
 	struct particle_system_datum const *system,
 	short type_index,
 	struct ps_particle_datum *particle,
 	struct object_marker const *marker);
-void particle_system_update_particle_default(
+static void particle_system_update_particle_default(
 	struct particle_system_datum const *system,
 	short type_index,
 	real delta_time,
 	struct ps_particle_datum *particle);
-void particle_system_new_particle_jet(
+static void particle_system_new_particle_jet(
 	struct particle_system_datum const *system,
 	short type_index,
 	struct ps_particle_datum *particle,
@@ -194,6 +197,8 @@ static particle_system_particle_update_proc const particle_update_functions[] =
 
 real const ground_error = 0.05f;
 static real const seconds_per_tick = 1.0f/TICKS_PER_SECOND;
+struct data_array *particle_systems;
+struct data_array *system_particles;
 
 /* ---------- public code */
 
@@ -287,7 +292,8 @@ void particle_systems_reconnect_to_structure_bsp(
 			}
 		}
 
-		for (type_index = 0; type_index < definition->types.count; type_index++)
+		/* port: no more types than the system holds (the map's count) */
+		for (type_index = 0; type_index < definition->types.count && type_index < MAXIMUM_PARTICLE_SYSTEM_TYPES_PER_SYSTEM; type_index++)
 		{
 			long *particle_index_reference = &system->types[type_index].first_particle_index;
 
@@ -454,7 +460,27 @@ long particle_system_new_attached(
 		system->attachment_index = attachment_index;
 		system->function_index = attachment->primary_scale_function_reference - 1;
 
-		if (attachment->change_color_reference)
+		/* port: and a change color the object has (the reference is the
+		map's, and indexes the colors as it is; retail particle systems are
+		never attached with one). Any other is white, said once. */
+		if (attachment->change_color_reference &&
+			!VALID_INDEX(attachment->change_color_reference, NUMBER_OF_OBJECT_CHANGE_COLORS))
+		{
+			static boolean bad_change_color_reported = FALSE;
+
+			if (!bad_change_color_reported)
+			{
+				bad_change_color_reported = TRUE;
+				error(
+					_error_silent,
+					"particle system %s is attached with change color %d (of %d)",
+					tag_get_name(definition_index),
+					attachment->change_color_reference,
+					NUMBER_OF_OBJECT_CHANGE_COLORS);
+			}
+		}
+		if (attachment->change_color_reference &&
+			VALID_INDEX(attachment->change_color_reference, NUMBER_OF_OBJECT_CHANGE_COLORS))
 		{
 			system->color.rgb = object->object.outgoing_change_colors[attachment->change_color_reference];
 			system->color.alpha = 1.0f;
@@ -497,7 +523,8 @@ static void particle_system_delete(
 	struct particle_system_definition *definition = particle_system_definition_get(system->definition_index);
 	short type_index;
 
-	for (type_index = 0; type_index < definition->types.count; type_index++)
+	/* port: no more types than the system holds (the map's count) */
+	for (type_index = 0; type_index < definition->types.count && type_index < MAXIMUM_PARTICLE_SYSTEM_TYPES_PER_SYSTEM; type_index++)
 	{
 		struct particle_type *type = &system->types[type_index];
 		long particle_index = type->first_particle_index;
@@ -526,6 +553,19 @@ static boolean particle_system_initialize(
 
 	scenario_location_from_point(&system->location, &system->position);
 	SET_FLAG(system->flags, _particle_system_initializing_bit, TRUE);
+
+	/* port: no more types than the system holds. A tag with more is cut to
+	that, and said once. */
+	if (definition->types.count > MAXIMUM_PARTICLE_SYSTEM_TYPES_PER_SYSTEM)
+	{
+		error(
+			_error_silent,
+			"particle system %s has %d types (only %d are used)",
+			tag_get_name(system->definition_index),
+			definition->types.count,
+			MAXIMUM_PARTICLE_SYSTEM_TYPES_PER_SYSTEM);
+		definition->types.count = MAXIMUM_PARTICLE_SYSTEM_TYPES_PER_SYSTEM;
+	}
 
 	for (type_index = 0; type_index < definition->types.count; type_index++)
 	{
@@ -569,7 +609,7 @@ static boolean particle_system_initialize(
 	return success;
 }
 
-void particle_system_update_default(
+static void particle_system_update_default(
 	struct particle_system_datum *system,
 	real delta_time)
 {
@@ -594,7 +634,7 @@ void particle_system_update_default(
 	return;
 }
 
-void particle_system_new_particle_default(
+static void particle_system_new_particle_default(
 	struct particle_system_datum const *system,
 	short type_index,
 	struct ps_particle_datum *particle,
@@ -606,7 +646,7 @@ void particle_system_new_particle_default(
 	return;
 }
 
-void particle_system_update_explosion(
+static void particle_system_update_explosion(
 	struct particle_system_datum *system,
 	real delta_time)
 {
@@ -742,6 +782,22 @@ static void particle_system_new_particles(
 						0x1E8,
 						creation_function_index>=0 &&
 						creation_function_index<NUMBER_OF_PARTICLE_SYSTEM_TYPE_CREATION_PHYSICS);
+					/* port: physics the table has (the map's value picks a
+					function to call). A bad one is made the default in the tag,
+					so it is said once. */
+					if (!VALID_INDEX(creation_function_index, (short)NUMBEROF(particle_creation_functions)))
+					{
+						error(
+							_error_silent,
+							"particle system %s has particle creation physics %d (default used)",
+							tag_get_name(system->definition_index),
+							creation_function_index);
+						creation_function_index = 0;
+						if (initializing)
+							type_definition->initial_particle_creation_physics = creation_function_index;
+						else
+							state_definition->particle_creation_physics = creation_function_index;
+					}
 
 					marker_index = seed_random_range(get_global_local_random_seed_address(), 0, marker_count);
 					particle_creation_functions[creation_function_index](
@@ -771,7 +827,10 @@ static void particle_system_new_particles(
 
 	if ((real)type->particle_count < MIN(type->variables.minimum_particle_count*native_density,(real)native_cap))
 	{
-		type->time_left_in_state *= 0.30000001f;
+		/* cut short at the rate of 0.3 a tick, not a frame: the native
+		builds update several frames a tick
+		(port/linux/game/render_interpolation.c) */
+		type->time_left_in_state *= (real)pow(0.30000001f, delta_time * TICKS_PER_SECOND);
 	}
 
 	return;
@@ -797,7 +856,7 @@ void particle_systems_update(
 	return;
 }
 
-void particle_system_update_particle_default(
+static void particle_system_update_particle_default(
 	struct particle_system_datum const *system,
 	short type_index,
 	real delta_time,
@@ -898,7 +957,7 @@ void particle_system_update_particle_default(
 	return;
 }
 
-void particle_system_new_particle_explosion(
+static void particle_system_new_particle_explosion(
 	struct particle_system_datum const *system,
 	short type_index,
 	struct ps_particle_datum *particle,
@@ -949,7 +1008,7 @@ void particle_system_new_particle_explosion(
 	return;
 }
 
-void particle_system_new_particle_jet(
+static void particle_system_new_particle_jet(
 	struct particle_system_datum const *system,
 	short type_index,
 	struct ps_particle_datum *particle,
@@ -1034,7 +1093,7 @@ static void randomize_particle_variables(
 	return;
 }
 
-void particle_system_update(
+static void particle_system_update(
 	real delta_time,
 	long system_index)
 {
@@ -1069,9 +1128,21 @@ void particle_system_update(
 		0x2E1,
 		system_definition->system_update_physics>=0 &&
 		system_definition->system_update_physics<NUMBER_OF_PARTICLE_SYSTEM_UPDATE_PHYSICS);
+	/* port: physics the table has (the map's value picks a function to
+	call). A bad one is made the default in the tag, so it is said once. */
+	if (!VALID_INDEX(system_definition->system_update_physics, (short)NUMBEROF(system_update_functions)))
+	{
+		error(
+			_error_silent,
+			"particle system %s has system physics %d (default used)",
+			tag_get_name(system->definition_index),
+			system_definition->system_update_physics);
+		system_definition->system_update_physics = _particle_system_update_physics_default;
+	}
 	system_update_functions[system_definition->system_update_physics](system, delta_time);
 
-	for (type_index = 0; type_index < system_definition->types.count; type_index++)
+	/* port: no more types than the system holds (the map's count) */
+	for (type_index = 0; type_index < system_definition->types.count && type_index < MAXIMUM_PARTICLE_SYSTEM_TYPES_PER_SYSTEM; type_index++)
 	{
 		struct particle_system_type *type_definition = TAG_BLOCK_GET_ELEMENT(
 			&system_definition->types,
@@ -1331,6 +1402,16 @@ void particle_system_update(
 						0x3AF,
 						type_state_definition->particle_update_physics>=0 &&
 						type_state_definition->particle_update_physics<NUMBER_OF_PARTICLE_SYSTEM_TYPE_UPDATE_PHYSICS);
+					/* port: physics the table has, as above */
+					if (!VALID_INDEX(type_state_definition->particle_update_physics, (short)NUMBEROF(particle_update_functions)))
+					{
+						error(
+							_error_silent,
+							"particle system %s has particle physics %d (default used)",
+							tag_get_name(system->definition_index),
+							type_state_definition->particle_update_physics);
+						type_state_definition->particle_update_physics = 0;
+					}
 					particle_update_functions[type_state_definition->particle_update_physics](
 						system,
 						type_index,
@@ -1368,7 +1449,8 @@ static void particle_system_render(
     int native_original=n3ds_input_platform_original_model();
 #endif
 
-	for (type_index = 0; type_index < definition->types.count; type_index++)
+	/* port: no more types than the system holds (the map's count) */
+	for (type_index = 0; type_index < definition->types.count && type_index < MAXIMUM_PARTICLE_SYSTEM_TYPES_PER_SYSTEM; type_index++)
 	{
 		struct particle_system_type *type_definition = TAG_BLOCK_GET_ELEMENT(
 			&definition->types,
@@ -1494,14 +1576,31 @@ static void particle_system_render(
 					}
 
 					bitmap = bitmap_group_get(state_definition->bitmaps.index);
+					/* port: rotational sprites use the sequence after the state's. Some
+					Custom Edition bitmaps don't have one (on foundation), so those
+					draw from the state's own sequence. */
 					if (type_definition->complex_sprite_render_mode ==
-						_particle_system_type_complex_sprite_render_mode_rotational)
+						_particle_system_type_complex_sprite_render_mode_rotational &&
+						state_definition->sequence_index + 1 < bitmap->sequences.count)
 					{
 						sequence_index = state_definition->sequence_index + 1;
 					}
 					else
 					{
 						sequence_index = state_definition->sequence_index;
+					}
+					/* port: a rotational sprite's sequence is the one after its state's,
+					which a Halo PC map's bitmap may not have (Hornets Nest's): its
+					state's own then; a particle whose bitmap has neither, or no sprites
+					in it, is not drawn, rather than read past the bitmap's sequences */
+					if (sequence_index >= bitmap->sequences.count)
+						sequence_index = state_definition->sequence_index;
+					if (sequence_index < 0 || sequence_index >= bitmap->sequences.count ||
+						TAG_BLOCK_GET_ELEMENT(&bitmap->sequences, sequence_index,
+							struct bitmap_group_sequence)->sprites.count <= 0)
+					{
+						particle_index = (short)particle->next_particle_index;
+						continue;
 					}
 					sequence = TAG_BLOCK_GET_ELEMENT(
 						&bitmap->sequences,

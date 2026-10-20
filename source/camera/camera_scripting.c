@@ -33,7 +33,7 @@ symbols in this file:
 00256ABC 0029:
 	??_C@_0CJ@GLCFCHKA@c?3?2halo?2SOURCE?2camera?2camera_scr@ (0000)
 002DCB60 0040:
-	_data_002dcb60 (0000)
+	_camera_script_globals (0000)
 */
 
 /* ---------- headers */
@@ -95,9 +95,23 @@ void scripted_camera_set(
 	short camera_point_index,
 	word transition_time,
 	long relative_object_index);
+void first_person_camera_fake(
+	long unit_index,
+	struct scripted_camera_command *result);
+void dead_camera_new(
+	struct dead_camera *camera,
+	short local_player_index,
+	long unit_index);
+void dead_camera_update(
+	struct dead_camera *camera,
+	struct camera_control const *controls,
+	struct scripted_camera_command *result);
+
 /* ---------- globals */
 
-struct scripted_camera_globals data_002dcb60 =
+/* name from the 2003 PC demo PDB and the HCEX PDB (camera_scripting file static); January's 64 bytes are
+ * identical to the demo's and it has no public for it (static) */
+static struct scripted_camera_globals camera_script_globals =
 {
 	FALSE,
 	FALSE,
@@ -123,8 +137,8 @@ void n3ds_scripted_camera_menu_begin(void) {native_menu_camera_setup=1;}
 void scripted_camera_enable(
 	boolean enabled)
 {
-	data_002dcb60.enabled = enabled;
-	data_002dcb60.first_update = TRUE;
+	camera_script_globals.enabled = enabled;
+	camera_script_globals.first_update = TRUE;
 	return;
 }
 
@@ -150,14 +164,14 @@ void scripted_camera_set_animation(
 					struct animation);
 				if (!_stricmp(animation_name, animation->name))
 				{
-					data_002dcb60.camera_point_index = NONE;
-					data_002dcb60.relative_object_index = NONE;
-					data_002dcb60.mode = _camera_script_mode_animation;
-					data_002dcb60.first_update = TRUE;
-					data_002dcb60.animation_index = animation_index;
-					data_002dcb60.animation_graph_index = animation_graph_index;
-					data_002dcb60.field_of_view = 1.22173047f;
-					data_002dcb60.timer =
+					camera_script_globals.camera_point_index = NONE;
+					camera_script_globals.relative_object_index = NONE;
+					camera_script_globals.mode = _camera_script_mode_animation;
+					camera_script_globals.first_update = TRUE;
+					camera_script_globals.animation_index = animation_index;
+					camera_script_globals.animation_graph_index = animation_graph_index;
+					camera_script_globals.field_of_view = 1.22173047f;
+					camera_script_globals.timer =
 						(real)(animation->frame_count / TICKS_PER_SECOND);
 					break;
 				}
@@ -175,9 +189,9 @@ void scripted_camera_set_first_person(
 {
 	if (unit_index != NONE)
 	{
-		data_002dcb60.mode = _camera_script_mode_first_person;
-		data_002dcb60.first_update = TRUE;
-		data_002dcb60.relative_object_index = unit_index;
+		camera_script_globals.mode = _camera_script_mode_first_person;
+		camera_script_globals.first_update = TRUE;
+		camera_script_globals.relative_object_index = unit_index;
 	}
 	else
 	{
@@ -194,9 +208,9 @@ void scripted_camera_set_dead(
 {
 	if (unit_index != NONE)
 	{
-		data_002dcb60.mode = _camera_script_mode_dead;
-		data_002dcb60.first_update = TRUE;
-		data_002dcb60.relative_object_index = unit_index;
+		camera_script_globals.mode = _camera_script_mode_dead;
+		camera_script_globals.first_update = TRUE;
+		camera_script_globals.relative_object_index = unit_index;
 	}
 	else
 	{
@@ -211,9 +225,9 @@ void scripted_camera_set_dead(
 boolean scripted_camera_object_is_first_person_camera(
 	long object_index)
 {
-	return data_002dcb60.enabled &&
-		data_002dcb60.mode == _camera_script_mode_first_person &&
-		data_002dcb60.relative_object_index == object_index;
+	return camera_script_globals.enabled &&
+		camera_script_globals.mode == _camera_script_mode_first_person &&
+		camera_script_globals.relative_object_index == object_index;
 }
 
 void scripted_camera_set(
@@ -238,20 +252,20 @@ void scripted_camera_set(
 		--native_menu_camera_setup;
 	}
 #endif
-	data_002dcb60.mode = _camera_script_mode_point;
-	data_002dcb60.first_update = TRUE;
-	data_002dcb60.camera_point_index = camera_point_index;
-	data_002dcb60.point = camera_point->position;
+	camera_script_globals.mode = _camera_script_mode_point;
+	camera_script_globals.first_update = TRUE;
+	camera_script_globals.camera_point_index = camera_point_index;
+	camera_script_globals.point = camera_point->position;
 	vectors3d_from_euler_angles3d(
-		&data_002dcb60.forward,
-		&data_002dcb60.up,
+		&camera_script_globals.forward,
+		&camera_script_globals.up,
 		&camera_point->orientation);
 	if (camera_point->field_of_view != 0.f)
-		data_002dcb60.field_of_view = camera_point->field_of_view;
+		camera_script_globals.field_of_view = camera_point->field_of_view;
 	else
-		data_002dcb60.field_of_view = 1.22173047f;
-	data_002dcb60.relative_object_index = relative_object_index;
-	data_002dcb60.timer = (real)camera_time;
+		camera_script_globals.field_of_view = 1.22173047f;
+	camera_script_globals.relative_object_index = relative_object_index;
+	camera_script_globals.timer = (real)camera_time;
 
 	director_update(0.f);
 	observer_update(0.0001f);
@@ -274,18 +288,18 @@ void scripted_camera_set_camera_point_relative(
 	word transition_time,
 	long relative_object_index)
 {
-	data_002dcb60.mode = _camera_script_mode_point;
-	data_002dcb60.camera_point_index = NONE;
-	data_002dcb60.point = *position;
-	data_002dcb60.forward = *forward;
-	data_002dcb60.up = *up;
+	camera_script_globals.mode = _camera_script_mode_point;
+	camera_script_globals.camera_point_index = NONE;
+	camera_script_globals.point = *position;
+	camera_script_globals.forward = *forward;
+	camera_script_globals.up = *up;
 	if (field_of_view != 0.f)
-		data_002dcb60.field_of_view = field_of_view;
+		camera_script_globals.field_of_view = field_of_view;
 	else
-		data_002dcb60.field_of_view = 1.22173047f;
-	data_002dcb60.timer =
+		camera_script_globals.field_of_view = 1.22173047f;
+	camera_script_globals.timer =
 		(real)((short)transition_time / TICKS_PER_SECOND);
-	data_002dcb60.relative_object_index = relative_object_index;
+	camera_script_globals.relative_object_index = relative_object_index;
 
 	director_update(0.f);
 	observer_update(0.0001f);
@@ -312,19 +326,19 @@ void scripted_camera_set_camera_point_absolute(
 short scripted_camera_next_camera_point(
 	void)
 {
-	return data_002dcb60.camera_point_index;
+	return camera_script_globals.camera_point_index;
 }
 
 long scripted_camera_object_relative_to(
 	void)
 {
-	return data_002dcb60.relative_object_index;
+	return camera_script_globals.relative_object_index;
 }
 
 short scripted_camera_time(
 	void)
 {
-	return (short)(data_002dcb60.timer * 30.f);
+	return (short)(camera_script_globals.timer * 30.f);
 }
 
 void scripted_camera_update(
@@ -347,15 +361,15 @@ void scripted_camera_update(
 		result->flags &= ~FLAG(5);
 	}
 
-	switch (data_002dcb60.mode)
+	switch (camera_script_globals.mode)
 	{
 	case _camera_script_mode_point:
-		if (data_002dcb60.relative_object_index != NONE)
+		if (camera_script_globals.relative_object_index != NONE)
 		{
 			struct object_datum *object;
 
 			object = object_try_and_get_and_verify_type(
-				data_002dcb60.relative_object_index,
+				camera_script_globals.relative_object_index,
 				_object_mask_all);
 			if (!object)
 			{
@@ -365,12 +379,12 @@ void scripted_camera_update(
 		}
 
 		result->timer = speed != 0.f
-			? data_002dcb60.timer / speed
+			? camera_script_globals.timer / speed
 			: 0.f;
-		result->field_of_view = data_002dcb60.field_of_view;
-		result->forward = data_002dcb60.forward;
-		result->up = data_002dcb60.up;
-		if (data_002dcb60.relative_object_index != NONE)
+		result->field_of_view = camera_script_globals.field_of_view;
+		result->forward = camera_script_globals.forward;
+		result->up = camera_script_globals.up;
+		if (camera_script_globals.relative_object_index != NONE)
 		{
 			real angle;
 			real cosine_value;
@@ -381,20 +395,20 @@ void scripted_camera_update(
 
 			angle = arctangent(result->forward.j, result->forward.i);
 			dot = dot_product3d(
-				(real_vector3d const *)&data_002dcb60.point,
+				(real_vector3d const *)&camera_script_globals.point,
 				&result->forward);
 			if (dot > 0.f)
 			{
 				dot = 0.f;
 			}
 
-			result->focus_distance = -dot;
-			result->focus_position = focus_position;
-			offset.i = data_002dcb60.point.x - dot * result->forward.i;
-			offset.j = data_002dcb60.point.y - dot * result->forward.j;
-			offset.k = data_002dcb60.point.z - dot * result->forward.k;
-			result->parameter_timers[_observer_command_parameter_focus_position] = 0.f;
-			result->parameter_flags[_observer_command_parameter_focus_position] = 1;
+			result->depth = -dot;
+			result->position = focus_position;
+			offset.i = camera_script_globals.point.x - dot * result->forward.i;
+			offset.j = camera_script_globals.point.y - dot * result->forward.j;
+			offset.k = camera_script_globals.point.z - dot * result->forward.k;
+			result->position_timer = 0.f;
+			result->position_flags = 1;
 			sine_value = sine(angle);
 			cosine_value = cosine(angle);
 			rotated_offset_i = offset.i * cosine_value;
@@ -406,7 +420,7 @@ void scripted_camera_update(
 		}
 		else
 		{
-			result->focus_position = data_002dcb60.point;
+			result->position = camera_script_globals.point;
 			result->flags |= FLAG(0);
 		}
 		break;
@@ -420,13 +434,13 @@ void scripted_camera_update(
 			real_matrix4x3 root_matrix;
 
 			animation_graph = animation_graph_definition_get(
-				data_002dcb60.animation_graph_index);
+				camera_script_globals.animation_graph_index);
 			animation = TAG_BLOCK_GET_ELEMENT(
 				&animation_graph->animations,
-				data_002dcb60.animation_index,
+				camera_script_globals.animation_index,
 				struct animation);
 			frame_count = animation->frame_count;
-			frame = (short)(frame_count - data_002dcb60.timer * 30.f);
+			frame = (short)(frame_count - camera_script_globals.timer * 30.f);
 			animation_get_root_matrix(
 				NULL,
 				animation,
@@ -444,7 +458,7 @@ void scripted_camera_update(
 
 	case _camera_script_mode_first_person:
 		if (object_try_and_get_and_verify_type(
-			data_002dcb60.relative_object_index,
+			camera_script_globals.relative_object_index,
 			_object_mask_unit))
 		{
 			struct camera_command prefix;
@@ -452,33 +466,32 @@ void scripted_camera_update(
 			/* The first-person helper updates only the 0x4C-byte prefix. */
 			csmemcpy(&prefix, result, sizeof(prefix));
 			first_person_camera_fake(
-				data_002dcb60.relative_object_index,
-				&prefix);
-			csmemcpy(result, &prefix, sizeof(prefix));
+				camera_script_globals.relative_object_index,
+				result);
 		}
 		break;
 
 	case _camera_script_mode_dead:
 		if (object_try_and_get_and_verify_type(
-			data_002dcb60.relative_object_index,
+			camera_script_globals.relative_object_index,
 			_object_mask_unit))
 		{
-			if (data_002dcb60.first_update)
+			if (camera_script_globals.first_update)
 			{
 				dead_camera_new(
 					camera,
-					controls->local_player_index,
-					data_002dcb60.relative_object_index);
+					(short)controls->unknown0,
+					camera_script_globals.relative_object_index);
 			}
 			dead_camera_update(camera, controls, result);
 		}
 		break;
 	}
 
-	data_002dcb60.timer = MAX(
+	camera_script_globals.timer = MAX(
 		0.f,
-		data_002dcb60.timer - speed * controls->seconds_elapsed);
-	data_002dcb60.first_update = FALSE;
+		camera_script_globals.timer - speed * controls->seconds_elapsed);
+	camera_script_globals.first_update = FALSE;
 
 	match_vassert(
 		"c:\\halo\\SOURCE\\camera\\camera_scripting.c",

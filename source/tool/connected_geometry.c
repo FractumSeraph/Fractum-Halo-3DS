@@ -75,24 +75,30 @@ typedef boolean (*connected_geometry_group_predicate)(
 	struct connected_geometry_triangle *triangle,
 	long group_index);
 
+#ifndef HALO_64BIT
 typedef char connected_geometry_dynamic_array_size_assert[
 	sizeof(struct dynamic_array) == 0xC ? 1 : -1];
+#endif
 typedef char connected_geometry_point_size_assert[
 	sizeof(real_point3d) == 0xC ? 1 : -1];
 typedef char connected_geometry_plane_size_assert[
 	sizeof(real_plane3d) == 0x10 ? 1 : -1];
+#ifndef HALO_64BIT
 typedef char connected_geometry_edge_size_assert[
 	sizeof(struct connected_geometry_edge) == 0x1C ? 1 : -1];
 typedef char connected_geometry_edge_point_indices_offset_assert[
 	offsetof(struct connected_geometry_edge, point_indices) == 0xC ? 1 : -1];
+#endif
 typedef char connected_geometry_triangle_size_assert[
 	sizeof(struct connected_geometry_triangle) == 0x18 ? 1 : -1];
+#ifndef HALO_64BIT
 typedef char connected_geometry_size_assert[
 	sizeof(struct connected_geometry) == 0x24 ? 1 : -1];
 typedef char connected_geometry_edges_offset_assert[
 	offsetof(struct connected_geometry, edges) == 0xC ? 1 : -1];
 typedef char connected_geometry_triangles_offset_assert[
 	offsetof(struct connected_geometry, triangles) == 0x18 ? 1 : -1];
+#endif
 typedef char intermediate_geometry_triangle_size_assert[
 	sizeof(struct intermediate_geometry_triangle) == 0x34 ? 1 : -1];
 typedef char intermediate_geometry_triangle_vertex_indices_offset_assert[
@@ -101,11 +107,13 @@ typedef char intermediate_geometry_vertex_size_assert[
 	sizeof(struct intermediate_geometry_vertex) == 0x50 ? 1 : -1];
 typedef char intermediate_geometry_vertex_point_offset_assert[
 	offsetof(struct intermediate_geometry_vertex, point) == 0x8 ? 1 : -1];
+#ifndef HALO_64BIT
 typedef char intermediate_geometry_triangles_offset_assert[
 	offsetof(struct intermediate_geometry, triangles) == 0x134 ? 1 : -1];
 typedef char intermediate_geometry_vertices_offset_assert[
 	offsetof(struct intermediate_geometry, vertices) == 0x140 ? 1 : -1];
 
+#endif
 /* ---------- prototypes */
 
 /* ---------- globals */
@@ -276,78 +284,71 @@ static long connected_geometry_find_or_add_edge(
 	long point_index0,
 	long point_index1)
 {
-	struct connected_geometry_edge *edge;
-	long *edge_triangle;
+	boolean direction = TRUE;
 	long edge_index;
-	long edge_triangle_index;
-	boolean forward = TRUE;
 
-	edge_index = 0;
-	if (geometry->edges.count > 0)
+	for (edge_index = 0; edge_index < geometry->edges.count; edge_index++)
 	{
-		do
+		struct connected_geometry_edge *edge = dynamic_array_get_element(
+			&geometry->edges,
+			edge_index,
+			sizeof(*edge));
+
+		if (edge->point_indices[0] == point_index0 &&
+			edge->point_indices[1] == point_index1)
 		{
-			edge = dynamic_array_get_element(
-				&geometry->edges,
-				edge_index,
-				sizeof(*edge));
-			if (edge->point_indices[0] == point_index0 &&
-				edge->point_indices[1] == point_index1)
-			{
-				forward = TRUE;
-				break;
-			}
-			if (edge->point_indices[0] == point_index1 &&
-				edge->point_indices[1] == point_index0)
-			{
-				forward = FALSE;
-				break;
-			}
-			edge_index++;
+			direction = TRUE;
+			break;
 		}
-		while (edge_index < geometry->edges.count);
+		else if (edge->point_indices[0] == point_index1 &&
+			edge->point_indices[1] == point_index0)
+		{
+			direction = FALSE;
+			break;
+		}
 	}
 
 	if (edge_index == geometry->edges.count)
 	{
 		edge_index = dynamic_array_add_element(&geometry->edges);
-		forward = TRUE;
-		if (edge_index == NONE)
+		direction = TRUE;
+		if (edge_index != NONE)
 		{
-			return NONE;
+			struct connected_geometry_edge *edge = dynamic_array_get_element(
+				&geometry->edges,
+				edge_index,
+				sizeof(*edge));
+
+			dynamic_array_new(&edge->triangle_indices, sizeof(long));
+			edge->point_indices[0] = point_index0;
+			edge->point_indices[1] = point_index1;
 		}
-		edge = dynamic_array_get_element(
+	}
+
+	if (edge_index != NONE)
+	{
+		struct connected_geometry_edge *edge = dynamic_array_get_element(
 			&geometry->edges,
 			edge_index,
 			sizeof(*edge));
-		dynamic_array_new(&edge->triangle_indices, sizeof(long));
-		edge->point_indices[0] = point_index0;
-		edge->point_indices[1] = point_index1;
+		long edge_triangle_index = dynamic_array_add_element(&edge->triangle_indices);
+
+		if (edge_triangle_index != NONE)
+		{
+			*(long *)dynamic_array_get_element(
+				&edge->triangle_indices,
+				edge_triangle_index,
+				sizeof(long)) = triangle_index;
+		}
+		else
+		{
+			edge_index = NONE;
+		}
 	}
 
-	if (edge_index == NONE)
-	{
-		return NONE;
-	}
-
-	edge = dynamic_array_get_element(
-		&geometry->edges,
-		edge_index,
-		sizeof(*edge));
-	edge_triangle_index = dynamic_array_add_element(&edge->triangle_indices);
-	if (edge_triangle_index != NONE)
-	{
-		edge_triangle = dynamic_array_get_element(
-			&edge->triangle_indices,
-			edge_triangle_index,
-			sizeof(*edge_triangle));
-		*edge_triangle = triangle_index;
-		SET_FLAG(edge_index, _connected_geometry_edge_designator_forward_bit, forward);
-
-		return edge_index;
-	}
-
-	return NONE;
+	return edge_index == NONE ?
+		NONE :
+		SET_FLAG(edge_index, _connected_geometry_edge_designator_forward_bit, direction);
 }
 
 long connected_geometry_add_triangle(

@@ -67,6 +67,7 @@ symbols in this file:
 /* ---------- headers */
 
 #include "cseries/cseries.h"
+#include "cseries/errors.h"
 #include "cutscene/cinematics.h"
 #include "effects/player_effects.h"
 #include "game/game.h"
@@ -88,6 +89,7 @@ symbols in this file:
 #include "tag_files/tag_groups.h"
 #include "units/unit_definitions.h"
 #include "units/units.h"
+#include "bitmaps/bitmap_group.h"
 
 /* ---------- constants */
 
@@ -99,11 +101,6 @@ enum
 	_hud_panel_shield_blink_bit,
 	_hud_panel_motion_sensor_dont_show_bit,
 	_hud_panel_motion_sensor_blink_bit
-};
-
-enum
-{
-	MAXIMUM_NUMBER_OF_LOCAL_PLAYERS = 4,
 };
 
 enum hud_damage_indicator_direction
@@ -143,84 +140,6 @@ struct unit_hud_globals
 	long script_flags;
 };
 
-struct hud_scripted_globals
-{
-	boolean show_hud;
-	boolean show_hud_help_text;
-	byte reserved2[2];
-};
-
-struct hud_messaging_parameters_definition
-{
-	struct hud_absolute_placement_definition absolute_placement;
-	struct hud_placement_definition placement;
-	struct tag_reference single_player_font;
-	struct tag_reference multi_player_font;
-	real up_time;
-	real fade_time;
-	real_argb_color state_color;
-	real_argb_color text_color;
-	real spacing;
-	struct tag_reference hud_item_messages;
-	struct tag_reference messaging_icons;
-	struct tag_reference alternate_icon_text;
-	struct tag_block button_icons;
-	struct hud_color_definition color;
-	struct tag_reference hud_messages;
-	struct hud_color_definition objective_color;
-};
-
-struct hud_waypoint_definition
-{
-	real top_offset;
-	real bottom_offset;
-	real left_offset;
-	real right_offset;
-	long unused0[8];
-	struct tag_reference arrow_bitmap;
-	struct tag_block arrows;
-	long unused1[20];
-};
-
-struct hud_multiplayer_parameters_definition
-{
-	real hud_scale;
-	long unused[0x40];
-};
-
-struct hud_defaults_definition
-{
-	struct tag_reference default_weapon_hud;
-	real motion_sensor_range;
-	real motion_sensor_velocity_sensitivity;
-	real motion_sensor_scale;
-	rectangle2d default_title_bounds;
-	long unused[0xB];
-};
-
-struct hud_damage_indicators_definition
-{
-	short top_offset;
-	short bottom_offset;
-	short left_offset;
-	short right_offset;
-	long unused[8];
-	struct tag_reference indicator_bitmap;
-	short sequence_index;
-	short multiplayer_sequence_index;
-	unsigned long color;
-	long unused2[4];
-};
-
-struct hud_globals_definition
-{
-	struct hud_messaging_parameters_definition messaging;
-	struct hud_waypoint_definition waypoint;
-	struct hud_multiplayer_parameters_definition multiplayer;
-	struct hud_defaults_definition defaults;
-	struct hud_damage_indicators_definition damage_indicators;
-};
-
 typedef char unit_hud_state_auxilary_flash_time_offset_assert[
 	offsetof(struct unit_hud_state, auxilary_flash_time) == 0x22 ? 1 : -1];
 typedef char unit_hud_state_sound_flags_offset_assert[
@@ -234,7 +153,7 @@ typedef char unit_hud_globals_script_flags_offset_assert[
 typedef char unit_hud_globals_size_assert[
 	sizeof(struct unit_hud_globals) == 0x164 ? 1 : -1];
 typedef char hud_scripted_globals_size_assert[
-	sizeof(struct hud_scripted_globals) == 0x4 ? 1 : -1];
+	sizeof(struct hud_scripted_globals_definition) == 0x4 ? 1 : -1];
 typedef char hud_messaging_parameters_definition_size_assert[
 	sizeof(struct hud_messaging_parameters_definition) == 0x120 ? 1 : -1];
 typedef char hud_waypoint_definition_size_assert[
@@ -260,8 +179,6 @@ static void hud_update_unit_local_player(
 /* ---------- globals */
 
 static struct unit_hud_globals *unit_hud_globals = NULL;
-extern struct hud_scripted_globals *hud_scripted_globals;
-extern struct hud_globals_definition *hud_globals;
 
 /* ---------- private code */
 
@@ -469,6 +386,38 @@ void scripted_hud_blink_motion_sensor(
 	return;
 }
 
+/* port: the scripts' show and blink flags, for network co-op
+(port/linux/game/network_coop.c) */
+long hud_unit_port_script_flags(
+	void)
+{
+	return unit_hud_globals->script_flags;
+}
+
+void hud_unit_port_set_script_flags(
+	long flags)
+{
+	unit_hud_globals->script_flags = flags;
+}
+
+/* port: whether the shield's fall from the last value the HUD saw is a hit.
+The host drains an overshield by about 0.00074 a tick and moves the HUD's
+last value with it (hud_tick_shield), so on the host the two stay equal. A
+network client's shield falls with the host's updates instead, after the
+HUD has taken its last value for the tick, so each frame it was a tick
+behind: the meter flashed and the shield damage sound played for the whole
+overshield, where the Xbox plays nothing. A small step from past full (0.05
+or less, about 70 ticks of drain) is that drain; a larger one is a hit,
+which still flashes the meter and plays the sound. */
+static boolean hud_shield_drop_is_hit(
+	real last_shield_vitality,
+	real shield_vitality)
+{
+	if (!(last_shield_vitality > shield_vitality))
+		return FALSE;
+	return !(last_shield_vitality > 1.0f && last_shield_vitality - shield_vitality <= 0.05f);
+}
+
 void hud_play_unit_sounds(
 	struct player_datum const *player,
 	boolean show_hud)
@@ -518,11 +467,13 @@ void hud_play_unit_sounds(
 							sound_flags = TEST_FLAG(
 								unit->object.damage_flags,
 								_object_shield_charging_bit);
+							/* port: not an overshield's drain (hud_shield_drop_is_hit) */
 							SET_FLAG(
 								sound_flags,
 								_unit_hud_shield_damage,
-								hud_state->last_shield_vitality >
-									unit->object.shield_vitality);
+								hud_shield_drop_is_hit(
+									hud_state->last_shield_vitality,
+									unit->object.shield_vitality));
 							SET_FLAG(
 								sound_flags,
 								_unit_hud_shield_low,
@@ -567,7 +518,8 @@ void hud_play_unit_sounds(
 					sound_flags,
 					&hud_definition->warning_sounds,
 					hud_state->last_sound_handles,
-					&hud_state->sound_flags);
+					&hud_state->sound_flags,
+					(short)NUMBEROF(hud_state->last_sound_handles));
 			}
 		}
 	}
@@ -602,20 +554,33 @@ static void hud_update_unit_local_player(
 
 			if (hud_state->last_shield_vitality > unit->object.shield_vitality)
 			{
-				if (hud_state->fade_time < 0.0f || hud_state->fade_time > 1.0f)
-					hud_state->last_shield_hit_time = game_time_get();
-
-				if (game_time_get() - hud_state->last_shield_hit_time < 15)
+				/* port: an overshield's drain is not a hit
+				(hud_shield_drop_is_hit). The step is closed here, so one late
+				packet cannot leave the meter a little behind and keep the
+				flash going. */
+				if (!hud_shield_drop_is_hit(hud_state->last_shield_vitality, unit->object.shield_vitality))
 				{
-					hud_state->fade_time = 0.0f;
+					hud_state->last_shield_vitality = unit->object.shield_vitality;
+					hud_state->fade_time = -1.0f;
+					hud_state->last_shield_hit_time = game_time_get();
 				}
 				else
 				{
-					hud_state->last_shield_vitality = unit->object.shield_vitality;
-					hud_state->fade_time +=
-						(real)(game_time_get() - hud_state->last_shield_hit_time) *
-						(1.0f / TICKS_PER_SECOND);
-					hud_state->last_shield_hit_time = game_time_get();
+					if (hud_state->fade_time < 0.0f || hud_state->fade_time > 1.0f)
+						hud_state->last_shield_hit_time = game_time_get();
+
+					if (game_time_get() - hud_state->last_shield_hit_time < 15)
+					{
+						hud_state->fade_time = 0.0f;
+					}
+					else
+					{
+						hud_state->last_shield_vitality = unit->object.shield_vitality;
+						hud_state->fade_time +=
+							(real)(game_time_get() - hud_state->last_shield_hit_time) *
+							(1.0f / TICKS_PER_SECOND);
+						hud_state->last_shield_hit_time = game_time_get();
+					}
 				}
 			}
 			else if (hud_state->last_shield_vitality < unit->object.shield_vitality)
@@ -679,8 +644,8 @@ void hud_render_damage_indicators(
 	{
 		struct hud_damage_indicators_definition *definition =
 			&hud_globals->damage_indicators;
-		real theta;
-		real_point2d screen_position;
+		real theta = 0.0f;
+		real_point2d screen_position = { 0 };
 		real scale = hud_globals_get_scale(local_player_count() > 1);
 		byte damage_indicators[NUMBER_OF_HUD_DAMAGE_INDICATOR_DIRECTIONS];
 		short direction;
@@ -1296,6 +1261,26 @@ void hud_render_unit_interface(
 							meter_index,
 							struct auxilary_meter_definition);
 
+						/* port: the type is the map's and indexes the flash times
+						and values (one type, the integrated light, which every
+						retail meter is): a meter of any other is not drawn, and
+						that is said once */
+						if (!VALID_INDEX(meter->type, (short)NUMBEROF(hud_state->auxilary_flash_time)))
+						{
+							static boolean bad_meter_type_reported = FALSE;
+
+							if (!bad_meter_type_reported)
+							{
+								bad_meter_type_reported = TRUE;
+								error(
+									_error_silent,
+									"unit hud auxilary meter of type %d (of %d) not drawn",
+									meter->type,
+									(short)NUMBEROF(hud_state->auxilary_flash_time));
+							}
+							continue;
+						}
+
 						if (TEST_FLAG(
 								hud_state->auxilary_active_type_flags,
 								meter->type) &&
@@ -1403,3 +1388,100 @@ void hud_render_unit_interface(
 
 	return;
 }
+
+#ifdef HALO_GAME_BROWSER
+/* port: an element's drawn size (its sprite's, hud_calculate_bitmap_bounds') */
+static void hud_unit_port_element_size(
+	long bitmap_group_index,
+	short sequence_index,
+	real *width,
+	real *height)
+{
+	struct bitmap_data const *bitmap = NULL;
+	real_rectangle2d const *clip = NULL;
+
+	*width = 0.0f;
+	*height = 0.0f;
+	if (bitmap_group_index == NONE)
+		return;
+	hud_retrieve_bitmap_and_bounding_rect(bitmap_group_index, sequence_index, 0, &bitmap, &clip);
+	if (!bitmap)
+		return;
+	if (!clip)
+	{
+		*width = (real)bitmap->width;
+		*height = (real)bitmap->height;
+		return;
+	}
+	/* (an interface bitmap's sprite is in pixels, another's a fraction) */
+	*width = clip->x1 - clip->x0;
+	*height = clip->y1 - clip->y0;
+	if (*width <= 1.0f && *height <= 1.0f)
+	{
+		*width *= (real)bitmap->width;
+		*height *= (real)bitmap->height;
+	}
+}
+
+/* port: a game type's progress (Bomb's arming, game_engine_bomb.c) on the
+likeness of the player's own unit's shield meter, its frame, bitmap and
+colors, drawn again in the middle of the view above the crosshair: a
+fraction from 0 to 1 */
+void hud_render_progress_meter(
+	short local_player_index,
+	real fraction)
+{
+	long player_index = local_player_get_player_index(local_player_index);
+	struct player_datum *player = player_index != NONE ? player_get(player_index) : NULL;
+	struct unit_hud_interface_definition *hud_definition;
+	struct meter_hud_element_definition meter;
+	struct static_hud_element_definition background;
+	struct hud_absolute_placement_definition placement;
+	long hud_index;
+	short value_scale;
+	short draw_flags = 0;
+	short y = (short)(-(render.camera.window_bounds.y1 - render.camera.window_bounds.y0) / 6);
+	real meter_width, meter_height, background_width, background_height;
+	byte value;
+
+	if (!player || player->unit_index == NONE)
+		return;
+	hud_index = unit_definition_get_active_hud_index(
+		unit_definition_get(unit_get(player->unit_index)->definition_index), local_player_count() > 1);
+	if (hud_index == NONE)
+		return;
+	hud_definition = unit_hud_interface_definition_get(hud_index);
+	if (hud_definition->shield_meter.meter.meter_bitmap.index == NONE)
+		return;
+	meter = hud_definition->shield_meter.meter;
+	background = hud_definition->shield_meter.background;
+	hud_unit_port_element_size(meter.meter_bitmap.index, meter.sequence_index, &meter_width, &meter_height);
+	hud_unit_port_element_size(background.interface_bitmap.index, background.sequence_index, &background_width,
+		&background_height);
+	/* (anchored in the middle, each is drawn centered on its point: the
+	frame there, the meter where it sits in the frame at its corner, the
+	top right) */
+	csmemset(&placement, 0, sizeof(placement));
+	placement.corner = _hud_anchor_center;
+	if (background.interface_bitmap.index != NONE)
+	{
+		meter.placement.offset.x = (short)(long)(background_width * 0.5f - meter_width * 0.5f -
+			(hud_definition->shield_meter.meter.placement.offset.x - background.placement.offset.x));
+		meter.placement.offset.y = (short)(long)(y - background_height * 0.5f + meter_height * 0.5f +
+			(hud_definition->shield_meter.meter.placement.offset.y - background.placement.offset.y));
+		background.placement.offset.x = 0;
+		background.placement.offset.y = y;
+	}
+	else
+	{
+		meter.placement.offset.x = 0;
+		meter.placement.offset.y = y;
+	}
+	value_scale = meter.value_scale ? meter.value_scale : 8;
+	value = (byte)PIN(fast_ftol_C((real)value_scale * PIN(fraction, 0.0f, 1.0f)), 0, UNSIGNED_CHAR_MAX);
+	SET_FLAG(draw_flags, _hud_draw_in_multiplayer_bit, local_player_count() > 1);
+	hud_draw_meter(local_player_index, &placement, &meter, value, value, draw_flags, -1.0f, fraction);
+	if (background.interface_bitmap.index != NONE)
+		hud_draw_static_element(local_player_index, &placement, &background, draw_flags, NONE);
+}
+#endif

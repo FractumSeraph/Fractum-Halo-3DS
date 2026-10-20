@@ -35,6 +35,66 @@ void network_game_client_keep_alive(
 short network_game_client_get_state(
 	struct network_game_client *client,
 	short *state_data);
+boolean network_game_client_join_first_available_game(
+	void);
+boolean network_game_client_has_local_player(
+	struct network_game_client *client,
+	short local_player_index);
+boolean network_game_client_split_teams(void);
+boolean network_game_client_set_team(
+	char team_index);
+/* whether the advertised game's host has this machine's network version
+(else the player is told, and it is not to be joined) */
+/* port: whether the advertised game is under way, not in its lobby */
+boolean network_game_client_advertised_game_in_progress(
+	struct network_game_client *client,
+	struct network_advertised_game const *game);
+boolean network_game_client_advertised_game_compatible(
+	struct network_game_client *client,
+	struct network_advertised_game const *game,
+	boolean tell);
+#ifdef HALO_GAME_BROWSER
+/* the advertisement of the game an invite's host advertises (the game
+list's probe, server/src/probe.c) */
+struct network_invite_advertisement
+{
+	/* (NETWORK_GAME_NAME_LENGTH's 16) */
+	wchar_t game_name[16];
+	char map_name[0x80];
+	short engine_type;
+	short player_count;
+	short maximum_player_count;
+	boolean open;
+	boolean has_teams;
+	unsigned short network_version;
+	boolean compatible;
+	/* the machines in it, the score to win, and whether it is under way
+	(not in its lobby) */
+	short machine_count;
+	short score_limit;
+	boolean in_progress;
+	/* its map's version (a Halo PC map's header checksum, which the host
+	advertises: cache_files_map_version; 0 for the Xbox's maps) */
+	unsigned long map_version;
+};
+
+/* the host of the game last joined, by its identifier (its XNADDR's abEnet,
+as an invite's first 12 hex digits name it), into text (13 bytes): what
+network_game_client_join_invite_host joins it again by */
+void network_game_client_joined_host_identifier(
+	char *text,
+	long size);
+/* 1: the game the invite's host advertises through the tunnel, written to
+advertisement; 0: not advertised yet; -1: not an invite */
+long network_game_client_invite_host_advertisement(
+	char const *invite,
+	struct network_invite_advertisement *advertisement);
+/* a game of the game list (network.browser_url) picked: joins its invite,
+TRUE; FALSE for any other game (network_client_manager.c) */
+boolean network_game_client_browser_join(
+	struct network_game_client *client,
+	void const *game);
+#endif
 boolean network_game_client_initiate_join_game(
 	struct network_game_client *client,
 	struct network_advertised_game *game,
@@ -97,8 +157,6 @@ void network_game_client_game_shutdown(
 boolean network_game_client_handle_game_update(
 	struct network_game_client *client,
 	struct message_server_game_update *game_update);
-void network_game_client_game_out_of_sync(
-	struct network_game_client *client);
 boolean network_game_client_add_player_to_game(
 	struct network_game_client *client,
 	struct network_player *player);
@@ -115,8 +173,6 @@ boolean network_game_client_request_remove_player(
 boolean network_game_client_request_start_time_change(
 	struct network_game_client *client,
 	short request_type);
-boolean network_game_client_leave_game(
-	struct network_game_client *client);
 void network_game_client_switch_to_postgame(
 	struct network_game_client *client);
 boolean network_game_client_switch_to_pregame(
@@ -137,14 +193,19 @@ boolean network_game_client_server_has_started_game(
 	struct network_game_client *client);
 long network_game_client_get_next_update_number(
 	struct network_game_client *client);
-boolean network_client_get_oos(
-	struct network_game_client *client);
 long unstrip_player_index(
 	long player_index);
 
 /* ---------- globals */
 
 extern boolean allow_out_of_sync;
+/* the host's game time when it told this client to start a game in progress,
+16 bits of it (network_client_message_handler.c sets it) */
+extern long network_game_client_late_join_time;
+/* port: the host's start: the game loaded now, or once the map is there if it
+is being downloaded (map sharing) */
+boolean network_game_client_begin_game(
+	struct network_game_client *client);
 extern boolean network_game_client_dont_use_directly_in_use;
 extern struct network_game_client network_game_client_dont_use_directly;
 

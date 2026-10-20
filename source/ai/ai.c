@@ -208,15 +208,14 @@ symbols in this file:
 #include "ai/ai_communication.h"
 #include "ai/ai_debug.h"
 #include "ai/ai_profile.h"
-#include "ai/ai_runtime.h"
 #include "ai/ai_scenario_definitions.h"
 #include "ai/ai_script.h"
-#include "ai/actor_iterators.h"
 #include "ai/actor_placement.h"
 #include "ai/actor_types.h"
 #include "ai/actions.h"
 
 #include "ai/actors.h"
+#include "ai/ai_globals.h"
 #include "ai/encounters.h"
 #include "ai/path.h"
 #include "ai/props.h"
@@ -228,6 +227,7 @@ symbols in this file:
 #include "game/game_globals.h"
 #include "game/players.h"
 
+#include "main/console.h"
 #include "memory/data.h"
 #include "objects/damage.h"
 #include "physics/collision_usage.h"
@@ -239,6 +239,9 @@ symbols in this file:
 #include "tag_files/tag_groups.h"
 
 #include <stddef.h>
+#ifdef HALO_64BIT
+#include "main/console.h"
+#endif
 
 #undef COLLISIONS_EXTERNAL_COLLISION_TEST_LINE
 #undef REAL_MATH_EXTERNAL_NORMALIZE3D
@@ -331,38 +334,6 @@ enum
 
 /* ---------- structures */
 
-struct ai_spatial_effect
-{
-	short type;
-	short count;
-	real_point3d position;
-	long last_tick;
-};
-
-struct ai_globals_data
-{
-	boolean ai_active;
-	boolean ai_initialized_for_map;
-	boolean ai_has_control_data;
-	byte reserved003[0x5];
-	long first_encounterless_actor_index;
-	real major_upgrade_error;
-	boolean dialogue_triggers_enabled;
-	byte reserved011[0x3];
-	long last_chatter_time[NUMBER_OF_AI_SPEECH_TIMERS];
-	long last_talk_time[NUMBER_OF_AI_SPEECH_TIMERS];
-	long last_shout_time[NUMBER_OF_AI_SPEECH_TIMERS];
-	byte reserved02C[0x104];
-	short spatial_effect_first_index;
-	short spatial_effect_last_index;
-	struct ai_spatial_effect spatial_effects[MAXIMUM_AI_SPATIAL_EFFECTS];
-	boolean grenades_enabled;
-	byte reserved3B5[0x503];
-	short mounted_weapon_unit_count;
-	byte reserved8BA[0x2];
-	long mounted_weapon_unit_indices[MAXIMUM_NUMBER_OF_MOUNTED_WEAPON_UNITS];
-};
-
 struct potentially_releasable_entity
 {
 	boolean is_actor;
@@ -415,31 +386,32 @@ struct encounter_iterator
 };
 
 typedef char ai_globals_active_offset_assert[
-	offsetof(struct ai_globals_data, ai_active) == 0x0 ? 1 : -1];
+	offsetof(struct ai_globals, ai_active) == 0x0 ? 1 : -1];
 typedef char ai_globals_initialized_offset_assert[
-	offsetof(struct ai_globals_data, ai_initialized_for_map) == 0x1 ? 1 : -1];
+	offsetof(struct ai_globals, ai_initialized_for_map) == 0x1 ? 1 : -1];
 typedef char ai_globals_first_encounterless_actor_offset_assert[
-	offsetof(struct ai_globals_data, first_encounterless_actor_index) == 0x8 ? 1 : -1];
+	offsetof(struct ai_globals, first_encounterless_actor_index) == 0x8 ? 1 : -1];
 typedef char ai_globals_dialogue_offset_assert[
-	offsetof(struct ai_globals_data, dialogue_triggers_enabled) == 0x10 ? 1 : -1];
+	offsetof(struct ai_globals, dialogue_triggers_enabled) == 0x10 ? 1 : -1];
 typedef char ai_globals_last_chatter_time_offset_assert[
-	offsetof(struct ai_globals_data, last_chatter_time) == 0x14 ? 1 : -1];
+	offsetof(struct ai_globals, last_chatter_time) == 0x14 ? 1 : -1];
 typedef char ai_globals_spatial_effects_offset_assert[
-	offsetof(struct ai_globals_data, spatial_effects) == 0x134 ? 1 : -1];
+	offsetof(struct ai_globals, spatial_effects) == 0x134 ? 1 : -1];
 typedef char ai_spatial_effect_size_assert[
 	sizeof(struct ai_spatial_effect) == 0x14 ? 1 : -1];
 typedef char ai_globals_grenades_offset_assert[
-	offsetof(struct ai_globals_data, grenades_enabled) == 0x3B4 ? 1 : -1];
+	offsetof(struct ai_globals, grenades_enabled) == 0x3B4 ? 1 : -1];
 typedef char ai_globals_mounted_weapon_count_offset_assert[
-	offsetof(struct ai_globals_data, mounted_weapon_unit_count) == 0x8B8 ? 1 : -1];
+	offsetof(struct ai_globals, mounted_weapon_unit_count) == 0x8B8 ? 1 : -1];
 typedef char ai_globals_size_assert[
-	sizeof(struct ai_globals_data) == 0x8DC ? 1 : -1];
+	sizeof(struct ai_globals) == 0x8DC ? 1 : -1];
 typedef char ai_potentially_releasable_storage_size_assert[
 	sizeof(struct potentially_releasable_storage) == 0xC04 ? 1 : -1];
 typedef char ai_unit_actor_index_offset_assert[
 	offsetof(struct unit_datum, unit.actor_index) == 0x1A4 ? 1 : -1];
 typedef char ai_actor_last_vehicle_exit_forced_offset_assert[
 	offsetof(struct actor_datum, emotions.last_vehicle_exit_forced) == 0x38C ? 1 : -1];
+#ifndef HALO_64BIT
 typedef char ai_actor_iterator_size_assert[
 	sizeof(struct actor_iterator) == 0x1C ? 1 : -1];
 typedef char ai_actor_iterator_index_offset_assert[
@@ -448,6 +420,7 @@ typedef char ai_encounter_iterator_size_assert[
 	sizeof(struct encounter_iterator) == 0x18 ? 1 : -1];
 typedef char ai_encounter_iterator_index_offset_assert[
 	offsetof(struct encounter_iterator, index) == 0x10 ? 1 : -1];
+#endif
 typedef char ai_encounter_actor_iterator_size_assert[
 	sizeof(struct encounter_actor_iterator) == 0xC ? 1 : -1];
 typedef char ai_encounter_actor_iterator_index_offset_assert[
@@ -496,10 +469,13 @@ typedef char ai_prop_unopposable_enemy_offset_assert[
 
 static void ai_place_pending_mounted_weapons(
 	void);
+static boolean ai_enemies_endanger_player(
+	boolean must_be_attacking,
+	long unit_index);
+static void ai_flush_spatial_effects(
+	void);
 
 /* ---------- globals */
-
-extern struct ai_globals_data *ai_globals;
 
 static struct profile_section ai_update_section = { "ai_update", NONE, TRUE };
 
@@ -524,10 +500,10 @@ struct tag_enum_definition ai_sound_volume_enum =
 void ai_initialize(
 	void)
 {
-	ai_globals = game_state_malloc("ai globals", NULL, sizeof(struct ai_globals_data));
+	ai_globals = game_state_malloc("ai globals", NULL, sizeof(struct ai_globals));
 	match_assert("c:\\halo\\SOURCE\\ai\\ai.c", 0x8C, ai_globals);
 
-	csmemset(ai_globals, 0, sizeof(struct ai_globals_data));
+	csmemset(ai_globals, 0, sizeof(struct ai_globals));
 
 	ai_debug_initialize();
 	ai_profile_initialize();
@@ -755,7 +731,7 @@ boolean ai_release_inactive_swarms(
 	return released_unit_count > 0;
 }
 
-int compare_potentially_releasable_entities(
+static int compare_potentially_releasable_entities(
 	void const *element0,
 	void const *element1)
 {
@@ -1575,11 +1551,11 @@ void ai_handle_exit_vehicle(
 	return;
 }
 
-void ai_flush_spatial_effects(
+static void ai_flush_spatial_effects(
 	void)
 {
-	ai_globals->spatial_effect_last_index = 0;
-	ai_globals->spatial_effect_first_index = 0;
+	ai_globals->spatial_effects_last_index = 0;
+	ai_globals->spatial_effects_first_index = 0;
 	csmemset(
 		ai_globals->spatial_effects,
 		0,
@@ -1926,7 +1902,7 @@ boolean ai_consider_major_upgrade(
 void ai_initialize_for_new_map(
 	void)
 {
-	csmemset(ai_globals, 0, sizeof(struct ai_globals_data));
+	csmemset(ai_globals, 0, sizeof(struct ai_globals));
 
 	ai_globals->ai_active = TRUE;
 	ai_globals->ai_has_control_data = TRUE;
@@ -2025,8 +2001,11 @@ void ai_update(
 	return;
 }
 
-boolean ai_enemies_endanger_player(
-	boolean must_be_attacking)
+/* port: unit_index NONE is any player's unit (the game's own check); else
+only enemies of that unit count (network co-op's respawn, players.c) */
+static boolean ai_enemies_endanger_player(
+	boolean must_be_attacking,
+	long unit_index)
 {
 	long current_time = game_time_get();
 	struct data_iterator iterator;
@@ -2039,7 +2018,8 @@ boolean ai_enemies_endanger_player(
 	{
 		if (prop->player &&
 			prop->enemy &&
-			unit_get(prop->unit_index)->unit.player_index != NONE)
+			unit_get(prop->unit_index)->unit.player_index != NONE &&
+			(unit_index == NONE || prop->unit_index == unit_index))
 		{
 			struct actor_datum *actor = actor_get(prop->owner_actor_index);
 			long object_index = actor->meta.swarm
@@ -2122,13 +2102,27 @@ boolean ai_enemies_endanger_player(
 boolean ai_enemies_can_see_player(
 	void)
 {
-	return ai_enemies_endanger_player(FALSE);
+	return ai_enemies_endanger_player(FALSE, NONE);
 }
 
 boolean ai_enemies_attacking_player(
 	void)
 {
-	return ai_enemies_endanger_player(TRUE);
+	return ai_enemies_endanger_player(TRUE, NONE);
+}
+
+/* port: whether enemies can see this player's unit */
+boolean ai_port_enemies_can_see_unit(
+	long unit_index)
+{
+	return ai_enemies_endanger_player(FALSE, unit_index);
+}
+
+/* port: whether enemies are attacking this player's unit */
+boolean ai_port_enemies_attacking_unit(
+	long unit_index)
+{
+	return ai_enemies_endanger_player(TRUE, unit_index);
 }
 
 long ai_get_race_from_team_index(
@@ -2567,16 +2561,16 @@ finish:
 boolean ai_test_ballistic_line_of_fire(
 	long actor_index,
 	real_point3d const *origin,
-	real ticks,
-	real_vector3d const *velocity,
-	real gravity,
+	real arc_time,
+	real_vector3d const *arc_initial_velocity,
+	real arc_acceleration,
 	long ignore_object_index,
-	boolean in_vehicle)
+	boolean ignore_vehicles)
 {
-	struct line_of_fire_pill pills[MAXIMUM_LINE_OF_FIRE_PILLS];
+	struct line_of_fire_pill friend_pills[MAXIMUM_LINE_OF_FIRE_PILLS];
 	struct collision_result collision;
 	struct actor_datum *actor = actor_get(actor_index);
-	real_point3d point;
+	real_point3d current_point;
 	real_point3d end_point;
 	real_vector3d arc_velocity;
 	real segment_start_time;
@@ -2593,13 +2587,13 @@ boolean ai_test_ballistic_line_of_fire(
 	pill_count = ai_find_line_of_fire_friend_pills(
 		actor_index,
 		MAXIMUM_LINE_OF_FIRE_PILLS,
-		pills);
+		friend_pills);
 
 	if (!ai_debug.ballistic_lineoffire_freeze)
 	{
 		ai_debug.ballistic_lineoffire_valid = TRUE;
 		ai_debug.ballistic_lineoffire_start = *origin;
-		ai_debug.ballistic_lineoffire_vector = *velocity;
+		ai_debug.ballistic_lineoffire_vector = *arc_initial_velocity;
 		ai_debug.ballistic_lineoffire_point_count = 0;
 		ai_debug.ballistic_lineoffire_pill_count = MIN(
 			pill_count,
@@ -2609,9 +2603,9 @@ boolean ai_test_ballistic_line_of_fire(
 			pill_index < ai_debug.ballistic_lineoffire_pill_count;
 			pill_index++)
 		{
-			ai_debug.ballistic_lineoffire_pill_start[pill_index] = pills[pill_index].base;
-			ai_debug.ballistic_lineoffire_pill_end[pill_index] = pills[pill_index].directed_height;
-			ai_debug.ballistic_lineoffire_pill_radius[pill_index] = pills[pill_index].width;
+			ai_debug.ballistic_lineoffire_pill_start[pill_index] = friend_pills[pill_index].base;
+			ai_debug.ballistic_lineoffire_pill_end[pill_index] = friend_pills[pill_index].directed_height;
+			ai_debug.ballistic_lineoffire_pill_radius[pill_index] = friend_pills[pill_index].width;
 		}
 	}
 
@@ -2623,39 +2617,39 @@ boolean ai_test_ballistic_line_of_fire(
 		FLAG(_collision_test_objects_bit) |
 		_collision_test_objects_sight_blocking_flags;
 
-	if (in_vehicle)
+	if (ignore_vehicles)
 		collision_flags &= ~FLAG(_collision_test_objects_vehicles_bit);
 
-	point = *origin;
-	arc_velocity = *velocity;
+	current_point = *origin;
+	arc_velocity = *arc_initial_velocity;
 	segment_start_time = 0.0f;
-	segment_end_time = MIN(6.0f, ticks);
+	segment_end_time = MIN(6.0f, arc_time);
 
 	do
 	{
 		if (!ai_debug.ballistic_lineoffire_freeze &&
 			ai_debug.ballistic_lineoffire_point_count < MAXIMUM_AI_DEBUG_BALLISTIC_POINTS)
 		{
-			ai_debug.ballistic_lineoffire_point[ai_debug.ballistic_lineoffire_point_count] = point;
+			ai_debug.ballistic_lineoffire_point[ai_debug.ballistic_lineoffire_point_count] = current_point;
 			ai_debug.ballistic_lineoffire_point_count++;
 		}
 
 		{
 			real segment_time = segment_end_time - segment_start_time;
 
-			end_point.x = arc_velocity.i * segment_time + point.x;
-			end_point.y = arc_velocity.j * segment_time + point.y;
-			end_point.z = (segment_time * arc_velocity.k + point.z) +
-				(segment_time * segment_time) * gravity * 0.5f;
+			end_point.x = arc_velocity.i * segment_time + current_point.x;
+			end_point.y = arc_velocity.j * segment_time + current_point.y;
+			end_point.z = (segment_time * arc_velocity.k + current_point.z) +
+				(segment_time * segment_time) * arc_acceleration * 0.5f;
 		}
 
 		{
 			real_vector3d segment_vector;
 
-			vector_from_points3d(&point, &end_point, &segment_vector);
+			vector_from_points3d(&current_point, &end_point, &segment_vector);
 			line_of_fire = !collision_test_vector(
 				collision_flags,
-				&point,
+				&current_point,
 				&segment_vector,
 				ignore_object_index,
 				&collision);
@@ -2667,16 +2661,16 @@ boolean ai_test_ballistic_line_of_fire(
 		{
 			real_vector3d segment_vector;
 
-			vector_from_points3d(&point, &end_point, &segment_vector);
+			vector_from_points3d(&current_point, &end_point, &segment_vector);
 
 			for (pill_index = 0; pill_index < pill_count; pill_index++)
 			{
 				boolean intersected = vector_intersects_pill3d(
-					&point,
+					&current_point,
 					&segment_vector,
-					&pills[pill_index].base,
-					&pills[pill_index].directed_height,
-					pills[pill_index].width);
+					&friend_pills[pill_index].base,
+					&friend_pills[pill_index].directed_height,
+					friend_pills[pill_index].width);
 
 				if (intersected)
 				{
@@ -2689,15 +2683,15 @@ boolean ai_test_ballistic_line_of_fire(
 		if (!line_of_fire)
 			break;
 
-		point = end_point;
-		arc_velocity.k = (segment_end_time - segment_start_time) * gravity + arc_velocity.k;
+		current_point = end_point;
+		arc_velocity.k = (segment_end_time - segment_start_time) * arc_acceleration + arc_velocity.k;
 		segment_start_time = segment_end_time;
 		segment_end_time += 6.0f;
 
-		if (segment_end_time > ticks)
-			segment_end_time = ticks;
+		if (segment_end_time > arc_time)
+			segment_end_time = arc_time;
 	}
-	while (segment_start_time < ticks);
+	while (segment_start_time < arc_time);
 
 	if (!ai_debug.ballistic_lineoffire_freeze &&
 		ai_debug.ballistic_lineoffire_point_count < MAXIMUM_AI_DEBUG_BALLISTIC_POINTS)
@@ -2747,14 +2741,12 @@ void ai_handle_editing(
 						"editing caused an overflow of MAXIMUM_SQUADS_PER_MAP (%d)",
 						MAXIMUM_SQUADS_PER_MAP));
 
-				/* BUG (preserved for exact matching): January passes the squad record COUNT as the
-				 * csmemmove byte size, so only that many bytes of the trailing squad records move.
-				 * A corrected build should multiply the count by sizeof(struct squad_datum).
-				 */
+				/* port: the records move whole (January passed their count as
+				the size) */
 				csmemmove(
 					&squad_array[encounter->squad_base + encounter_definition->squads.count],
 					&squad_array[encounter->squad_base + encounter->squad_count],
-					last_squad_index - encounter->squad_base - encounter->squad_count);
+					(last_squad_index - encounter->squad_base - encounter->squad_count) * sizeof(struct squad_datum));
 
 				if (squad_count_delta > 0)
 				{
@@ -2781,14 +2773,12 @@ void ai_handle_editing(
 						"editing caused an overflow of MAXIMUM_PLATOONS_PER_MAP (%d)",
 						MAXIMUM_PLATOONS_PER_MAP));
 
-				/* BUG (preserved for exact matching): January passes the platoon record COUNT as the
-				 * csmemmove byte size, so only that many bytes of the trailing platoon records move.
-				 * A corrected build should multiply the count by sizeof(struct platoon_datum).
-				 */
+				/* port: the records move whole (January passed their count as
+				the size) */
 				csmemmove(
 					&platoon_array[encounter->platoon_base + encounter_definition->platoons.count],
 					&platoon_array[encounter->platoon_base + encounter->platoon_count],
-					last_platoon_index - encounter->platoon_base - encounter->platoon_count);
+					(last_platoon_index - encounter->platoon_base - encounter->platoon_count) * sizeof(struct platoon_datum));
 
 				if (platoon_count_delta > 0)
 				{
@@ -2958,8 +2948,8 @@ void ai_handle_spatial_effect(
 			submit = TRUE;
 			available_effect_index = NONE;
 
-			for (i = ai_globals->spatial_effect_first_index;
-				i != ai_globals->spatial_effect_last_index;
+			for (i = ai_globals->spatial_effects_first_index;
+				i != ai_globals->spatial_effects_last_index;
 				i = AI_SPATIAL_EFFECT_NEXT_INDEX(i))
 			{
 				boolean matches = FALSE;
@@ -2976,9 +2966,9 @@ void ai_handle_spatial_effect(
 				{
 					ai_globals->spatial_effects[i].type = NONE;
 
-					if (i == ai_globals->spatial_effect_first_index)
+					if (i == ai_globals->spatial_effects_first_index)
 					{
-						ai_globals->spatial_effect_first_index =
+						ai_globals->spatial_effects_first_index =
 							AI_SPATIAL_EFFECT_NEXT_INDEX(i);
 					}
 					else
@@ -3015,15 +3005,15 @@ void ai_handle_spatial_effect(
 			{
 				if (available_effect_index == NONE)
 				{
-					i = ai_globals->spatial_effect_last_index;
-					ai_globals->spatial_effect_last_index =
-						AI_SPATIAL_EFFECT_NEXT_INDEX(ai_globals->spatial_effect_last_index);
+					i = ai_globals->spatial_effects_last_index;
+					ai_globals->spatial_effects_last_index =
+						AI_SPATIAL_EFFECT_NEXT_INDEX(ai_globals->spatial_effects_last_index);
 
-					if (ai_globals->spatial_effect_last_index ==
-						ai_globals->spatial_effect_first_index)
+					if (ai_globals->spatial_effects_last_index ==
+						ai_globals->spatial_effects_first_index)
 					{
-						ai_globals->spatial_effect_first_index =
-							AI_SPATIAL_EFFECT_NEXT_INDEX(ai_globals->spatial_effect_first_index);
+						ai_globals->spatial_effects_first_index =
+							AI_SPATIAL_EFFECT_NEXT_INDEX(ai_globals->spatial_effects_first_index);
 					}
 				}
 				else
@@ -3033,10 +3023,10 @@ void ai_handle_spatial_effect(
 
 				{
 					short distance_to_effect =
-						(i - ai_globals->spatial_effect_first_index + MAXIMUM_AI_SPATIAL_EFFECTS) &
+						(i - ai_globals->spatial_effects_first_index + MAXIMUM_AI_SPATIAL_EFFECTS) &
 						(MAXIMUM_AI_SPATIAL_EFFECTS - 1);
 					short distance_to_end_of_queue =
-						(ai_globals->spatial_effect_last_index - ai_globals->spatial_effect_first_index +
+						(ai_globals->spatial_effects_last_index - ai_globals->spatial_effects_first_index +
 							MAXIMUM_AI_SPATIAL_EFFECTS) &
 						(MAXIMUM_AI_SPATIAL_EFFECTS - 1);
 

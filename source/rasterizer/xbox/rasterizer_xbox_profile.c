@@ -136,7 +136,7 @@ symbols in this file:
 #include "cseries/errors.h"
 #include "cseries/profile_rasterizer.h"
 #include "rasterizer/rasterizer.h"
-#include "rasterizer/rasterizer_debug_options.h"
+#include "rasterizer/rasterizer_console_vars.h"
 
 #include <xtl.h>
 
@@ -177,8 +177,10 @@ struct rasterizer_profile_globals
 	const char *profile_names[NUMBER_OF_RASTERIZER_PROFILES];
 };
 
+#ifndef HALO_64BIT
 typedef char rasterizer_profile_globals_size_assert[
 	sizeof(struct rasterizer_profile_globals) == 124 ? 1 : -1];
+#endif
 typedef char rasterizer_profile_globals_window_index_offset_assert[
 	offsetof(struct rasterizer_profile_globals, window_index) == 4 ? 1 : -1];
 typedef char rasterizer_profile_globals_profile_names_offset_assert[
@@ -243,7 +245,6 @@ static void frame_callback_function(
 
 /* ---------- globals */
 
-extern struct rasterizer_window_begin_parameters global_window_parameters;
 
 static LARGE_INTEGER rasterizer_profile_performance_counter_frequency = { 1 };
 static struct rasterizer_profile_globals rasterizer_profile_globals =
@@ -605,8 +606,8 @@ void rasterizer_profile_dispose(
 static boolean rasterizer_profile_enabled(
 	void)
 {
-	return rasterizer_debug_options.stats == 3 ||
-		rasterizer_debug_options.profile_log;
+	return rasterizer_debug_options.statistics_mode == 3 ||
+		rasterizer_debug_options.profile_log_enabled;
 }
 
 static void profile_assert(
@@ -631,16 +632,9 @@ static void profile_assert(
 		}
 		else
 		{
-			/* BUG (preserved for exact matching): January pushes the same two
-			 * varargs (profile, message) in both branches (target push and
-			 * relocation order; the later /Od build at 0x8004c0 does the same), so
-			 * this format's %s consumes the NONE profile value, not the message.
-			 * A corrected build should pass only message here.
-			 */
 			error(
 				_error_silent,
 				"### PROFILE: %s -- tell Bernie!",
-				profile,
 				message);
 		}
 

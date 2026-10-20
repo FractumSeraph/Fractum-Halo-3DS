@@ -44,11 +44,13 @@ symbols in this file:
 
 /* ---------- headers */
 
-#include "rasterizer/rasterizer_frame_statistics.h"
 #include "cseries.h"
 #include "cseries/errors.h"
 #include "rasterizer_xbox_vertex_shaders.h"
 #include <xtl.h>
+#include "rasterizer/rasterizer.h"
+#include "rasterizer/xbox/rasterizer_xbox.h"
+#include "rasterizer/rasterizer_console_vars.h"
 
 /* ---------- constants */
 
@@ -76,12 +78,6 @@ struct rasterizer_vertex_shader_runtime_globals
 	struct packed_vertex_shader packed_shaders[3];
 };
 
-struct rasterizer_vertex_shader_debug_options
-{
-	byte reserved00[2];
-	short vertex_shader_statistics;
-};
-
 /* ---------- prototypes */
 
 void rasterizer_error(
@@ -91,7 +87,7 @@ void rasterizer_error(
 
 /* ---------- globals */
 
-short const vertex_shader_translation_tables[] =
+static short const vertex_shader_translation_tables[] =
 {
 	-1, -1, -1, -1, -1, -1, -1, -1, -1, 0, -1, -1,
 	-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 1, -1,
@@ -150,7 +146,7 @@ short const vertex_shader_translation_tables[] =
 	-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 33, 11,
 };
 
-struct rasterizer_vertex_shader_runtime_globals vertex_shader_runtime_globals =
+static struct rasterizer_vertex_shader_runtime_globals vertex_shader_runtime_globals =
 {
 	NONE,
 	0,
@@ -160,9 +156,6 @@ struct rasterizer_vertex_shader_runtime_globals vertex_shader_runtime_globals =
 		{ 27, FALSE, 0, 0 },
 	},
 };
-
-extern struct rasterizer_vertex_shader_debug_options rasterizer_debug_options;
-extern void *global_d3d_device;
 
 /* ---------- public code */
 
@@ -226,6 +219,30 @@ void rasterizer_set_vertex_shader_permutation(
 			876,
 			FALSE,
 			"### ERROR unsupported vertex shader");
+	}
+
+	/* port: a shader, vertex type and permutation the tables have (the type
+	and permutation can be a map's), before the asserts read the table; the
+	current shader stays, said once */
+	if (!translation_table ||
+		!VALID_INDEX(vertex_type, NUMBER_OF_RASTERIZER_VERTEX_TYPES) ||
+		!VALID_INDEX(permutation_index, permutation_count) ||
+		translation_table[vertex_type * permutation_count + permutation_index] == NONE)
+	{
+		static boolean reported = FALSE;
+
+		if (!reported)
+		{
+			error(
+				_error_silent,
+				"### ERROR no vertex shader #%d for vertex type #%d permutation #%d; it is not set",
+				vertex_shader_index,
+				vertex_type,
+				permutation_index);
+			reported = TRUE;
+		}
+
+		return;
 	}
 
 	match_assert(
@@ -359,7 +376,7 @@ void rasterizer_set_vertex_shader_permutation(
 				vertex_shader_runtime_globals.packed_shaders[packed_shader_index].loaded = FALSE;
 		}
 
-		if (rasterizer_debug_options.vertex_shader_statistics)
+		if (rasterizer_debug_options.statistics_mode)
 			rasterizer_frame_statistics.vertex_shader_instruction_count +=
 				vertex_shader_table[vertex_shader_index].instruction_count;
 

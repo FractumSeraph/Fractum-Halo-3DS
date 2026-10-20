@@ -5,6 +5,7 @@ AI_DEBUG.C
 /* ---------- headers */
 
 #include "cseries.h"
+#include "cseries/errors.h"
 #include "ai_debug.h"
 
 #include "actions.h"
@@ -12,6 +13,7 @@ AI_DEBUG.C
 #include "actor_definitions.h"
 #include "actor_types.h"
 #include "ai.h"
+#include "ai/ai_globals.h"
 #include "ai_communication.h"
 #include "ai_profile.h"
 #include "ai_scenario_definitions.h"
@@ -22,10 +24,11 @@ AI_DEBUG.C
 #include "camera/observer.h"
 #include "editor/editor_stubs.h"
 #include "game/game.h"
-#include "game/player_control.h"
 #include "game/players.h"
+#include "main/console.h"
 #include "memory/data.h"
 #include "objects/damage.h"
+#include "physics/collision_bsp.h" /* port: collision_surface_edge_ring_continues */
 #include "physics/collision_bsp_definitions.h"
 #include "physics/collisions.h"
 #include "rasterizer/rasterizer.h"
@@ -40,6 +43,10 @@ AI_DEBUG.C
 #include "units/biped_definitions.h"
 #include "units/units.h"
 #include "units/unit_definitions.h"
+#ifdef HALO_64BIT
+#include "main/console.h"
+#include "cseries/errors.h"
+#endif
 
 /* ---------- constants */
 
@@ -86,40 +93,6 @@ struct ai_debug_speech_list
 	boolean all;
 };
 
-struct ai_debug_spatial_effect
-{
-	short type;
-	short field_02;
-	real_point3d point;
-	long time;
-};
-
-struct ai_debug_enterable_vehicle
-{
-	long object_index;
-	real distance;
-	short team_flags;
-	short actor_type_flags;
-	short actor_count;
-	word pad;
-	long actor_index[6];
-};
-
-struct ai_debug_globals_view
-{
-	boolean ai_active;
-	boolean initialized_for_new_map;
-	char __unknown02[0x12E];
-	short spatial_effect_head;
-	short spatial_effect_tail;
-	struct ai_debug_spatial_effect spatial_effect[32];
-	boolean field_3B4;
-	char __unknown3B5[1];
-	short enterable_vehicle_count;
-	struct ai_debug_enterable_vehicle enterable_vehicle[32];
-	short field_8B8;
-	char __unknown8BA[0x22];
-};
 struct encounter_actor_iterator
 {
 	long encounter_index;
@@ -138,20 +111,22 @@ struct actor_iterator
 };
 
 typedef char ai_debug_enterable_vehicle_size_assert[
-	sizeof(struct ai_debug_enterable_vehicle) == 0x28 ? 1 : -1];
+	sizeof(struct ai_vehicle_enterable) == 0x28 ? 1 : -1];
 typedef char ai_debug_globals_spatial_effect_offset_assert[
-	offsetof(struct ai_debug_globals_view, spatial_effect) == 0x134 ? 1 : -1];
+	offsetof(struct ai_globals, spatial_effects) == 0x134 ? 1 : -1];
 typedef char ai_debug_globals_enterable_vehicle_offset_assert[
-	offsetof(struct ai_debug_globals_view, enterable_vehicle) == 0x3B8 ? 1 : -1];
+	offsetof(struct ai_globals, enterable_vehicles) == 0x3B8 ? 1 : -1];
 typedef char ai_debug_globals_size_assert[
-	sizeof(struct ai_debug_globals_view) == 0x8DC ? 1 : -1];
+	sizeof(struct ai_globals) == 0x8DC ? 1 : -1];
+#ifndef HALO_64BIT
 typedef char ai_debug_actor_iterator_size_assert[
 	sizeof(struct actor_iterator) == 0x1C ? 1 : -1];
 
+#endif
 
 /* ---------- prototypes */
 
-void ai_debug_drawstack_setup(
+static void ai_debug_drawstack_setup(
 	union real_point3d const *drawstack_base);
 static real_point3d *ai_debug_drawstack(
 	void);
@@ -231,16 +206,9 @@ static void ai_debug_render_path_nodes(
 	boolean render_polygons,
 	boolean render_costs,
 	boolean render_closest);
-void actor_iterator_new(
-	struct actor_iterator *iterator,
-	boolean active_only);
-struct actor_datum *actor_iterator_next(
-	struct actor_iterator *iterator);
 /* ---------- globals */
 
 struct ai_debug_state ai_debug;
-
-extern struct ai_debug_globals_view *ai_globals;
 
 struct actor_debug_info *actor_debug_array = NULL;
 struct path_debug_storage *actor_path_debug_array = NULL;
@@ -249,7 +217,6 @@ static short global_ai_debug_path_render_id = 0;
 real_point3d global_ai_debug_drawstack_next_position;
 real_point3d global_ai_debug_drawstack_last_position;
 real global_ai_debug_drawstack_height;
-real_argb_color global_temporary_render_color;
 long global_ai_debug_firing_position_color_count = NONE;
 
 static char const *postcombat_type_strings[NUMBER_OF_ACTOR_POSTCOMBAT_ACTIONS] =
@@ -467,7 +434,7 @@ boolean ai_debug_highlight_cluster(
 void ai_debug_render(
 	void)
 {
-	if (ai_globals->initialized_for_new_map)
+	if (ai_globals->ai_initialized_for_map)
 	{
 		global_ai_debug_string_position = rasterizer_globals.reserved04.frame_bounds.y1 - 20;
 
@@ -764,20 +731,42 @@ static void ai_debug_render_surface(
 	union real_argb_color const *color)
 {
 	struct collision_bsp const *collision_bsp = TAG_BLOCK_GET_ELEMENT(&structure_bsp->collision_bsp, 0, struct collision_bsp);
-	struct collision_surface const *collision_surface = TAG_BLOCK_GET_ELEMENT(&collision_bsp->surfaces, surface_index, struct collision_surface);
-	long edge_index = collision_surface->first_edge_index;
+	struct collision_surface const *collision_surface;
+	long edge_index;
+	short edge_count = 0;
+
+	/* port: a surface that is the bsp's (an actor's or biped's, from a
+	map's edges), and its ring of edges as
+	collision_surface_edge_ring_continues says (a map's ring that doesn't
+	close would walk forever; the retail rings all close within 3 to 8
+	edges) */
+	if (!collision_bsp_valid_surface_index(collision_bsp, surface_index))
+		return;
+	collision_surface = TAG_BLOCK_GET_ELEMENT(&collision_bsp->surfaces, surface_index, struct collision_surface);
+	edge_index = collision_surface->first_edge_index;
+	if (!collision_surface_edge_ring_continues(collision_bsp, edge_index, 0))
+		return;
 
 	do
 	{
 		struct collision_edge const *edge = TAG_BLOCK_GET_ELEMENT(&collision_bsp->edges, edge_index, struct collision_edge);
 		const boolean next_index_belongs_to_surface = edge->surface_indices[1] == surface_index;
-		struct collision_vertex const *point0 = TAG_BLOCK_GET_ELEMENT(&collision_bsp->vertices, edge->vertex_indices[0], struct collision_vertex);
-		struct collision_vertex const *point1 = TAG_BLOCK_GET_ELEMENT(&collision_bsp->vertices, edge->vertex_indices[1], struct collision_vertex);
+		struct collision_vertex const *point0;
+		struct collision_vertex const *point1;
+
+		/* port: (and with vertices that are the bsp's) */
+		if (!VALID_INDEX(edge->vertex_indices[0], collision_bsp->vertices.count) ||
+			!VALID_INDEX(edge->vertex_indices[1], collision_bsp->vertices.count))
+			break;
+		point0 = TAG_BLOCK_GET_ELEMENT(&collision_bsp->vertices, edge->vertex_indices[0], struct collision_vertex);
+		point1 = TAG_BLOCK_GET_ELEMENT(&collision_bsp->vertices, edge->vertex_indices[1], struct collision_vertex);
 
 		render_debug_line_offset(TRUE, &point0->point, &point1->point, color, offset + 0.015f);
 		edge_index = edge->edge_indices[next_index_belongs_to_surface];
+		edge_count++;
 	}
-	while (edge_index!=collision_surface->first_edge_index);
+	while (edge_index!=collision_surface->first_edge_index &&
+		collision_surface_edge_ring_continues(collision_bsp, edge_index, edge_count));
 
 	return;
 }
@@ -1574,8 +1563,6 @@ static void ai_debug_render_actor(
 
 			if (TEST_FLAG(actor_definition->flags, _actor_definition_fixed_crouch_facing_bit))
 			{
-				char const *string;
-
 				if (actor->control.desire_stationary_facing)
 				{
 					if (actor->control.fixed_stationary_facing)
@@ -1723,9 +1710,9 @@ static void ai_debug_render_actor(
 					case 1:
 						set_real_point3d(
 							&origin,
-							((1.f-prop->awareness)*prop_start_point.x) + (prop->awareness*prop->head_position.x),
-							((1.f-prop->awareness)*prop_start_point.y) + (prop->awareness*prop->head_position.y),
-							((1.f-prop->awareness)*prop_start_point.z) + (prop->awareness*prop->head_position.z)
+							(1.f-prop->awareness)*prop_start_point.x + prop->awareness*prop->head_position.x,
+							(1.f-prop->awareness)*prop_start_point.y + prop->awareness*prop->head_position.y,
+							(1.f-prop->awareness)*prop_start_point.z + prop->awareness*prop->head_position.z
 						);
 						render_debug_line(TRUE, &prop_start_point, &origin, global_real_argb_yellow);
 						render_debug_line(TRUE, &origin, &prop->head_position, global_real_argb_black);
@@ -3695,8 +3682,7 @@ static void ai_debug_render_actor(
 				{
 					"",
 					"part",
-					"full",
-					NULL
+					"full"
 				};
 
 				sprintf(
@@ -3906,7 +3892,15 @@ static void ai_debug_render_path_nodes(
 
 					if (!previous_node)
 					{
-						if (render_surfaces)
+						/* port: (a node's surface that is the bsp's, with a ring
+						of edges, as in ai_debug_render_surface; any other is
+						drawn at its closest point) */
+						if (render_surfaces &&
+							collision_bsp_valid_surface_index(collision_bsp, node->surface_index) &&
+							collision_surface_edge_ring_continues(collision_bsp,
+								TAG_BLOCK_GET_ELEMENT(&collision_bsp->surfaces, node->surface_index,
+									struct collision_surface)->first_edge_index,
+								0))
 						{
 						struct collision_surface const *surface = TAG_BLOCK_GET_ELEMENT(
 								&collision_bsp->surfaces, node->surface_index,
@@ -3921,7 +3915,13 @@ static void ai_debug_render_path_nodes(
 									&collision_bsp->edges, edge_index, struct collision_edge);
 								const boolean next_index_belongs_to_surface =
 									edge->surface_indices[1]==node->surface_index;
-								struct collision_vertex const *vertex = TAG_BLOCK_GET_ELEMENT(
+								struct collision_vertex const *vertex;
+
+								/* port: (and with vertices that are the bsp's) */
+								if (!VALID_INDEX(edge->vertex_indices[next_index_belongs_to_surface],
+									collision_bsp->vertices.count))
+									break;
+								vertex = TAG_BLOCK_GET_ELEMENT(
 									&collision_bsp->vertices,
 									edge->vertex_indices[next_index_belongs_to_surface],
 									struct collision_vertex);
@@ -3934,9 +3934,12 @@ static void ai_debug_render_path_nodes(
 
 								edge_index = edge->edge_indices[next_index_belongs_to_surface];
 							}
-							while (edge_index!=surface->first_edge_index);
+							while (edge_index!=surface->first_edge_index &&
+								collision_surface_edge_ring_continues(collision_bsp, edge_index, (short)vertex_count));
 
-							scale = 1.0f / vertex_count;
+							/* port: (no vertices, from a ring that ends at once,
+							leave the centre at the origin) */
+							scale = vertex_count ? 1.0f / vertex_count : 0.0f;
 							centre.x *= scale;
 							centre.y *= scale;
 							centre.z *= scale;
@@ -4564,7 +4567,7 @@ char *ai_debug_describe_actor(
 		struct unit_datum *unit = unit_get(unit_index);
 
 		model_name = tag_name_strip_path(
-			unit_definition_get(unit->definition_index)->object.model.name);
+			xbox_pointer(unit_definition_get(unit->definition_index)->object.model.name));
 
 		if (unit->object.name_index!=NONE)
 		{
@@ -5299,11 +5302,11 @@ static void ai_debug_render_spatial_effects(
 	void)
 {
 	long time = game_time_get();
-	short index = ai_globals->spatial_effect_head;
+	short index = ai_globals->spatial_effects_first_index;
 
-	while (index!=ai_globals->spatial_effect_tail)
+	while (index!=ai_globals->spatial_effects_last_index)
 	{
-		struct ai_debug_spatial_effect *effect = &ai_globals->spatial_effect[index];
+		struct ai_spatial_effect *effect = &ai_globals->spatial_effects[index];
 
 		if (effect->type!=NONE)
 		{
@@ -5322,7 +5325,7 @@ static void ai_debug_render_spatial_effects(
 				color = *colors[effect->type];
 			}
 
-			effect_point = &effect->point;
+			effect_point = &effect->position;
 
 			render_debug_sphere(TRUE, effect_point, 0.2f, color);
 
@@ -5331,7 +5334,7 @@ static void ai_debug_render_spatial_effects(
 			point.z = global_up3d->k*0.3f + effect_point->z;
 
 			render_debug_string_at_point(TRUE, &point,
-				csprintf(temporary, "c%d t%d", effect->field_02, time - effect->time),
+				csprintf(temporary, "c%d t%d", effect->count, time - effect->last_tick),
 				color);
 		}
 
@@ -5504,23 +5507,23 @@ static void ai_debug_render_vehicles_enterable(
 
 	for (index = 0; index<ai_globals->enterable_vehicle_count; index++)
 	{
-		struct ai_debug_enterable_vehicle *vehicle = &ai_globals->enterable_vehicle[index];
+		struct ai_vehicle_enterable *vehicle = &ai_globals->enterable_vehicles[index];
 
-		if (unit_try_and_get(vehicle->object_index))
+		if (unit_try_and_get(vehicle->vehicle_index))
 		{
 			real_point3d origin;
 
-			object_get_origin(vehicle->object_index, &origin);
+			object_get_origin(vehicle->vehicle_index, &origin);
 
 			point_from_line3d(&origin, global_up3d, 0.5f, &origin);
 
 			ai_debug_drawstack_setup(&origin);
 
 			render_debug_string_at_point(TRUE, ai_debug_drawstack(),
-				csprintf(temporary, "enterable: dist %.1f", vehicle->distance),
+				csprintf(temporary, "enterable: dist %.1f", vehicle->radius),
 				global_real_argb_pink);
 
-			if (vehicle->team_flags)
+			if (vehicle->team_bitmask)
 			{
 				char const *team_names[NUMBER_OF_SOLO_CAMPAIGN_TEAMS] =
 				{
@@ -5532,7 +5535,7 @@ static void ai_debug_render_vehicles_enterable(
 
 				for (index = 0; index<NUMBER_OF_SOLO_CAMPAIGN_TEAMS; index++)
 				{
-					if (TEST_FLAG(vehicle->team_flags, index))
+					if (TEST_FLAG(vehicle->team_bitmask, index))
 					{
 						csstrcat(temporary, " ");
 						csstrcat(temporary, team_names[index]);
@@ -5543,7 +5546,7 @@ static void ai_debug_render_vehicles_enterable(
 					global_real_argb_pink);
 			}
 
-			if (vehicle->actor_type_flags)
+			if (vehicle->actor_type_bitmask)
 			{
 				char const *actor_type_names[NUMBER_OF_ACTOR_TYPES] =
 				{
@@ -5556,7 +5559,7 @@ static void ai_debug_render_vehicles_enterable(
 
 				for (index = 0; index<NUMBER_OF_ACTOR_TYPES; index++)
 				{
-					if (TEST_FLAG(vehicle->actor_type_flags, index))
+					if (TEST_FLAG(vehicle->actor_type_bitmask, index))
 					{
 						csstrcat(temporary, " ");
 						csstrcat(temporary, actor_type_names[index]);
@@ -5567,15 +5570,15 @@ static void ai_debug_render_vehicles_enterable(
 					global_real_argb_pink);
 			}
 
-			if (vehicle->actor_count>0)
+			if (vehicle->ai_indices_count>0)
 			{
 				char string[256];
 
 				sprintf(temporary, "actors:");
 
-				for (index = 0; index<vehicle->actor_count; index++)
+				for (index = 0; index<vehicle->ai_indices_count; index++)
 				{
-					ai_index_to_string(vehicle->actor_index[index], global_scenario_get(),
+					ai_index_to_string(vehicle->ai_indices[index], global_scenario_get(),
 						string, 256);
 
 					csstrcat(temporary, " ");

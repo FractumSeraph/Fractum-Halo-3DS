@@ -170,6 +170,7 @@ struct player_profile_runtime_globals
 	struct thread_reference *thread;
 	boolean initialized;
 };
+#ifndef HALO_64BIT
 
 typedef char verify_player_profile_thread_offset[
 	offsetof(struct player_profile_runtime_globals, thread) == 0x64 ? 1 : -1];
@@ -177,6 +178,7 @@ typedef char verify_player_profile_initialized_offset[
 	offsetof(struct player_profile_runtime_globals, initialized) == 0x68 ? 1 : -1];
 typedef char verify_player_profile_globals_size[
 	sizeof(struct player_profile_runtime_globals) == 0x6C ? 1 : -1];
+#endif
 
 /* ---------- prototypes */
 
@@ -391,11 +393,13 @@ boolean player_profile_get_enclosing_directory_path(
 	return saved_game_file_get_path_to_enclosing_directory(profile, full_path);
 }
 
+int config_boolean(char const *name);
+
 long player_profile_new(
 	short local_player_index,
 	wchar_t *name)
 {
-	struct file_reference file;
+	struct file_reference profile_file;
 	long player_profile_index = create_enumerated_saved_game_file(
 		_saved_game_file_type_player_profile,
 		local_player_index,
@@ -403,7 +407,7 @@ long player_profile_new(
 
 	if (player_profile_index != NONE)
 	{
-		if (saved_game_file_open(&file, player_profile_index))
+		if (saved_game_file_open(&profile_file, player_profile_index))
 		{
 			struct player_profile_file_block block = {0};
 			struct player_profile *profile = &block.profile;
@@ -424,26 +428,31 @@ long player_profile_new(
 			ustrncpy(profile->player_name, name, MAXIMUM_PLAYER_PROFILE_NAME_LENGTH-1);
 			profile->player_name[MAXIMUM_PLAYER_PROFILE_NAME_LENGTH-1] = 0;
 
-			error(_error_silent, "### DEBUG unlocking all solo levels for newly created profile");
-
-			for (level = 0; level < NUMBER_OF_SINGLE_PLAYER_LEVELS; level++)
+			/* port: a new profile starts with no level finished, as on the
+			Xbox (retail has no "### DEBUG unlocking all solo levels for newly
+			created profile", which this debug build did for every new
+			profile); config.toml's game.unlock_all_levels still does it */
+			if (config_boolean("game.unlock_all_levels"))
 			{
-				long difficulty = 0;
-
-				do
+				for (level = 0; level < NUMBER_OF_SINGLE_PLAYER_LEVELS; level++)
 				{
-					profile->single_player_map_flags[level] |= FLAG(difficulty);
-					difficulty++;
+					long difficulty = 0;
+
+					do
+					{
+						profile->single_player_map_flags[level] |= FLAG(difficulty);
+						difficulty++;
+					}
+					while (difficulty < NUMBER_OF_GAME_DIFFICULTY_LEVELS);
 				}
-				while (difficulty < NUMBER_OF_GAME_DIFFICULTY_LEVELS);
 			}
 
 			saved_game_file_generate_checksum(&block.profile, sizeof(block.profile),
 				&block.checksum);
 
-			succeeded = file_set_position(&file, 0) &&
-				file_write(&file, sizeof(block), &block);
-			saved_game_file_close(&file, player_profile_index);
+			succeeded = file_set_position(&profile_file, 0) &&
+				file_write(&profile_file, sizeof(block), &block);
+			saved_game_file_close(&profile_file, player_profile_index);
 
 			if (!succeeded)
 			{
@@ -596,7 +605,16 @@ void player_profile_save_level_completed(
 	level = main_get_current_solo_level();
 	difficulty = game_difficulty_level_get();
 
-	match_assert("c:\\halo\\SOURCE\\saved games\\player_profile.c", 0x19D, (level>=0) && (level<NUMBER_OF_SINGLE_PLAYER_LEVELS) && (difficulty >= 0) && (difficulty < NUMBER_OF_GAME_DIFFICULTY_LEVELS));
+	match_assert("c:\\halo\\SOURCE\\saved games\\player_profile.c", 0x19D, (level==NONE || ((level>=0) && (level<NUMBER_OF_SINGLE_PLAYER_LEVELS))) && (difficulty >= 0) && (difficulty < NUMBER_OF_GAME_DIFFICULTY_LEVELS));
+
+	/* port: a level not in the campaign (a Halo PC map's, whose scripts may
+	end it with game_won) is none of the profile's, whose flags it would
+	write before; its difficulty one of the profile's too */
+	if (level < 0 || level >= NUMBER_OF_SINGLE_PLAYER_LEVELS ||
+		difficulty < 0 || difficulty >= NUMBER_OF_GAME_DIFFICULTY_LEVELS)
+	{
+		return;
+	}
 
 	player_profile_index = player_ui_get_active_player_profile_index(local_player_index);
 
@@ -848,15 +866,15 @@ static void player_profile_create_default_profiles_on_disk(
 	for (i = 0; i < NUMBER_OF_DEFAULT_PROFILES; i++)
 	{
 		struct player_profile_file_block block = {0};
-		char path[MAXIMUM_FILENAME_LENGTH+1];
+		char full_path[MAXIMUM_FILENAME_LENGTH+1];
 		struct file_reference file;
 		boolean succeeded = FALSE;
 
 		build_default_profile(&block.profile, i);
 
-		_snprintf(path, MAXIMUM_FILENAME_LENGTH, "z:\\saved\\player_profiles\\default_profile\\%02d.sav", i);
+		_snprintf(full_path, MAXIMUM_FILENAME_LENGTH, "z:\\saved\\player_profiles\\default_profile\\%02d.sav", i);
 
-		if (file_reference_create_from_path(&file, path, FALSE))
+		if (file_reference_create_from_path(&file, full_path, FALSE))
 		{
 			saved_game_file_generate_checksum(&block.profile, sizeof(block.profile),
 				&block.checksum);
@@ -872,7 +890,7 @@ static void player_profile_create_default_profiles_on_disk(
 					error(
 						_error_silent,
 						"failed to close default player profile file '%s'",
-						path);
+						full_path);
 				}
 			}
 		}
@@ -882,7 +900,7 @@ static void player_profile_create_default_profiles_on_disk(
 			error(
 				_error_silent,
 				"failed to create/update default player profile file '%s' on disk",
-				path);
+				full_path);
 		}
 	}
 

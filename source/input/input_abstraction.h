@@ -37,6 +37,8 @@ typedef char verify_game_input_preferences_size[
 
 void input_abstraction_initialize(
 	void);
+void input_abstraction_dispose(
+	void);
 void input_abstraction_update(
 	void);
 void input_abstraction_update_device_changes(
@@ -51,6 +53,35 @@ void input_abstraction_update_local_player_preferences(
 	struct game_input_preferences const *preferences);
 struct game_input_state *input_abstraction_get_input_state(
 	short local_player_index);
+/* port: the keyboard and mouse's own controls (input_abstraction.c) */
+boolean input_abstraction_port_reload(
+	short controller_index);
+byte input_abstraction_port_accept(
+	short controller_index);
+boolean input_abstraction_port_action_only(
+	short controller_index);
+boolean input_abstraction_port_crouch(
+	short controller_index);
+real input_abstraction_port_primary_trigger(
+	short controller_index);
+/* port: the game control on each of the controller's buttons, and the
+player's look inverted as its stick is (the touch controls) */
+void input_abstraction_port_button_controls(
+	short controller_index,
+	short *controls);
+boolean input_abstraction_port_look_inverted(
+	short controller_index);
+/* port: the keyboard's key for a button icon (hud_messaging.c and
+ui_widget.c's hud_icon_type), while it shows the keys (Halo PC's prompts) */
+boolean input_abstraction_port_icon_key(
+	short local_player_index,
+	short icon_type,
+	boolean menus,
+	wchar_t *text,
+	long count);
+void input_abstraction_port_back_word(
+	wchar_t *message,
+	long count);
 
 /* ---------- globals */
 

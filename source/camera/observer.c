@@ -216,6 +216,7 @@ struct observer_globals
 	real dtime;
 	struct observer local_players[MAXIMUM_NUMBER_OF_LOCAL_PLAYERS];
 };
+#ifndef HALO_64BIT
 
 typedef char observer_last_command_offset_assert[
 	offsetof(struct observer, last_command) == 0x8 ? 1 : -1];
@@ -231,6 +232,7 @@ typedef char observer_size_assert[
 	sizeof(struct observer) == 0x29C ? 1 : -1];
 typedef char observer_globals_size_assert[
 	sizeof(struct observer_globals) == 0xA74 ? 1 : -1];
+#endif
 
 /* ---------- prototypes */
 
@@ -897,14 +899,17 @@ static void observer_update_positions(
 
 		if (remaining_time > 0.f)
 		{
+			real remaining_time_squared = remaining_time*remaining_time;
+			real remaining_time_cubed = remaining_time_squared*remaining_time;
+			real remaining_time_fourth = remaining_time_cubed*remaining_time;
+			real remaining_time_fifth = remaining_time_fourth*remaining_time;
+
 			for (value_index = 0; value_index < derivative_count; value_index++)
 			{
-				real remaining_time_squared = remaining_time*remaining_time;
-
 				delta[value_index] =
-					a[value_index]*remaining_time_squared*remaining_time_squared*remaining_time +
-					b[value_index]*remaining_time_squared*remaining_time_squared +
-					c[value_index]*remaining_time_squared*remaining_time +
+					a[value_index]*remaining_time_fifth +
+					b[value_index]*remaining_time_fourth +
+					c[value_index]*remaining_time_cubed +
 					d[value_index]*remaining_time_squared +
 					e[value_index]*remaining_time +
 					f[value_index];

@@ -154,9 +154,9 @@ symbols in this file:
 #include "cseries.h"
 #include "cseries/sort.h"
 #include "cseries/errors.h"
+#include "cseries/sort.h"
 
 #include "actor_definitions.h"
-#include "actor_perception.h"
 #include "actors.h"
 #include "ai.h"
 #include "ai_debug.h"
@@ -170,6 +170,9 @@ symbols in this file:
 #include "units/vehicles.h"
 #include "scenario/scenario.h"
 #include "scenario/scenario_definitions.h"
+#ifdef HALO_64BIT
+#include "cseries/sort.h"
+#endif
 
 /* ---------- constants */
 
@@ -253,8 +256,10 @@ typedef char actor_firing_position_definition_size_assert[
 	sizeof(struct firing_position_definition) == 0x18 ? 1 : -1];
 typedef char actor_firing_position_evaluation_context_size_assert[
 	sizeof(struct firing_position_evaluation_context) == 0x670 ? 1 : -1];
+#ifndef HALO_64BIT
 typedef char actor_firing_position_size_assert[
 	sizeof(struct firing_position) == 0x3C ? 1 : -1];
+#endif
 typedef char actor_firing_position_context_rejected_offset_assert[
 	offsetof(struct firing_position_evaluation_context, allow_rejected_positions) == 0x14 ? 1 : -1];
 typedef char actor_firing_position_context_avoid_count_offset_assert[
@@ -265,10 +270,12 @@ typedef char actor_firing_position_context_target_offset_assert[
 	offsetof(struct firing_position_evaluation_context, has_target) == 0x5FC ? 1 : -1];
 typedef char actor_firing_position_context_bound_offset_assert[
 	offsetof(struct firing_position_evaluation_context, post_evaluation_bound) == 0x660 ? 1 : -1];
+#ifndef HALO_64BIT
 typedef char actor_firing_position_valid_offset_assert[
 	offsetof(struct firing_position, valid) == 0x30 ? 1 : -1];
 typedef char actor_firing_position_evaluation_offset_assert[
 	offsetof(struct firing_position, evaluation) == 0x38 ? 1 : -1];
+#endif
 typedef char actor_firing_position_scenario_encounters_offset_assert[
 	offsetof(struct scenario, ai_encounters) == 0x42C ? 1 : -1];
 typedef char actor_firing_position_encounter_squads_offset_assert[
@@ -1791,7 +1798,8 @@ short actor_select_firing_position(
 		ai_profile.meters[_ai_meter_firing_point].accumulator++;
 
 		encounter_build_firing_position_owner_actor_indices(actor->meta.encounter_index, owner_actor_indices);
-		if (actor->firing_positions.current_position_index!=NONE)
+		/* port: a position the array holds (not NONE, nor past the array) */
+		if (VALID_INDEX(actor->firing_positions.current_position_index, (short)NUMBEROF(owner_actor_indices)))
 		{
 			owner_actor_indices[actor->firing_positions.current_position_index]= NONE;
 		}
@@ -2067,7 +2075,12 @@ short actor_select_firing_position(
 			boolean too_many_firing_positions= FALSE;
 			short index;
 
-			for (index= 0; index<encounter->firing_positions.count; index++)
+			/* port: no more positions than owner_actor_indices and the debug
+			records hold (the map's count; encounter_new cuts the tag to it) */
+			for (index= 0;
+				index<encounter->firing_positions.count &&
+					index<MAXIMUM_NUMBER_OF_FIRING_POSITIONS_PER_ENCOUNTER;
+				index++)
 			{
 				struct firing_position_definition *firing_position_definition= TAG_BLOCK_GET_ELEMENT(
 					&encounter->firing_positions,

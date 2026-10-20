@@ -209,9 +209,19 @@ static boolean particle_update_physics(
 /* ---------- globals */
 
 // {upper, lower} bounds of the collision speed that scales a particle collision effect
-real const particle_collision_effect_scale_bounds[2] = {1.5f, 0.5f};
+static real const particle_collision_effect_scale_bounds[2] = {1.5f, 0.5f};
 
 static struct profile_section particles_update_section = {"particles_update", NONE, TRUE};
+/* A frame was a tick on the Xbox. The native builds draw several frames per
+tick (port/linux/game/render_interpolation.c), so what counted frames counts
+30 Hz ticks of game time instead: particles that animate once a frame step
+once a tick, and a particle is deleted once it has gone unrendered for
+MAXIMUM_PARTICLE_UNRENDERED_FRAME_COUNT ticks, the frame index drawn at each
+of the last ones kept here. */
+static real particles_leftover_ticks = 0.f;
+static long particles_update_ticks = 0;
+static long particles_tick_frame_indices[MAXIMUM_PARTICLE_UNRENDERED_FRAME_COUNT + 1];
+static long particles_tick_frame_head = 0;
 
 static char const *particle_effect_marker_names[NUMBER_OF_PARTICLE_EFFECT_MARKERS] =
 {
@@ -224,7 +234,10 @@ static char const *particle_effect_marker_names[NUMBER_OF_PARTICLE_EFFECT_MARKER
 void particles_initialize(
 	void)
 {
-	particle_data = game_state_data_new("particle", 1024, 0x70);
+	/* the native builds' larger particle pool (halo_port_capacity.h);
+	render_particles sizes its unchecked list of visible particles by the same
+	value */
+	particle_data = game_state_data_new("particle", HALO_PORT_MAXIMUM_PARTICLES, 0x70);
 	if (!particle_data)
 		error(_error_immediate, "couldn't allocate particle globals");
 
@@ -592,7 +605,7 @@ static boolean particle_update_frame_time(
 	{
 		if (TEST_FLAG(definition->flags, _particle_definition_animate_once_per_frame_bit))
 		{
-			if (dt != 0.0f)
+			if (dt != 0.0f && particles_update_ticks > 0)
 				return particle_next_frame(particle_index);
 		}
 		else
@@ -1040,6 +1053,22 @@ void particles_update(
 #endif
 	profile_enter(particles_update_section);
 
+	{
+		long tick;
+
+		particles_leftover_ticks += dt * TICKS_PER_SECOND;
+		particles_update_ticks = (long)particles_leftover_ticks;
+		particles_leftover_ticks -= (real)particles_update_ticks;
+		for (tick = 0;
+			tick < MIN(particles_update_ticks, (long)NUMBEROF(particles_tick_frame_indices));
+			tick++)
+		{
+			particles_tick_frame_head =
+				(particles_tick_frame_head + 1) % NUMBEROF(particles_tick_frame_indices);
+			particles_tick_frame_indices[particles_tick_frame_head] = render.frame_index;
+		}
+	}
+
 	for (particle_index = data_next_index(particle_data, NONE);
 		particle_index != NONE;
 		particle_index = data_next_index(particle_data, particle_index))
@@ -1054,7 +1083,9 @@ void particles_update(
 #endif
 
 		if (render.frame_index - particle->last_rendered_frame_index >
-			MAXIMUM_PARTICLE_UNRENDERED_FRAME_COUNT)
+			MAXIMUM_PARTICLE_UNRENDERED_FRAME_COUNT &&
+			particle->last_rendered_frame_index < particles_tick_frame_indices[
+				(particles_tick_frame_head + 1) % NUMBEROF(particles_tick_frame_indices)])
 		{
 			datum_delete(particle_data, particle_index);
 		}

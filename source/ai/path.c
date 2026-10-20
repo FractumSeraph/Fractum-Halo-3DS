@@ -210,14 +210,18 @@ typedef char path_input_start_point_offset_assert[
 	offsetof(struct path_input, start_point) == 0x14 ? 1 : -1];
 typedef char path_input_start_surface_index_offset_assert[
 	offsetof(struct path_input, start_surface_index) == 0x20 ? 1 : -1];
+#ifndef HALO_64BIT
 typedef char path_state_destination_valid_offset_assert[
 	offsetof(struct path_state, destination_valid) == 0x4C ? 1 : -1];
 typedef char path_state_destination_offset_assert[
 	offsetof(struct path_state, destination) == 0x50 ? 1 : -1];
+#endif
 typedef char path_state_debug_offset_assert[
 	offsetof(struct path_state, debug) == 0x48 ? 1 : -1];
+#ifndef HALO_64BIT
 typedef char path_state_structure_offset_assert[
 	offsetof(struct path_state, structure) == 0x64 ? 1 : -1];
+#endif
 typedef char path_destination_surface_index_offset_assert[
 	offsetof(struct path_destination, surface_index) == 0xC ? 1 : -1];
 typedef char path_destination_target_radius_offset_assert[
@@ -1202,7 +1206,7 @@ static short build_path_edges_for_surface(
 	long surface_index,
 	struct path_edge *edges)
 {
-	byte const *pathfinding_surfaces = structure->pathfinding_surfaces.address;
+	byte const *pathfinding_surfaces = xbox_pointer(structure->pathfinding_surfaces.address);
 	struct collision_bsp const *bsp = TAG_BLOCK_GET_ELEMENT(
 		&structure->collision_bsp,
 		0,
@@ -1215,6 +1219,12 @@ static short build_path_edges_for_surface(
 		"c:\\halo\\SOURCE\\ai\\path.c",
 		0x5D8,
 		(surface_index >= 0) && (surface_index < bsp->surfaces.count));
+	/* port: a surface that is not the bsp's (a node's surface, from a map's
+	edge) has no edges to leave by */
+	if (!collision_bsp_valid_surface_index(bsp, surface_index))
+	{
+		return 0;
+	}
 	surface = TAG_BLOCK_GET_ELEMENT(
 		&bsp->surfaces,
 		surface_index,
@@ -1223,14 +1233,38 @@ static short build_path_edges_for_surface(
 
 	do
 	{
-		struct collision_edge const *collision_edge = TAG_BLOCK_GET_ELEMENT(
+		struct collision_edge const *collision_edge;
+		boolean right_surface;
+		struct path_edge *edge;
+		struct collision_vertex const *start_vertex;
+		struct collision_vertex const *end_vertex;
+
+		/* port: the surface's ring of edges ends as
+		collision_surface_edge_ring_continues says, or at an edge whose
+		vertices aren't the bsp's (a map's indices; the retail rings all
+		close within 3 to 8 edges) */
+		if (!collision_surface_edge_ring_continues(bsp, edge_index, edge_count))
+		{
+			break;
+		}
+		collision_edge = TAG_BLOCK_GET_ELEMENT(
 			&bsp->edges,
 			edge_index,
 			struct collision_edge);
-		boolean right_surface = surface_index == collision_edge->surface_indices[1];
-		struct path_edge *edge = &edges[edge_count++];
-		struct collision_vertex const *start_vertex;
-		struct collision_vertex const *end_vertex;
+		if (!VALID_INDEX(collision_edge->vertex_indices[0], bsp->vertices.count) ||
+			!VALID_INDEX(collision_edge->vertex_indices[1], bsp->vertices.count))
+		{
+			static boolean reported = FALSE;
+
+			if (!reported)
+			{
+				reported = TRUE;
+				error(_error_silent, "collision edge #%ld's vertices are not the bsp's", edge_index);
+			}
+			break;
+		}
+		right_surface = surface_index == collision_edge->surface_indices[1];
+		edge = &edges[edge_count++];
 
 		edge->adjacent_surface_index =
 			collision_edge->surface_indices[!right_surface];
@@ -1241,8 +1275,23 @@ static short build_path_edges_for_surface(
 				0x5EE,
 				(edge->adjacent_surface_index >= 0) && (edge->adjacent_surface_index < bsp->surfaces.count));
 		}
-		edge->adjacent_pathfinding_surface =
-			pathfinding_surfaces[edge->adjacent_surface_index];
+		/* (an open edge, with no surface beyond it, is in no shipped map) */
+		/* port: (and a neighbor, not NONE, that is no surface of the bsp's
+		or has no pathfinding surface is not walkable: a map's index; nor is
+		NONE of a bsp with no pathfinding surfaces, with no array to read
+		before) */
+		if ((edge->adjacent_surface_index != NONE &&
+			(!collision_bsp_valid_surface_index(bsp, edge->adjacent_surface_index) ||
+			!VALID_INDEX(edge->adjacent_surface_index, structure->pathfinding_surfaces.count))) ||
+			(edge->adjacent_surface_index == NONE && structure->pathfinding_surfaces.count <= 0))
+		{
+			edge->adjacent_pathfinding_surface = 0;
+		}
+		else
+		{
+			edge->adjacent_pathfinding_surface =
+				pathfinding_surfaces[edge->adjacent_surface_index];
+		}
 
 		start_vertex = TAG_BLOCK_GET_ELEMENT(
 			&bsp->vertices,

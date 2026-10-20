@@ -29,7 +29,7 @@ symbols in this file:
 000D3190 0130:
 	_terminal_printf (0000)
 002712D0 0006:
-	rdata_002712d0 (0000)
+	_terminal_tab_stops (0000)
 002712D8 0010:
 	??_C@_0BA@LJDMLJDP@terminal?5output?$AA@ (0000)
 002712E8 0006:
@@ -60,6 +60,7 @@ symbols in this file:
 #include "telnet_console.h"
 #include "rasterizer.h"
 #include "render.h"
+#include "main/main.h"
 #include "draw_string.h"
 #include "byte_swapping.h"
 #include "tag_groups.h"
@@ -114,11 +115,20 @@ static long terminal_new_line(void);
 
 /* ---------- globals */
 
+#ifdef HALO_BROWSER
+/* Browser diagnostics live behind the shell's Logs button.  Keeping the
+in-game terminal hidden avoids covering menus and drawing hundreds of glyph
+quads for routine platform notices. */
+boolean terminal_render_enable = FALSE;
+#else
 boolean terminal_render_enable = TRUE;
+#endif
 
-const short rdata_002712d0[] = {160, 320, 470};
+/* name from the 2003 PC demo PDB and the HCEX PDB (terminal file static const short[3]); January's 6 bytes
+ * are identical to the demo's and it has no public for it (static) */
+static const short terminal_tab_stops[] = {160, 320, 470};
 
-struct terminal_globals terminal_globals = {0};
+static struct terminal_globals terminal_globals = {0};
 
 /* ---------- public code */
 
@@ -248,7 +258,9 @@ void terminal_draw(
 			rasterizer_draw_string(&terminal_gets_bounds, NULL, NULL, 0, buffer);
 		}
 
-		if (terminal_render_enable)
+		/* Web builds hide routine terminal chatter during normal play, but the
+		 * backquote console is unusable if its command output stays hidden too. */
+		if (terminal_render_enable || terminal_globals.input_state)
 		{
 			struct output_line_datum *line;
 			long line_index;
@@ -281,14 +293,14 @@ void terminal_draw(
 				if (line->tabstop)
 				{
 					draw_string_set_tab_stops(
-						rdata_002712d0,
-						NUMBEROF(rdata_002712d0)
+						terminal_tab_stops,
+						NUMBEROF(terminal_tab_stops)
 					);
 				}
 
 				draw_string_set_draw_mode(font_tag_index, NONE, 0, 0, &color);
 				rasterizer_draw_string(&terminal_gets_bounds, NULL, NULL, 0, line->buffer);
-				draw_string_set_tab_stops(rdata_002712d0, 0);
+				draw_string_set_tab_stops(terminal_tab_stops, 0);
 			}
 		}
 	}
@@ -310,6 +322,33 @@ boolean terminal_update(
 	}
 
 	return result;
+}
+
+/* port/linux/src/port_config.c's */
+const char *config_string(const char *name);
+
+boolean terminal_command_running = FALSE;
+
+/* port: whether the console shows a kind of what is logged on screen, as
+config.toml's game.console_log says: "all", everything; "important" (and
+anything else), the serious and the important; "none", the serious only
+(the asserts that stop the game). debug.txt has every line whatever it is */
+boolean terminal_shows(
+	short kind)
+{
+	static short level = NONE;
+
+	if (level == NONE)
+	{
+		const char *setting = config_string("game.console_log");
+
+		level = _terminal_message_important;
+		if (setting && !csstrcmp(setting, "all"))
+			level = _terminal_message_chatter;
+		else if (setting && !csstrcmp(setting, "none"))
+			level = _terminal_message_serious;
+	}
+	return kind <= level;
 }
 
 void terminal_printf(
@@ -334,22 +373,16 @@ void terminal_printf(
 
 		if (line_index!=NONE)
 		{
-			short count;
+			int count;
 			struct output_line_datum *line = output_line_get(line_index);
 			line->timer = 0;
 			line->color = !color ? default_terminal_printf_color : *color;
-			count = _vsnprintf(line->buffer, NUMBEROF(line->buffer)-2, format, arglist) - 1;
-			match_vassert(
-				"c:\\halo\\SOURCE\\interface\\terminal.c",
-				413,
-				count < (short)(NUMBEROF(line->buffer)-1),
-				csprintf(
-					temporary,
-					"terminal_printf call generated %d characters; the buffer size is %d characters.",
-					count,
-					NUMBEROF(line->buffer)-1
-				)
-			);
+			/* port: a line longer than the on-screen buffer is cut to fit (it
+			halted here, from inside error(), so the real halt was never
+			written down) */
+			count = _vsnprintf(line->buffer, NUMBEROF(line->buffer)-2, format, arglist);
+			if (count < 0 || count >= (int)(NUMBEROF(line->buffer)-2))
+				line->buffer[NUMBEROF(line->buffer)-2] = 0;
 			line->tabstop = strstr(line->buffer, "|t") != 0;
 			telnet_console_print(line->buffer);
 		}
@@ -432,6 +465,15 @@ static void terminal_update_output(
 {
 	struct output_line_datum *line;
 	long line_index = terminal_globals.newest_output_line_index;
+	/* This runs once a frame, several frames per tick on the native builds
+	(port/linux/game/render_interpolation.c): count the line timers in 30 Hz
+	ticks of real time, as they counted on the Xbox, not in frames. */
+	static real leftover_ticks = 0.f;
+	long ticks;
+
+	leftover_ticks += main_get_seconds_elapsed() * TICKS_PER_SECOND;
+	ticks = (long)leftover_ticks;
+	leftover_ticks -= (real)ticks;
 
 	while (line_index!=NONE)
 	{
@@ -439,7 +481,7 @@ static void terminal_update_output(
 		
 		line = output_line_get(line_index);
 		older_line_index = line->older_line_index;
-		line->timer++;
+		line->timer += ticks;
 
 		if (line->timer>OUTPUT_TOTAL_TIME)
 		{

@@ -186,6 +186,9 @@ symbols in this file:
 #include "cache/cache_files_decompress_windows.h"
 #include "cache/texture_cache.h"
 #include "interface/ui_widget.h"
+#ifdef HALO_CUSTOM_EDITION
+#include "main/console.h"
+#endif
 #include "tag_files/files.h"
 #include "tag_files/tag_files.h"
 #include "scenario/scenario_definitions.h"
@@ -231,26 +234,34 @@ enum
 
 struct cache_file_tag_instance;
 
+#ifdef HALO_64BIT
+/* cache files hold arrays of Direct3D resource headers */
+typedef char d3d_vertex_buffer_size_assert[sizeof(D3DVertexBuffer) == 0xC ? 1 : -1];
+typedef char d3d_index_buffer_size_assert[sizeof(D3DIndexBuffer) == 0xC ? 1 : -1];
+typedef char d3d_texture_size_assert[sizeof(D3DTexture) == 0x14 ? 1 : -1];
+
+/* read from the cache file: Xbox addresses (as in cache_files.c) */
+#endif
 struct cache_file_tag_header
 {
-	struct cache_file_tag_instance *tag_instances;
+	XPTR(struct cache_file_tag_instance) tag_instances;
 	long scenario_tag_index;
 	unsigned long checksum;
 	long tag_count;
 	long vertex_buffer_count;
-	D3DVertexBuffer *vertex_buffers;
+	XPTR(D3DVertexBuffer) vertex_buffers;
 	long index_buffer_count;
-	D3DIndexBuffer *index_buffers;
+	XPTR(D3DIndexBuffer) index_buffers;
 	unsigned long signature;
 };
 
 struct cache_file_structure_bsp_header
 {
-	void *base_address;
+	XPTR(void) base_address;
 	long vertex_buffer_count;
-	D3DVertexBuffer *vertex_buffers;
+	XPTR(D3DVertexBuffer) vertex_buffers;
 	long lightmap_vertex_buffer_count;
-	D3DVertexBuffer *lightmap_vertex_buffers;
+	XPTR(D3DVertexBuffer) lightmap_vertex_buffers;
 	unsigned long signature;
 };
 
@@ -313,6 +324,7 @@ struct cache_file_runtime_globals
 
 typedef char verify_cache_file_header_size[
 	sizeof(struct cache_file_header) == 0x800 ? 1 : -1];
+#ifndef HALO_64BIT
 typedef char verify_cached_map_file_size[
 	sizeof(struct cached_map_file) == 0x80C ? 1 : -1];
 typedef char verify_cached_map_file_name_offset[
@@ -350,6 +362,7 @@ typedef char verify_cache_file_requests_offset[
 		struct cache_file_runtime_globals,
 		requests) == 0x3078 ? 1 : -1];
 
+#endif
 /* ---------- prototypes */
 
 static void cache_file_get_map_path(
@@ -414,8 +427,13 @@ static void CALLBACK cache_file_read_io_completion_routine(
 	unsigned long error_code,
 	unsigned long bytes_transferred,
 	OVERLAPPED *overlapped);
+#ifdef HALO_BROWSER
+static DWORD WINAPI cache_file_windows_thread_proc(
+	void *context);
+#else
 static void cache_file_windows_thread_proc(
 	void);
+#endif
 static void cache_file_windows_thread_create(
 	void);
 static struct cache_file_request *cache_request_get(
@@ -437,16 +455,230 @@ static short cached_map_files_find_map(
 
 static struct cache_file_runtime_globals cache_file_globals;
 
+#ifdef HALO_CUSTOM_EDITION
+/* port: the maps past the Xbox's (halo_map_families.h): Halo PC's Custom
+Edition maps (version 609), played as <name>@ce, HaloMD's (Halo PC
+retail's version 7), played as <name>@md, and Halo PC retail's own maps
+(version 7), played as <name>@pc, each found in its family's folders
+(port/linux/game/map_families.c). Such a map is read where it is, not
+copied into one of the Xbox's cache slots and decompressed (it is not
+compressed): it has a slot of its own, after theirs, which every read goes
+through as theirs do (cache_files.c loads its tags into its own tag cache,
+platform.h) */
+#include "halo_map_families.h"
+
+#define CE_MAP_FILE_INDEX NUMBER_OF_CACHED_MAP_FILES
+
+static struct cached_map_file ce_map_file;
+static char ce_map_name[64];
+/* each request's file, if not the map's: a Custom Edition map's resource
+map, for its indexed tags' pixels and samples (port/linux/game/ce_resources.c) */
+static HANDLE ce_request_files[MAXIMUM_SIMULTANEOUS_CACHE_REQUESTS];
+HANDLE ce_resources_file_for_tag(long tag_index);
+boolean cache_files_tags_are_loaded(void); /* port: cache_files.c */
+boolean ce_map_check(HANDLE file, char const *map_name, long file_length, long tag_data_offset,
+	long tag_data_size);
+char const *ce_map_refusal(void);
+void ce_map_refused_verify(char const *map_name, char const *path, unsigned long header_checksum, char *verdict,
+	long size);
+/* the version of the map checked or loaded (port/linux/game/ce_resources.c) */
+extern long ce_map_cache_version;
+/* the last map refused (ce_map_check), its size and checksum, and why,
+with whether its file is the one it should be (ce_map_refused_verify:
+cache_files_ce_map_refused) */
+static char ce_refused_map_name[64];
+static unsigned long ce_refused_map_size;
+static unsigned long ce_refused_map_checksum;
+static char ce_refused_text[512];
+/* and what the game tells the player about it (ce_map_check's message) */
+static char ce_refused_map_message[320];
+char const *ce_map_refusal_message(void);
+
+static boolean ce_map_name_is(
+	const char *map_name)
+{
+	return map_family_parse(map_name, NULL, 0) != _map_family_xbox;
+}
+
+/* the map named <name>@ce, @md or @pc opened in its slot (once): FALSE if
+there is none, or it is not one, or it is refused (ce_map_check). The map
+open before stays open until another is accepted */
+static boolean ce_map_open(
+	const char *map_name)
+{
+	char path[256], file_name[64];
+	unsigned long bytes_read = 0;
+	struct cache_file_header header;
+	unsigned long file_size;
+	HANDLE file;
+	short family;
+	char const *reason = NULL;
+	char verdict[384];
+
+	if (ce_map_file.file && !_stricmp(ce_map_name, map_name))
+		return TRUE;
+	if (strlen(map_name) >= sizeof(ce_map_name) - 1)
+		return FALSE;
+	/* (its tag cache, which the platform layer maps at start-up: xbox_memory.c) */
+	{
+		extern int platform_ce_tag_cache_ready;
+
+		if (!platform_ce_tag_cache_ready)
+		{
+			error(_error_silent, "Custom Edition map %s: no tag cache for it", map_name);
+			return FALSE;
+		}
+	}
+	family = map_family_parse(map_name, file_name, sizeof(file_name));
+	if (!map_family_find(family, file_name, path, sizeof(path)))
+	{
+		ce_refused_text[0] = 0;
+		return FALSE;
+	}
+	file = CreateFileA(path, GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL);
+	if (file == INVALID_HANDLE_VALUE)
+	{
+		ce_refused_text[0] = 0;
+		return FALSE;
+	}
+	memset(&header, 0, sizeof(header));
+	file_size = GetFileSize(file, NULL);
+	if (!ReadFile(file, &header, sizeof(header), &bytes_read, NULL))
+		bytes_read = 0;
+	/* (a map built by Invader may give its length as 0, which Halo PC's
+	engine did not read: beavercreek_rev_beta's; the file's own then, which
+	every offset in it is checked against: ce_map_check) */
+	if (bytes_read == sizeof(header) && !header.file_length && file_size <= 0x7fffffff)
+		header.file_length = (long)file_size;
+	/* (a map refused already, unchanged: refused again, quietly) */
+	if (!_stricmp(ce_refused_map_name, map_name) && ce_refused_map_size == file_size &&
+		ce_refused_map_checksum == header.checksum)
+	{
+		CloseHandle(file);
+		return FALSE;
+	}
+	/* (its family's version, as it was when it was found: map_family_find) */
+	if (bytes_read != sizeof(header) || !cache_file_header_verify(&header, path, FALSE) ||
+		header.version != map_family_cache_version(family))
+	{
+		error(_error_silent, "%s map %s refused: %s is not a cache file of this version",
+			map_family_kind(family), map_name, path);
+		console_warning("%s map %s refused: not a cache file of this version", map_family_kind(family), map_name);
+		reason = "it is not a cache file of this version";
+		snprintf(ce_refused_map_message, sizeof(ce_refused_map_message),
+			"The %s map %.63s can't be played: it isn't a map this game can read.", map_family_kind(family), file_name);
+	}
+#ifdef HALO_3DS
+	/* port: (the 3DS: while a map's tags are loaded, the tag cache's memory,
+	which the full check below takes, is not free: its header alone then,
+	the rest when the map is opened to be loaded, with no tags loaded,
+	ce_map_checks.c) */
+	else if (cache_files_tags_are_loaded())
+	{
+		ce_map_cache_version = header.version;
+		CloseHandle(file);
+		return TRUE;
+	}
+#endif
+	/* every offset, count and size in it that the port reads checked, before
+	it has a slot (port/linux/game/ce_map_checks.c) */
+	else if ((ce_map_cache_version = header.version,
+		ce_map_check(file, map_name, header.file_length, header.tag_data_offset, header.tag_data_size)))
+	{
+		if (ce_map_file.file)
+			CloseHandle(ce_map_file.file);
+		ce_refused_map_name[0] = 0;
+		ce_map_file.file = file;
+		ce_map_file.header = header;
+		memset(ce_map_name, 0, sizeof(ce_map_name));
+		strncpy(ce_map_name, map_name, sizeof(ce_map_name) - 1);
+		error(_error_silent, "%s map %s: %s, build %.32s", map_family_kind(family), map_name, path,
+			ce_map_file.header.build);
+		return TRUE;
+	}
+	/* (the map open before stays open, and its version the one loaded) */
+	if (ce_map_file.file)
+		ce_map_cache_version = ce_map_file.header.version;
+	else
+	{
+		strncpy(ce_refused_map_message, ce_map_refusal_message(), sizeof(ce_refused_map_message) - 1);
+		ce_refused_map_message[sizeof(ce_refused_map_message) - 1] = 0;
+	}
+	memset(ce_refused_map_name, 0, sizeof(ce_refused_map_name));
+	strncpy(ce_refused_map_name, map_name, sizeof(ce_refused_map_name) - 1);
+	ce_refused_map_size = file_size;
+	ce_refused_map_checksum = header.checksum;
+	CloseHandle(file);
+	/* (its file checked against the hash it should have: a download
+	damaged since, or the map itself: port/linux/game/ce_map_checks.c) */
+	if (!reason)
+		reason = ce_map_refusal();
+	ce_map_refused_verify(map_name, path, header.checksum, verdict, sizeof(verdict));
+	snprintf(ce_refused_text, sizeof(ce_refused_text), "%s; %s", reason, verdict);
+	return FALSE;
+}
+
+/* port: whether the map named, a Halo PC map that is here, is refused
+(ce_map_open): why, and whether its file is the one it should be, in text
+(size bytes). A map of the Xbox's, or one that opens, is not refused */
+boolean cache_files_ce_map_refused(
+	char const *map_name,
+	char *text,
+	long size)
+{
+	if (!map_name || !ce_map_name_is(map_name) || ce_map_open(map_name))
+		return FALSE;
+	snprintf(text, (size_t)size, "%s", ce_refused_text[0] ? ce_refused_text : "its file could not be opened");
+	return TRUE;
+}
+
+/* the text a patched map (tools/map_patch.py) keeps in its header's free
+space, from 0x400: "key: value" lines that say what it is (its recipe, its
+base map, the weapons a game type hands out, its packs' credits); NULL if the
+map open in that slot has none */
+char const *cache_files_ce_patch_text(
+	void)
+{
+	enum
+	{
+		PATCH_TEXT_OFFSET = 0x400,
+		PATCH_TEXT_SIZE = 0x3f0,
+	};
+	static char text[PATCH_TEXT_SIZE + 1];
+	byte const *header = (byte const *)&ce_map_file.header;
+
+	if (!ce_map_file.file || memcmp(header + PATCH_TEXT_OFFSET, "patch: ", 7))
+		return NULL;
+	memcpy(text, header + PATCH_TEXT_OFFSET, PATCH_TEXT_SIZE);
+	text[PATCH_TEXT_SIZE] = 0;
+	return text;
+}
+
+/* the map open in that slot, or NULL: its own sounds' samples are read
+from it as its tags load (port/linux/game/ce_resources.c) */
+HANDLE cache_files_ce_map_file(
+	void)
+{
+	return ce_map_file.file && ce_map_file.file != INVALID_HANDLE_VALUE ? ce_map_file.file : NULL;
+}
+#endif
+
 /* ---------- public code */
 
 void tags_header_register_vertex_and_index_buffers(
 	struct cache_file_tag_header *header)
 {
-	short index;
+	/* port: a long, as the buffers' counts are (a short wrapped on a count
+	past 0x7FFF, and the loop never ended) */
+	long index;
 
 	for (index = 0; index < header->vertex_buffer_count; index++)
 	{
+#ifdef HALO_64BIT
+		D3DVertexBuffer *vertex_buffer = &XBOX_POINTER(D3DVertexBuffer, header->vertex_buffers)[index];
+#else
 		D3DVertexBuffer *vertex_buffer = &header->vertex_buffers[index];
+#endif
 
 		vertex_buffer->Common = D3DCOMMON_TYPE_VERTEXBUFFER | 1;
 		IDirect3DVertexBuffer8_Register(vertex_buffer, NULL);
@@ -454,7 +686,11 @@ void tags_header_register_vertex_and_index_buffers(
 
 	for (index = 0; index < header->index_buffer_count; index++)
 	{
+#ifdef HALO_64BIT
+		D3DIndexBuffer *index_buffer = &XBOX_POINTER(D3DIndexBuffer, header->index_buffers)[index];
+#else
 		D3DIndexBuffer *index_buffer = &header->index_buffers[index];
+#endif
 
 		index_buffer->Common = D3DCOMMON_TYPE_INDEXBUFFER | 1;
 	}
@@ -465,11 +701,17 @@ void tags_header_register_vertex_and_index_buffers(
 void tags_header_deregister_vertex_and_index_buffers(
 	struct cache_file_tag_header *header)
 {
-	short index;
+	/* port: a long, as the buffers' counts are (a short wrapped on a count
+	past 0x7FFF, and the loop never ended) */
+	long index;
 
 	for (index = 0; index < header->vertex_buffer_count; index++)
 	{
+#ifdef HALO_64BIT
+		D3DVertexBuffer *vertex_buffer = &XBOX_POINTER(D3DVertexBuffer, header->vertex_buffers)[index];
+#else
 		D3DVertexBuffer *vertex_buffer = &header->vertex_buffers[index];
+#endif
 
 		IDirect3DVertexBuffer8_BlockUntilNotBusy(vertex_buffer);
 		match_assert(
@@ -480,7 +722,11 @@ void tags_header_deregister_vertex_and_index_buffers(
 
 	for (index = 0; index < header->index_buffer_count; index++)
 	{
+#ifdef HALO_64BIT
+		D3DIndexBuffer *index_buffer = &XBOX_POINTER(D3DIndexBuffer, header->index_buffers)[index];
+#else
 		D3DIndexBuffer *index_buffer = &header->index_buffers[index];
+#endif
 
 		IDirect3DIndexBuffer8_BlockUntilNotBusy(index_buffer);
 		match_assert(
@@ -495,11 +741,17 @@ void tags_header_deregister_vertex_and_index_buffers(
 void structure_bsp_header_register_vertex_buffers(
 	struct cache_file_structure_bsp_header *header)
 {
-	short index;
+	/* port: a long, as the buffers' counts are (a short wrapped on a count
+	past 0x7FFF, and the loop never ended) */
+	long index;
 
 	for (index = 0; index < header->vertex_buffer_count; index++)
 	{
+#ifdef HALO_64BIT
+		D3DVertexBuffer *vertex_buffer = &XBOX_POINTER(D3DVertexBuffer, header->vertex_buffers)[index];
+#else
 		D3DVertexBuffer *vertex_buffer = &header->vertex_buffers[index];
+#endif
 
 		vertex_buffer->Common = D3DCOMMON_TYPE_VERTEXBUFFER | 1;
 		IDirect3DVertexBuffer8_Register(vertex_buffer, NULL);
@@ -507,7 +759,11 @@ void structure_bsp_header_register_vertex_buffers(
 
 	for (index = 0; index < header->lightmap_vertex_buffer_count; index++)
 	{
+#ifdef HALO_64BIT
+		D3DVertexBuffer *vertex_buffer = &XBOX_POINTER(D3DVertexBuffer, header->lightmap_vertex_buffers)[index];
+#else
 		D3DVertexBuffer *vertex_buffer = &header->lightmap_vertex_buffers[index];
+#endif
 
 		vertex_buffer->Common = D3DCOMMON_TYPE_VERTEXBUFFER | 1;
 		IDirect3DVertexBuffer8_Register(vertex_buffer, NULL);
@@ -519,20 +775,30 @@ void structure_bsp_header_register_vertex_buffers(
 void structure_bsp_header_deregister_vertex_buffers(
 	struct cache_file_structure_bsp_header *header)
 {
-	short index;
+	/* port: a long, as the buffers' counts are (a short wrapped on a count
+	past 0x7FFF, and the loop never ended) */
+	long index;
 
 	rasterizer_globals.current_lock_operation = _rasterizer_lock_bsp_switch;
 
 	for (index = 0; index < header->vertex_buffer_count; index++)
 	{
+#ifdef HALO_64BIT
+		D3DVertexBuffer *vertex_buffer = &XBOX_POINTER(D3DVertexBuffer, header->vertex_buffers)[index];
+#else
 		D3DVertexBuffer *vertex_buffer = &header->vertex_buffers[index];
+#endif
 
 		IDirect3DVertexBuffer8_BlockUntilNotBusy(vertex_buffer);
 	}
 
 	for (index = 0; index < header->lightmap_vertex_buffer_count; index++)
 	{
+#ifdef HALO_64BIT
+		D3DVertexBuffer *vertex_buffer = &XBOX_POINTER(D3DVertexBuffer, header->lightmap_vertex_buffers)[index];
+#else
 		D3DVertexBuffer *vertex_buffer = &header->lightmap_vertex_buffers[index];
+#endif
 
 		IDirect3DVertexBuffer8_BlockUntilNotBusy(vertex_buffer);
 	}
@@ -608,6 +874,52 @@ boolean cache_files_precache_map_loaded(
 #endif
 }
 
+/* (the port's, port/linux/src/sdl_platform.c) */
+void platform_log(char const *format, ...);
+
+/* port: the damaged disc error for a map that could not be read; for a
+Custom Edition map that was refused (ce_map_open), its reason in its place */
+void cache_files_display_map_error(
+	const char *map_name)
+{
+#ifdef HALO_CUSTOM_EDITION
+	char const *name = tag_name_strip_path(map_name);
+
+	if (ce_map_name_is(name) && !_stricmp(ce_refused_map_name, name) && ce_refused_map_message[0])
+	{
+		wchar_t text[NUMBEROF(ce_refused_map_message)];
+		short index;
+
+		platform_log("%s", ce_refused_map_message);
+		for (index = 0; ce_refused_map_message[index] && index < NUMBEROF(text) - 1; index++)
+			text[index] = (wchar_t)(unsigned char)ce_refused_map_message[index];
+		text[index] = 0;
+		display_error_damaged_media_text(text);
+		return;
+	}
+#endif
+	/* port: a campaign map left out of the first start's download says how
+	to get it (platform_missing_map_message) */
+	{
+		char missing[256];
+		wchar_t text[256];
+		short index;
+
+		if (platform_missing_map_message(tag_name_strip_path(map_name), missing, (int)sizeof(missing)))
+		{
+			platform_log("%s", missing);
+			for (index = 0; missing[index] && index < NUMBEROF(text) - 1; index++)
+				text[index] = (wchar_t)(unsigned char)missing[index];
+			text[index] = 0;
+			display_error_damaged_media_text(text);
+			return;
+		}
+	}
+	display_error_damaged_media();
+
+	return;
+}
+
 boolean cache_files_precache_map_begin(
 	const char *map_name,
 	boolean copy_map)
@@ -625,15 +937,55 @@ boolean cache_files_precache_map_begin(
 	{
 		struct cache_file_header header;
 		char path[256];
+		boolean found = cache_file_read_header_from_dvd(cache_map_name, &header);
 
-		if (cache_file_read_header_from_dvd(cache_map_name, &header))
+		/* port: a campaign map the first start left out (Multiplayer only:
+		port/linux/src/sdl_platform.c) is offered for download, and read
+		once it is here */
+		if (!found && copy_map && platform_offer_missing_map(cache_map_name))
+			found = cache_file_read_header_from_dvd(cache_map_name, &header);
+		if (found)
 		{
 			long buffer_size = cache_copy_buffer_size(copy_map);
-			void *buffer = texture_cache_steal_memory(buffer_size);
 			short map_file_index = cached_map_files_find_free_map(
 				header.file_length,
 				header.scenario_type);
-			struct cached_map_file *map_file = cached_map_file_get(map_file_index);
+			void *buffer;
+			struct cached_map_file *map_file;
+
+			/* port: the cache file slots are found by the name in their
+			header (cached_map_files_find_map): a map file whose header names
+			another map would be copied again each time it was asked for, for
+			ever */
+			if (_stricmp(header.name, cache_map_name) != 0)
+			{
+				error(_error_silent, "map '%s' names itself '%s' in its header: refused", cache_map_name, header.name);
+				platform_log("map %s.map names itself '%s' in its header; a map's name must be its file's",
+					cache_map_name, header.name);
+				if (copy_map)
+				{
+					display_error_damaged_media();
+				}
+
+				return FALSE;
+			}
+
+			/* port: a map no cache file holds (of no type the cache files are
+			for, or too big for its type's) is not precached; the texture
+			cache's memory is taken only once one does */
+			if (map_file_index == NONE)
+			{
+				error(_error_silent, "no cache file can hold map '%s' (%08x bytes, type %d)",
+					cache_map_name, header.file_length, header.scenario_type);
+				if (copy_map)
+				{
+					display_error_damaged_media();
+				}
+
+				return FALSE;
+			}
+			buffer = texture_cache_steal_memory(buffer_size);
+			map_file = cached_map_file_get(map_file_index);
 
 			memset(
 				&map_file->header,
@@ -649,11 +1001,21 @@ boolean cache_files_precache_map_begin(
 				sizeof(cache_file_globals.copying_to_map_file_name) - 1] = 0;
 			cache_file_get_map_path(cache_map_name, path);
 			error(_error_silent, "starting precaching of map '%s'", cache_map_name);
+#ifdef HALO_3DS
+			/* port: (the 3DS's trace: the copy takes the SD card's time) */
+			platform_log("copying map %s into cache slot %d", cache_map_name, map_file_index);
+#endif
 			cache_copy_begin(
 				buffer,
 				buffer_size,
 				cached_map_file_get_handle(map_file_index),
+#ifdef HALO_3DS
+				/* port: (its file's size, which is not its slot's on the 3DS:
+				cache_files_open_cache_files) */
+				(long)GetFileSize(cached_map_file_get_handle(map_file_index), NULL),
+#else
 				cached_map_file_get_size(map_file_index),
+#endif
 				path);
 		}
 		else
@@ -662,7 +1024,7 @@ boolean cache_files_precache_map_begin(
 			error(_error_silent, "full path name '%s'", map_name);
 			if (copy_map)
 			{
-				display_error_damaged_media();
+				cache_files_display_map_error(map_name);
 			}
 
 			return FALSE;
@@ -707,6 +1069,10 @@ void cache_files_precache_map_end(
 		cache_file_globals.copy_in_progress);
 	cache_copy_end();
 	texture_cache_return_memory();
+#ifdef HALO_3DS
+	platform_log("copied map %s into cache slot %d", cache_file_globals.copying_to_map_file_name,
+		cache_file_globals.copying_to_map_file_index);
+#endif
 	cached_map_file_set_modification_date(cache_file_globals.copying_to_map_file_index);
 	cached_map_file_read_header(cache_file_globals.copying_to_map_file_index);
 	cache_file_globals.copy_in_progress = FALSE;
@@ -808,6 +1174,14 @@ boolean cache_file_open(
 		"c:\\halo\\SOURCE\\cache\\cache_files_windows.c",
 		224,
 		map_file_index!=NONE);
+	/* port: a map in no cache file is not opened (its index would be
+	NONE's, before the cache files) */
+	if (map_file_index == NONE)
+	{
+		error(_error_silent, "the map '%s' is in no cache file", scenario_name);
+
+		return FALSE;
+	}
 	memset(
 		cache_file_globals.requests,
 		0,
@@ -848,11 +1222,31 @@ short cache_file_read(
 		"c:\\halo\\SOURCE\\cache\\cache_files_windows.c",
 		276,
 		offset>=0);
-	if (size & (CACHE_FILE_SECTOR_SIZE - 1))
+	/* port: the offset and size are the map's (a texture's or sound's,
+	which nothing checks): a negative one is no read, failed at once (a
+	negative size read the file to its end over what follows the buffer) */
+	if (offset < 0 || size < 0)
+	{
+		error(_error_silent, "cache file read of %08x bytes at %08x refused", size, offset);
+		*completion_flag_reference = _cache_file_read_failed;
+
+		return NONE;
+	}
+	if (size & (CACHE_FILE_SECTOR_SIZE - 1)
+#ifdef HALO_CUSTOM_EDITION
+		/* (a Custom Edition map is read as it is, to its end, not in the
+		Xbox's whole sectors) */
+		&& cache_file_globals.open_map_file_index != CE_MAP_FILE_INDEX
+#endif
+		)
 	{
 		size = (size | (CACHE_FILE_SECTOR_SIZE - 1)) + 1;
 	}
 	*completion_flag_reference = FALSE;
+#ifdef HALO_CUSTOM_EDITION
+	ce_request_files[request_index] = cache_file_globals.open_map_file_index == CE_MAP_FILE_INDEX
+		? ce_resources_file_for_tag(tag_index) : NULL;
+#endif
 	memset(
 		&request->overlapped,
 		0,
@@ -878,13 +1272,17 @@ short cache_files_precache_map_status(
 	if(progress) *progress=1.f;
 	return _cached_map_file_success;
 #else
-	short status;
+	/* port: failed, when the copy's status is none of the cases below
+	(it was returned unset) */
+	short status = _cached_map_file_failed;
+	short copy_status;
 
 	match_assert(
 		"c:\\halo\\SOURCE\\cache\\cache_files_windows.c",
 		984,
 		cache_file_globals.copy_in_progress);
-	switch (cache_copy_get_status(progress))
+	copy_status = cache_copy_get_status(progress);
+	switch (copy_status)
 	{
 		case _cache_copy_bad_file_failure:
 		case _cache_copy_read_failure:
@@ -955,12 +1353,20 @@ static void cache_files_verify_language(
 	{
 		short map_file_index;
 
+#ifdef HALO_3DS
+		/* port: (the 3DS: one pass, every slot's file, which is what the
+		passes below delete between them; each delete takes the SD card's
+		time, some 35 ms) */
+		(void)map_file_index;
+		cached_map_files_delete(NONE);
+#else
 		for (map_file_index = NONE;
 			map_file_index < NUMBER_OF_CACHED_MAP_FILES;
 			map_file_index++)
 		{
 			cached_map_files_delete(map_file_index);
 		}
+#endif
 	}
 
 	if (file_reference_create_from_path(&reference, "z:\\last_language.dat", FALSE))
@@ -1013,7 +1419,14 @@ static void cache_files_open_cache_files(
 		if (file != INVALID_HANDLE_VALUE)
 		{
 			if (GetLastError() == ERROR_ALREADY_EXISTS &&
-				GetFileSize(file, NULL) == (unsigned long)size)
+#ifdef HALO_3DS
+				/* port: (the 3DS: a slot's file is as long as the map last
+				copied into it, no longer than its slot: below) */
+				GetFileSize(file, NULL) <= (unsigned long)size
+#else
+				GetFileSize(file, NULL) == (unsigned long)size
+#endif
+				)
 			{
 				valid = TRUE;
 			}
@@ -1035,9 +1448,17 @@ static void cache_files_open_cache_files(
 					&completion_flag,
 					cache_file_blocking_io_completion_routine);
 				cached_map_block_on_async_request(&completion_flag);
+#ifdef HALO_3DS
+				/* port: (the 3DS: a new slot's file is not made its slot's
+				size, 278 MB for the first two and 760 MB for the six, which
+				the SD card may take minutes to give, if it has the room: it grows
+				as a map is copied into it, to that map's size) */
+				if (completion_flag)
+#else
 				if (completion_flag &&
 					SetFilePointer(file, size, NULL, FILE_BEGIN) != INVALID_SET_FILE_POINTER &&
 					SetEndOfFile(file))
+#endif
 				{
 					valid = TRUE;
 				}
@@ -1068,15 +1489,21 @@ static void cache_files_open_cache_files(
 		}
 
 		map_file->file = file;
+#ifdef HALO_3DS
+		platform_log("cache slot %d: %s", map_file_index, valid ? "ready" : "failed");
+#endif
 		if (valid)
 		{
+#ifdef HALO_64BIT
+			char *cache_map_name;
+#else
 			char *cache_map_name = cached_map_file_get(map_file_index)->header.name;
+#endif
 
 			cached_map_file_read_header(map_file_index);
-			if (strcmp(map_file->header.build, CACHE_FILE_BUILD_STRING) != 0)
-			{
-				valid = FALSE;
-			}
+#ifdef HALO_64BIT
+			cache_map_name = map_file->header.name;
+#endif
 			if (cache_file_read_header_from_dvd(cache_map_name, &dvd_header) &&
 				map_file->header.checksum == dvd_header.checksum &&
 				valid)
@@ -1113,16 +1540,30 @@ static void CALLBACK cache_file_read_io_completion_routine(
 		"c:\\halo\\SOURCE\\cache\\cache_files_windows.c",
 		1389,
 		finished_request->overlapped.hEvent);
-	*(volatile boolean *)finished_request->overlapped.hEvent = TRUE;
+	/* port: a read that failed or came up short completes as failed: what
+	waits on it stops waiting, and a caller that checks (the map's tags and
+	bsps) sees it, instead of taking what is in its buffer for the map */
+	*(volatile boolean *)finished_request->overlapped.hEvent =
+		error_code == ERROR_SUCCESS && bytes_transferred == (unsigned long)finished_request->size ?
+			TRUE :
+			_cache_file_read_failed;
 	finished_request->pending = FALSE;
 	finished_request->running = FALSE;
 
 	return;
 }
 
+#ifdef HALO_BROWSER
+static DWORD WINAPI cache_file_windows_thread_proc(
+	void *context)
+#else
 static void cache_file_windows_thread_proc(
 	void)
+#endif
 {
+#ifdef HALO_BROWSER
+	(void)context;
+#endif
 	while (TRUE)
 	{
 		while (WaitForSingleObjectEx(
@@ -1159,6 +1600,12 @@ static void cache_file_windows_thread_proc(
 			}
 
 			file = cached_map_file_get_handle(cache_file_globals.open_map_file_index);
+#ifdef HALO_CUSTOM_EDITION
+			/* (a Custom Edition map's indexed tag's pixels or samples: its
+			resource map) */
+			if (ce_request_files[best_request - cache_request_get(0)])
+				file = ce_request_files[best_request - cache_request_get(0)];
+#endif
 			match_assert(
 				"c:\\halo\\SOURCE\\cache\\cache_files_windows.c",
 				1327,
@@ -1175,8 +1622,23 @@ static void cache_file_windows_thread_proc(
 		}
 	}
 
+#ifdef HALO_BROWSER
+	return ERROR_SUCCESS;
+#else
 	return;
+#endif
 }
+
+#ifdef HALO_WEB
+/* port: WebAssembly calls a function only through a pointer of its own type,
+so the thread starts here, with the type CreateThread calls */
+static DWORD WINAPI cache_file_windows_thread_start(
+	void *parameter)
+{
+	cache_file_windows_thread_proc();
+	return 0;
+}
+#endif
 
 static void cache_file_windows_thread_create(
 	void)
@@ -1189,7 +1651,11 @@ static void cache_file_windows_thread_create(
 	cache_file_globals.thread = CreateThread(
 		NULL,
 		CACHE_FILE_THREAD_STACK_SIZE,
+#ifdef HALO_WEB
+		cache_file_windows_thread_start,
+#else
 		(LPTHREAD_START_ROUTINE)cache_file_windows_thread_proc,
+#endif
 		NULL,
 		0,
 		NULL);
@@ -1205,7 +1671,20 @@ static void cache_file_get_map_path(
 	const char *map_name,
 	char *path)
 {
-	sprintf(path, "%s%s.map", cache_files_map_directory(), map_name);
+	/* port: no more than the callers' paths hold (256; the name can be a
+	host's, over the network). One that doesn't fit is no path (no file is
+	found), not a cut one (another file could be). */
+	enum
+	{
+		MAXIMUM_MAP_PATH_LENGTH = 256,
+	};
+	int length = snprintf(path, MAXIMUM_MAP_PATH_LENGTH, "%s%s.map", cache_files_map_directory(), map_name);
+
+	if (length < 0 || length >= MAXIMUM_MAP_PATH_LENGTH)
+	{
+		error(_error_silent, "map path for '%.64s' is too long", map_name);
+		path[0] = 0;
+	}
 
 	return;
 }
@@ -1275,9 +1754,11 @@ static short cached_map_files_find_free_map(
 			last_map_file_index = 2;
 			break;
 
+		/* port: the type is the map's header's, and a release build's assertion
+		goes on: a type no cache file is for finds none */
 		default:
 			match_vassert("c:\\halo\\SOURCE\\cache\\cache_files_windows.c", 1172, FALSE, NULL);
-			break;
+			return NONE;
 	}
 
 	for (map_file_index = first_map_file_index;
@@ -1618,6 +2099,10 @@ static void cache_requests_flush(
 static struct cached_map_file *cached_map_file_get(
 	short map_file_index)
 {
+#ifdef HALO_CUSTOM_EDITION
+	if (map_file_index == CE_MAP_FILE_INDEX)
+		return &ce_map_file;
+#endif
 	match_assert(
 		"c:\\halo\\SOURCE\\cache\\cache_files_windows.c",
 		1208,
@@ -1629,7 +2114,13 @@ static struct cached_map_file *cached_map_file_get(
 static void cached_map_file_invalidate(
 	short map_file_index)
 {
-	cached_map_file_get(map_file_index)->file = INVALID_HANDLE_VALUE;
+	struct cached_map_file *map_file = cached_map_file_get(map_file_index);
+
+	if (map_file->file != INVALID_HANDLE_VALUE)
+	{
+		CloseHandle(map_file->file);
+	}
+	map_file->file = INVALID_HANDLE_VALUE;
 
 	return;
 }
@@ -1638,6 +2129,12 @@ static short cached_map_files_find_map(
 	const char *map_name)
 {
 	short map_file_index;
+
+#ifdef HALO_CUSTOM_EDITION
+	/* port: a Custom Edition map, in its own slot (above) */
+	if (ce_map_name_is(map_name))
+		return ce_map_open(map_name) ? CE_MAP_FILE_INDEX : NONE;
+#endif
 
 	for (map_file_index = 0;
 		map_file_index < NUMBER_OF_CACHED_MAP_FILES;

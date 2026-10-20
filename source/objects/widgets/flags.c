@@ -180,8 +180,8 @@ struct flag_definition
 
 void flag_update(
 	struct flag_datum_prefix *flag,
-	struct flag_definition *definition,
-	real delta);
+	struct flag_definition *flag_definition,
+	real time);
 void flag_render_proper(
 	struct flag_datum_prefix *flag,
 	struct flag_definition *definition,
@@ -328,12 +328,41 @@ long flag_new(
 		if (flag_index != NONE)
 		{
 			struct flag_datum_prefix *flag = flag_get(flag_index);
+			/* port: and a height the update's rows hold, with the one past
+			the last that the attachments' spans reach, and a size that isn't
+			negative (a map's; a negative width let any height through the
+			product; retail's flag is 16 by 13) */
+			boolean bad_size = definition->width < 0 ||
+				definition->height < 0 ||
+				definition->height >= MAXIMUM_FLAG_HEIGHT;
+
+			if (bad_size)
+			{
+				static boolean size_reported = FALSE;
+
+				if (!size_reported)
+				{
+					size_reported = TRUE;
+					error(
+						_error_silent,
+						"### ERROR a flag is %d by %d; it isn't simulated",
+						definition->width,
+						definition->height);
+				}
+			}
 
 			if (definition->height * definition->width >= MAXIMUM_FLAG_VERTICES ||
 				definition->width >= MAXIMUM_FLAG_WIDTH ||
+				bad_size ||
 				definition->shader_blue.index == NONE)
 			{
 				flag->noop = TRUE;
+				/* port: still the flag's own definition and no object yet,
+				which flags_update and flag_render read for it too (they read
+				whatever the slot held) */
+				flag->initialized = FALSE;
+				flag->object_index = NONE;
+				flag->definition_index = definition_index;
 			}
 			else
 			{
@@ -381,8 +410,11 @@ void flag_update_attachment(
 	real_vector3d delta;
 	short i;
 	short y;
+	/* port: no more attachment points than the caller's arrays hold (a map's
+	count; retail's flag has 2) */
+	short attachment_point_count = (short)PIN(definition->attachment_points.count, 0, MAXIMUM_FLAG_ATTACHMENT_POINTS);
 
-	for (i = 0; i < definition->attachment_points.count; i++)
+	for (i = 0; i < attachment_point_count; i++)
 	{
 		struct flag_attachment_point *point = TAG_BLOCK_GET_ELEMENT(
 			&definition->attachment_points,
@@ -402,7 +434,7 @@ void flag_update_attachment(
 		y_attachments[y] = NONE;
 
 	y = 0;
-	for (i = 0; i < definition->attachment_points.count; i++)
+	for (i = 0; i < attachment_point_count; i++)
 	{
 		struct flag_attachment_point *point;
 		short span;
@@ -427,7 +459,9 @@ void flag_update_attachment(
 		{
 			real t = ((real)y - row_start) / ((real)y_end - row_start);
 			real_point3d *from = &attachment_points[i];
-			real_point3d *to = &attachment_points[i + 1];
+			/* port: the last point the array holds goes to itself (a map's
+			span past it read past the array) */
+			real_point3d *to = i + 1 < MAXIMUM_FLAG_ATTACHMENT_POINTS ? &attachment_points[i + 1] : from;
 			real_point3d *force_point = &attachment_force_points[y];
 
 			force_point->x = from->x * (1.0f - t) + to->x * t;
@@ -442,15 +476,9 @@ void flag_update_attachment(
 	delta.j = attachment_points->y - flag->first_attachment.y;
 	delta.k = attachment_points->z - flag->first_attachment.z;
 
-	/*
-	 * BUG (original): integer truncation makes this an effective two-unit
-	 * threshold, as in antenna_update_attachment. A non-matching correctness
-	 * fix would compare fabs(delta.i), fabs(delta.j), and fabs(delta.k)
-	 * directly against 1.0f.
-	 */
-	if ((real)abs((long)delta.i) > 1.0f ||
-		(real)abs((long)delta.j) > 1.0f ||
-		(real)abs((long)delta.k) > 1.0f)
+	if (fabsf(delta.i) > 1.0f ||
+		fabsf(delta.j) > 1.0f ||
+		fabsf(delta.k) > 1.0f)
 	{
 		short x;
 
@@ -474,8 +502,8 @@ void flag_update_attachment(
 
 void flag_update(
 	struct flag_datum_prefix *flag,
-	struct flag_definition *definition,
-	real delta)
+	struct flag_definition *flag_definition,
+	real time)
 {
 	short weather_palette_index;
 	real_point3d attachment_points[MAXIMUM_FLAG_ATTACHMENT_POINTS];
@@ -483,21 +511,22 @@ void flag_update(
 	struct location attachment_location;
 	real_point3d attachment_force_points[MAXIMUM_FLAG_HEIGHT];
 	short y_attachments[MAXIMUM_FLAG_HEIGHT];
-	boolean underwater;
-	short sweep_forward = !flag->update_state;
+	boolean under_water;
+	short new_update_state = !flag->update_state;
 
 	object_get(flag->object_index);
 	flag_update_attachment(
 		flag,
-		definition,
+		flag_definition,
 		&attachment_location,
 		attachment_points,
 		attachment_force_points,
 		attachment_y,
 		y_attachments);
-	underwater = scenario_location_underwater(
+	/* port: the last point flag_update_attachment set (a map's count) */
+	under_water = scenario_location_underwater(
 		&attachment_location,
-		&attachment_points[definition->attachment_points.count - 1],
+		&attachment_points[PIN(flag_definition->attachment_points.count, 1, MAXIMUM_FLAG_ATTACHMENT_POINTS) - 1],
 		&weather_palette_index);
 
 	if (!flag->noop)
@@ -509,50 +538,67 @@ void flag_update(
 
 		for (i = 0; i < NUMBER_OF_FLAG_NEIGHBORS; i++)
 		{
-			real dx = parent_deltas[i].x * definition->cell_width_scale;
-			real dy = parent_deltas[i].y * definition->cell_height_scale;
+			real_vector2d parent_vector;
 
-			parent_distances[i] = square_root(dy*dy + dx*dx);
+			parent_vector.i = parent_deltas[i].x * flag_definition->cell_width_scale;
+			parent_vector.j = parent_deltas[i].y * flag_definition->cell_height_scale;
+			parent_distances[i] = magnitude2d(&parent_vector);
 		}
 
-		for (column = 0; column < definition->width; column++)
+		for (column = 0; column < flag_definition->width; column++)
 		{
-			short row_step = sweep_forward ? 1 : -1;
-			short row;
+			short delta = new_update_state ? 1 : -1;
+			short y;
 
-			for (row = sweep_forward ? 0 : definition->height - 1;
-				sweep_forward ? row < definition->height : row > 0;
-				row += row_step)
+			for (y = new_update_state ? 0 : flag_definition->height - 1;
+				new_update_state ? y < flag_definition->height : y > 0;
+				y += delta)
 			{
-				struct flag_vertex_datum *vertex = flag_datum_get_vertex(flag, definition, column, row);
-				short neighbor_count = 0;
+				short attachment_index_for_row = y_attachments[y];
+				struct flag_vertex_datum *vertex = flag_datum_get_vertex(flag, flag_definition, column, y);
+				short estimated_position_count = 0;
 				unsigned long physics_flags = FLAG(_point_physics_ignore_position_bit);
 				real_point3d new_position;
 				struct location new_location;
 				real_vector3d turbulence;
 				real wind_scale;
-				short attachment_index_for_row;
 
-				if (!underwater)
+				if (!under_water)
 				{
-					wind_scale = point_physics_definition_get(definition->physics.index)->air_friction *
-						definition->wind_noise * 0.0004f;
+					wind_scale = point_physics_definition_get(flag_definition->physics.index)->air_friction *
+						flag_definition->wind_noise * 0.0004f;
 				}
 				else
 				{
-					wind_scale = point_physics_definition_get(definition->physics.index)->water_friction *
-						definition->wind_noise * 0.00016f;
+					wind_scale = point_physics_definition_get(flag_definition->physics.index)->water_friction *
+						flag_definition->wind_noise * 0.00016f;
 					SET_FLAG(physics_flags, _point_physics_ignore_position_under_water_bit, TRUE);
 				}
 
-				local_random_direction3d(&turbulence);
+				/* The native builds update flags every frame, several frames a
+				tick (port/linux/game/render_interpolation.c): a new random push
+				every frame would mostly cancel out and leave the cloth stiller
+				the higher the frame rate. Keep each vertex's push for the whole
+				tick, as long as it lasted on the Xbox. */
+				{
+					unsigned long seed = (unsigned long)game_time_get() * 0x9E3779B1UL ^
+						(unsigned long)(size_t)flag ^
+						((unsigned long)column << 16 | (unsigned short)y);
+
+					seed ^= seed >> 16;
+					seed *= 0x7FEB352DUL;
+					seed ^= seed >> 15;
+					seed *= 0x846CA68BUL;
+					seed ^= seed >> 16;
+					seed_random_direction3d(&seed, &turbulence);
+				}
 				scale_vector3d(&turbulence, wind_scale, &turbulence);
 
 				new_position = vertex->position;
 				new_location = attachment_location;
 				point_physics_update(
 					physics_flags,
-					point_physics_definition_get(definition->physics.index),
+					point_physics_definition_get(flag_definition->physics.index),
 					&new_location,
 					weather_palette_index,
 					&new_position,
@@ -561,68 +607,70 @@ void flag_update(
 					NULL,
 					NULL,
 					0.02f,
-					delta);
+					time);
 
-				if (column != 0 || (attachment_index_for_row = y_attachments[row]) == NONE)
+				if (column == 0 && attachment_index_for_row != NONE)
+				{
+					new_position = attachment_points[attachment_index_for_row];
+				}
+				else
 				{
 					real_point3d estimated_positions[NUMBER_OF_FLAG_NEIGHBORS];
-					real_vector3d weighted_position;
-					real weight_sum;
-					real inverse_weight;
+					real one_over_n;
 
 					for (i = 0; i < NUMBER_OF_FLAG_NEIGHBORS; i++)
 					{
 						short neighbor_column = column + parent_deltas[i].x;
-						short neighbor_row = row + parent_deltas[i].y;
+						short neighbor_row = y + parent_deltas[i].y;
 
-						if (neighbor_column >= 0 && neighbor_column < definition->width &&
-							neighbor_row >= 0 && neighbor_row < definition->height)
+						if (neighbor_column >= 0 && neighbor_column < flag_definition->width &&
+							neighbor_row >= 0 && neighbor_row < flag_definition->height)
 						{
-							struct flag_vertex_datum *neighbor = flag_datum_get_vertex(flag, definition, neighbor_column, neighbor_row);
-							real_vector3d direction;
+							struct flag_vertex_datum *neighbor = flag_datum_get_vertex(flag, flag_definition, neighbor_column, neighbor_row);
+							real_vector3d parent;
 
-							vector_from_points3d(&neighbor->position, &new_position, &direction);
-							normalize3d(&direction);
-							estimated_positions[neighbor_count].x = neighbor->position.x + direction.i * parent_distances[i];
-							estimated_positions[neighbor_count].y = neighbor->position.y + direction.j * parent_distances[i];
-							estimated_positions[neighbor_count].z = neighbor->position.z + direction.k * parent_distances[i];
-							neighbor_count++;
+							parent.i = new_position.x - neighbor->position.x;
+							parent.j = new_position.y - neighbor->position.y;
+							parent.k = new_position.z - neighbor->position.z;
+							normalize3d(&parent);
+							estimated_positions[estimated_position_count].x = neighbor->position.x + parent.i * parent_distances[i];
+							estimated_positions[estimated_position_count].y = neighbor->position.y + parent.j * parent_distances[i];
+							estimated_positions[estimated_position_count].z = neighbor->position.z + parent.k * parent_distances[i];
+							estimated_position_count++;
 						}
 					}
 
-					weight_sum = 0.0f;
-					weighted_position.i = weighted_position.j = weighted_position.k = 0.0f;
-					for (i = 0; i < neighbor_count; i++)
+					one_over_n = 0.0f;
+					new_position.x = new_position.y = new_position.z = 0.0f;
+					for (i = 0; i < estimated_position_count; i++)
 					{
 						real weight = (column != 0 && i == 0) ? 4.0f : 1.0f;
 
-						weighted_position.i += estimated_positions[i].x * weight;
-						weighted_position.j += estimated_positions[i].y * weight;
-						weighted_position.k += estimated_positions[i].z * weight;
-						weight_sum += weight;
+						new_position.x += weight * estimated_positions[i].x;
+						new_position.y += weight * estimated_positions[i].y;
+						new_position.z += weight * estimated_positions[i].z;
+						one_over_n += weight;
 					}
 
 					if (column == 0)
 					{
-						weighted_position.i += attachment_force_points[row].x * 4.0f;
-						weighted_position.j += attachment_force_points[row].y * 4.0f;
-						weighted_position.k += attachment_force_points[row].z * 4.0f;
-						weight_sum += 4.0f;
+						real weight = 4.0f;
+
+						new_position.x += weight * attachment_force_points[y].x;
+						new_position.y += weight * attachment_force_points[y].y;
+						new_position.z += weight * attachment_force_points[y].z;
+						one_over_n += weight;
 					}
 
-					inverse_weight = 1.0f / weight_sum;
-					new_position.x = inverse_weight * weighted_position.i;
-					new_position.y = inverse_weight * weighted_position.j;
-					new_position.z = inverse_weight * weighted_position.k;
-				}
-				else
-				{
-					new_position = attachment_points[attachment_index_for_row];
+					one_over_n = 1.0f / one_over_n;
+					new_position.x *= one_over_n;
+					new_position.y *= one_over_n;
+					new_position.z *= one_over_n;
 				}
 
-				vertex->velocity.i = (new_position.x - vertex->position.x) * (1.0f / delta);
-				vertex->velocity.j = (new_position.y - vertex->position.y) * (1.0f / delta);
-				vertex->velocity.k = (new_position.z - vertex->position.z) * (1.0f / delta);
+				vertex->velocity.i = (new_position.x - vertex->position.x) / time;
+				vertex->velocity.j = (new_position.y - vertex->position.y) / time;
+				vertex->velocity.k = (new_position.z - vertex->position.z) / time;
 				vertex->position = new_position;
 			}
 		}

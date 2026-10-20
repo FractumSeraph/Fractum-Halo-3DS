@@ -182,6 +182,8 @@ symbols in this file:
  * ABI and code shape.
  */
 #include <xtl.h>
+#include "rasterizer/xbox/rasterizer_xbox.h"
+#include "rasterizer/xbox/rasterizer_xbox_pixel_shader.h"
 
 #include "interface/progress_bar_internal.h"
 
@@ -219,28 +221,6 @@ struct progress_bar_mode
 	IDirect3DTexture8 *texture1;
 	boolean active;
 	unsigned char padding1[3];
-};
-
-struct pixel_shader_definition
-{
-	unsigned long alpha_inputs[8];
-	unsigned long final_combiner_inputs_abcd;
-	unsigned long final_combiner_inputs_efg;
-	unsigned long constant_0[8];
-	unsigned long constant_1[8];
-	unsigned long alpha_outputs[8];
-	unsigned long rgb_inputs[8];
-	unsigned long compare_mode;
-	unsigned long final_combiner_constant_0;
-	unsigned long final_combiner_constant_1;
-	unsigned long rgb_outputs[8];
-	unsigned long combiner_count;
-	unsigned long texture_modes;
-	unsigned long dot_mapping;
-	unsigned long input_texture;
-	unsigned long c0_mapping;
-	unsigned long c1_mapping;
-	unsigned long final_combiner_constants;
 };
 
 struct gravy_layer
@@ -285,7 +265,7 @@ static void draw_layer_int(
 	real alpha,
 	real progress);
 
-void draw_layer(
+static void draw_layer(
 	real distance,
 	real alpha,
 	real_rgb_color const *color,
@@ -295,11 +275,11 @@ static void draw_initial_layer(
 	real_rgb_color const *color,
 	real progress);
 
-void do_convoluation_coords(
+static void do_convoluation_coords(
 	real x,
 	real y);
 
-void draw_fade_layer(
+static void draw_fade_layer(
 	real x_offset,
 	real y_offset,
 	real alpha);
@@ -322,6 +302,8 @@ static void this_is_awful(
 
 static void progress_bar_render(
 	real progress);
+static void progress_bar_let_go(
+	void);
 
 void tgaLoadHeader(
 	FILE *file,
@@ -333,12 +315,17 @@ void tgaLoadImageData(
 
 /* ---------- globals */
 
-extern void *global_d3d_device;
+/* rasterizer_xbox.c */
+void rasterizer_forget_hardware_state(
+	void);
+
 extern struct pixel_shader_definition blur_shader;
 extern struct pixel_shader_definition regular_shader;
 extern unsigned long current_time;
 
-boolean progress_bar_rendering_enabled= TRUE;
+static boolean progress_bar_rendering_enabled= TRUE;
+/* port: a map's download shows the screen (progress_bar_download_display) */
+static boolean progress_bar_downloading= FALSE;
 
 /* the compressed monk chant played behind the loading screen */
 byte compressed_monk_tone[18396]=
@@ -1799,7 +1786,6 @@ void progress_bar_eachframe(
 	void)
 {
 	unsigned long time= GetTickCount();
-	long sound_index;
 
 	if (progress_bar_restart)
 	{
@@ -1808,34 +1794,66 @@ void progress_bar_eachframe(
 		progress_bar_mode.state= 1;
 	}
 
-	if (time - progress_bar_globals.start_time>1000)
+	/* port: (not while a map's download shows the screen over the menus,
+	whose frames come here) */
+	if (time - progress_bar_globals.start_time>1000 && !progress_bar_downloading)
+		progress_bar_let_go();
+
+	return;
+}
+
+/* port: the textures and sounds the screen made, let go of (as
+progress_bar_eachframe did once a load was over) */
+static void progress_bar_let_go(
+	void)
+{
+	long sound_index;
+
+	last_t= 0;
+	if (progress_bar_mode.texture0)
 	{
-		last_t= 0;
-		if (progress_bar_mode.texture0)
+		IDirect3DTexture8_Release(progress_bar_mode.texture0);
+		progress_bar_mode.texture0= NULL;
+	}
+	if (progress_bar_mode.texture1)
+	{
+		IDirect3DTexture8_Release(progress_bar_mode.texture1);
+		progress_bar_mode.texture1= NULL;
+	}
+	for (sound_index= 0; sound_index<NUMBER_OF_PROGRESS_BAR_SOUNDS; sound_index++)
+	{
+		if (progress_bar_globals.sounds[sound_index])
 		{
-			IDirect3DTexture8_Release(progress_bar_mode.texture0);
-			progress_bar_mode.texture0= NULL;
-		}
-		if (progress_bar_mode.texture1)
-		{
-			IDirect3DTexture8_Release(progress_bar_mode.texture1);
-			progress_bar_mode.texture1= NULL;
-		}
-		if (progress_bar_mode.texture0)
-		{
-			IDirect3DTexture8_Release(progress_bar_mode.texture0);
-			progress_bar_mode.texture0= NULL;
-		}
-		for (sound_index= 0; sound_index<NUMBER_OF_PROGRESS_BAR_SOUNDS; sound_index++)
-		{
-			if (progress_bar_globals.sounds[sound_index])
-			{
-				IDirectSoundBuffer_Stop(progress_bar_globals.sounds[sound_index]);
-				IDirectSoundBuffer_Release(progress_bar_globals.sounds[sound_index]);
-				progress_bar_globals.sounds[sound_index]= NULL;
-			}
+			IDirectSoundBuffer_Stop(progress_bar_globals.sounds[sound_index]);
+			IDirectSoundBuffer_Release(progress_bar_globals.sounds[sound_index]);
+			progress_bar_globals.sounds[sound_index]= NULL;
 		}
 	}
+
+	return;
+}
+
+/* port: the screen of a map's download, over the menus
+(port/linux/game/download_screen.c): the loading screen at the download's
+progress, drawn each frame while the menus behind it go on (a load's
+blocks them: progress_bar_is_active) */
+void progress_bar_download_display(
+	real progress)
+{
+	progress_bar_downloading= TRUE;
+	progress_bar_display(progress);
+
+	return;
+}
+
+/* port: the download over (done, stopped or failed) */
+void progress_bar_download_end(
+	void)
+{
+	if (!progress_bar_downloading)
+		return;
+	progress_bar_downloading= FALSE;
+	progress_bar_let_go();
 
 	return;
 }
@@ -1846,7 +1864,7 @@ void progress_bar_display(
 #line 827 "c:\\halo\\SOURCE\\interface\\progress_bar.c"
 	match_assert(__FILE__, __LINE__, (progress>=0.f) && (progress<=1.f));
 
-	if (progress_bar_mode.active && progress>0.f)
+	if ((progress_bar_mode.active || progress_bar_downloading) && progress>0.f)
 	{
 		if (!progress_bar_mode.texture0)
 		{
@@ -1921,7 +1939,7 @@ static void draw_layer_int(
 	return;
 }
 
-void draw_layer(
+static void draw_layer(
 	real distance,
 	real alpha,
 	real_rgb_color const *color,
@@ -1945,21 +1963,12 @@ static void draw_initial_layer(
 	real_rgb_color const *color,
 	real progress)
 {
-	struct gravy_layer layer;
-
-	layer.texture_width= 640.f;
-	layer.texture_height= 480.f;
-	layer.x= 0.f;
-	layer.y= 0.f;
-	layer.half_width= (real)fabs(640.0/2.0);
-	layer.half_height= (real)fabs(480.0/2.0);
-	layer.distance= 0.f;
-	draw_layer_int(&layer, color, 1.f, progress);
+	draw_layer(0.f, 1.f, color, progress);
 
 	return;
 }
 
-void do_convoluation_coords(
+static void do_convoluation_coords(
 	real x,
 	real y)
 {
@@ -1971,7 +1980,7 @@ void do_convoluation_coords(
 	return;
 }
 
-void draw_fade_layer(
+static void draw_fade_layer(
 	real x_offset,
 	real y_offset,
 	real alpha)
@@ -2038,6 +2047,9 @@ static void progress_bar_render(
 	long sound_index;
 	long stage;
 
+	/* port (this fork): no loading_screen_step_due here, ChupathingyCE's pace
+	for the picture its CPU makes: the Xbox's drawing below runs, and draws
+	each frame it is called for */
 	wobble_phase+= 0.01f;
 	progress= (real)((sin(wobble_phase)*0.05 + progress - last_t)*0.2 + last_t);
 	if (progress>1.0)
@@ -2059,13 +2071,27 @@ static void progress_bar_render(
 		}
 	}
 
+	/* port (this fork): the Xbox's own drawing, as it is: d3d8_gl.c has its
+	front buffer (the trails of the light) and its fixed-function draws
+	(fdad410f, 2428d2a2), and the map download screen draws through it
+	(progress_bar_download_display). ChupathingyCE draws the same picture with
+	the CPU instead (port/linux/game/loading_screen.c, halo_draw_picture),
+	which this fork leaves unused */
 	current_time= GetTickCount();
 	IDirect3DDevice8_GetTransform(global_d3d_device, D3DTS_WORLD, &progress_bar_globals.saved_world);
 	IDirect3DDevice8_GetTransform(global_d3d_device, D3DTS_VIEW, &progress_bar_globals.saved_view);
 	IDirect3DDevice8_GetTransform(global_d3d_device, D3DTS_PROJECTION, &progress_bar_globals.saved_projection);
 	IDirect3DDevice8_SetTransform(global_d3d_device, D3DTS_WORLD, &progress_bar_globals.world);
 	IDirect3DDevice8_SetTransform(global_d3d_device, D3DTS_VIEW, &progress_bar_globals.view);
-	IDirect3DDevice8_SetTransform(global_d3d_device, D3DTS_PROJECTION, &progress_bar_globals.projection);
+	/* port: on a wide screen, the 640 columns in its middle, as the menus are
+	drawn (the frame before, which the trails are, is those columns:
+	d3d8_gl.c's front buffer) */
+	{
+		D3DXMATRIX projection= progress_bar_globals.projection;
+
+		projection._11*= 640.f/(real)halo_screen_width();
+		IDirect3DDevice8_SetTransform(global_d3d_device, D3DTS_PROJECTION, &projection);
+	}
 	IDirect3DDevice8_SetRenderState(global_d3d_device, D3DRS_ALPHABLENDENABLE, TRUE);
 	IDirect3DDevice8_SetRenderState(global_d3d_device, D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
 	IDirect3DDevice8_SetRenderState(global_d3d_device, D3DRS_DESTBLEND, D3DBLEND_ONE);
@@ -2102,6 +2128,9 @@ static void progress_bar_render(
 		IDirect3DDevice8_SetTextureStageState(global_d3d_device, stage, D3DTSS_ADDRESSV, D3DTADDRESS_CLAMP);
 		IDirect3DDevice8_SetTexture(global_d3d_device, stage, &back_buffer_texture);
 	}
+	/* (back_buffer_texture has what it needs of the surface; the
+	reference IDirect3DDevice8_GetBackBuffer gave is given back) */
+	IDirect3DSurface8_Release(back_buffer);
 
 	if (progress<0.9f)
 		draw_fade_layer(0.f, 0.f, 0.9f);
@@ -2120,6 +2149,9 @@ static void progress_bar_render(
 	IDirect3DDevice8_SetTransform(global_d3d_device, D3DTS_VIEW, &progress_bar_globals.saved_view);
 	IDirect3DDevice8_SetTransform(global_d3d_device, D3DTS_PROJECTION, &progress_bar_globals.saved_projection);
 	IDirect3DDevice8_BlockUntilVerticalBlank(global_d3d_device);
+	/* port: the rasterizer's caches of the device's states learn what was
+	set here */
+	rasterizer_forget_hardware_state();
 
 	return;
 }
@@ -2257,6 +2289,72 @@ static void progress_bar_make_stuff_ready(
 		IDirect3DDevice8_SetRenderTarget(global_d3d_device, back_buffer, depth_buffer);
 		IDirect3DDevice8_Clear(global_d3d_device, 0, NULL, 0xf0, 0, 0.f, 0);
 		IDirect3DDevice8_SetRenderTarget(global_d3d_device, front_buffer, depth_buffer);
+		IDirect3DSurface8_Release(back_buffer);
+		IDirect3DSurface8_Release(front_buffer);
+		/* port: the device may have no depth buffer (GetDepthStencilSurface
+		gives NULL), and Release reads the resource it is given */
+		if (depth_buffer)
+			IDirect3DSurface8_Release(depth_buffer);
+	}
+
+	return;
+}
+
+/* port: a value of the clouds' lattice, 0 to 1, the same at every run */
+static real progress_bar_cloud_lattice(
+	long x,
+	long y)
+{
+	unsigned long hash= (unsigned long)x*374761393u + (unsigned long)y*668265263u;
+
+	hash= (hash ^ (hash>>13))*1274126177u;
+	hash^= hash>>16;
+
+	return (real)(hash & 0xffff)/65535.f;
+}
+
+/* port: soft clouds, four octaves of smoothed value noise that wrap at the
+picture's edges, as loading.tga intensities (tgaLoadImageData's tint) */
+static void progress_bar_make_clouds(
+	unsigned long *pixels,
+	long width,
+	long height)
+{
+	long x, y;
+
+	for (y= 0; y<height; y++)
+	{
+		for (x= 0; x<width; x++)
+		{
+			real value= 0.f, weight= 0.5f;
+			long cells= 4;
+			long octave;
+			unsigned long intensity;
+
+			for (octave= 0; octave<4; octave++, cells*= 2, weight*= 0.5f)
+			{
+				real u= (real)x*cells/width, v= (real)y*cells/height;
+				long x0= (long)u, y0= (long)v;
+				real fx= u - x0, fy= v - y0;
+				real a, b, c, d;
+
+				fx= fx*fx*(3.f - 2.f*fx);
+				fy= fy*fy*(3.f - 2.f*fy);
+				a= progress_bar_cloud_lattice(octave*1000 + x0%cells, y0%cells);
+				b= progress_bar_cloud_lattice(octave*1000 + (x0 + 1)%cells, y0%cells);
+				c= progress_bar_cloud_lattice(octave*1000 + x0%cells, (y0 + 1)%cells);
+				d= progress_bar_cloud_lattice(octave*1000 + (x0 + 1)%cells, (y0 + 1)%cells);
+				value+= weight*((a + (b - a)*fx)*(1.f - fy) + (c + (d - c)*fx)*fy);
+			}
+			/* (value is 0 to about 0.94: stretched so the clouds have dark gaps) */
+			value= (value - 0.25f)*1.6f;
+			if (value<0.f)
+				value= 0.f;
+			if (value>1.f)
+				value= 1.f;
+			intensity= (unsigned long)(value*255.f);
+			pixels[y*width + x]= ((intensity<<9) | (intensity & ~1))<<7 | intensity>>2;
+		}
 	}
 
 	return;
@@ -2271,6 +2369,8 @@ static void progress_bar_load_loading_texture(
 	struct tga_image image;
 	D3DLOCKED_RECT locked_rect;
 	unsigned long *pixels;
+	/* port: whether a picture was read (else the clouds, below) */
+	boolean loaded= FALSE;
 	FILE *file;
 
 	IDirect3DDevice8_CreateTexture(global_d3d_device, 320, 240, 1, 0, D3DFMT_LIN_A8B8G8R8, 0, texture);
@@ -2282,11 +2382,28 @@ static void progress_bar_load_loading_texture(
 	file= fopen(source_path, "rb");
 	if (file)
 	{
+		image.width= 0;
+		image.height= 0;
+		image.image_type= 0;
+		image.pixel_depth= 0;
 		tgaLoadHeader(file, &image);
-		image.pixels= pixels;
-		tgaLoadImageData(file, &image);
+		/* port: the file is a map pack's: only an uncompressed 24-bit
+		picture the texture's size is read into it */
+		if (image.image_type==2 && image.pixel_depth==24 && image.width==320 && image.height==240)
+		{
+			image.pixels= pixels;
+			tgaLoadImageData(file, &image);
+			loaded= TRUE;
+		}
 		fclose(file);
 	}
+	/* port: no loading.tga (no disc has one as a file: the retail
+	default.xbe holds the picture, which importing a disc writes as
+	loading.tga, port/linux/src/xiso.c and tools/xiso_extract.py): the
+	picture the light sweeps over is made here, clouds, tinted as a
+	loading.tga's grey would be */
+	if (!loaded)
+		progress_bar_make_clouds(pixels, 320, 240);
 	IDirect3DTexture8_UnlockRect(*texture, 0);
 
 	return;

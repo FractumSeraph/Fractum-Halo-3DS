@@ -131,7 +131,7 @@ struct shader_lens_flare_fields_transparent
 
 /* ---------- prototypes */
 
-long compare_temp_markers(
+static long compare_temp_markers(
 	struct temporary_lens_flare_marker const *a,
 	struct temporary_lens_flare_marker const *b);
 
@@ -304,7 +304,7 @@ boolean build_structure_lens_flares(
 					tag_reference_set(
 						&lens_flare->lens_flare,
 						lens_flare_reference->group_tag,
-						lens_flare_reference->name);
+						xbox_pointer(lens_flare_reference->name));
 					lens_flare->lens_flare.index = lens_flare_reference->index;
 				}
 				else
@@ -316,7 +316,7 @@ boolean build_structure_lens_flares(
 
 			if (lens_flare_index != NONE)
 			{
-			struct structure_environment_vertex *vertices = material->uncompressed_vertex_data.address;
+			struct structure_environment_vertex *vertices = xbox_pointer(material->uncompressed_vertex_data.address);
 
 			connected_geometry_new(&geometry);
 			for (surface_offset = 0; surface_offset < material->surface_count; surface_offset++)
@@ -702,7 +702,7 @@ boolean build_structure_lens_flares(
 
 /* ---------- private code */
 
-long compare_temp_markers(
+static long compare_temp_markers(
 	struct temporary_lens_flare_marker const *a,
 	struct temporary_lens_flare_marker const *b)
 {

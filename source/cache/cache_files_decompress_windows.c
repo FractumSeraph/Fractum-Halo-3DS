@@ -223,7 +223,11 @@ symbols in this file:
 #include "cseries/errors.h"
 #include "cache/cache_files.h"
 #include "cache/cache_files_decompress_windows.h"
-#include "memory/zlib/zlib.h"
+/* port: the port's zlib (1.3), not the game's 1.1.3, inflates the maps,
+which are anyone's files; its inflate needs about 40 KB of ZLIB_BUFFER_SIZE,
+and frees what it takes in the reverse order, as cache_copy_compressed_free
+wants */
+#include "../../port/third_party/zlib/zlib_prefixed.h"
 
 #include <xtl.h>
 
@@ -374,6 +378,7 @@ typedef char verify_cache_file_header_size[
 	sizeof(struct cache_file_header) == 0x800 ? 1 : -1];
 typedef char verify_simple_decompressor_zlib_stream_offset[
 	offsetof(struct simple_decompressor_definition, zlib_stream) == 0x908 ? 1 : -1];
+#ifndef HALO_64BIT
 typedef char verify_simple_decompressor_copy_stop_event_offset[
 	offsetof(struct simple_decompressor_definition, copy_stop_event) == 0x950 ? 1 : -1];
 typedef char verify_simple_decompressor_copy_complete_event_offset[
@@ -394,15 +399,18 @@ typedef char verify_simple_decompressor_overlapped_timers_offset[
 	offsetof(struct simple_decompressor_definition, overlapped_timer_starts) == 0xAC8 ? 1 : -1];
 typedef char verify_simple_decompressor_size[
 	sizeof(struct simple_decompressor_definition) == 0xB50 ? 1 : -1];
+#endif
 typedef char verify_decompressor_runtime_globals_times_offset[
 	offsetof(struct decompressor_runtime_globals, times) == 0x100 ? 1 : -1];
 typedef char verify_decompressor_runtime_globals_timer_starts_offset[
 	offsetof(struct decompressor_runtime_globals, timer_starts) == 0x128 ? 1 : -1];
 typedef char verify_decompressor_runtime_globals_self_offset[
 	offsetof(struct decompressor_runtime_globals, self) == 0x170 ? 1 : -1];
+#ifndef HALO_64BIT
 typedef char verify_decompressor_runtime_globals_size[
 	sizeof(struct decompressor_runtime_globals) == 0xCC0 ? 1 : -1];
 
+#endif
 /* ---------- prototypes */
 
 static void cache_copy_print_timing(
@@ -455,9 +463,6 @@ static void cache_copy_block_on_raw_write(
 	struct simple_decompressor_definition *self);
 static void cache_copy_wait_for_async_io(
 	struct simple_decompressor_definition *self);
-struct cache_copy_read_request *acquire_read_request(
-	struct simple_decompressor_definition *self,
-	short read_sequence_index);
 static void cache_copy_issue_read(
 	struct simple_decompressor_definition *self,
 	void *buffer,
@@ -506,7 +511,7 @@ static void cache_copy_run_decompression(
 	struct simple_decompressor_definition *self);
 static unsigned long __stdcall simple_cache_copy_thread(
 	void *parameter);
-static void CALLBACK cache_copy_FileIOCompletionRoutine(
+void CALLBACK cache_copy_FileIOCompletionRoutine(
 	unsigned long error_code,
 	unsigned long bytes_transferred,
 	OVERLAPPED *overlapped);
@@ -516,8 +521,8 @@ static void CALLBACK cache_copy_FileIOCompletionRoutine(
 static struct decompressor_runtime_globals decompressor_globals;
 static struct simple_decompressor_definition *global_self = &decompressor_globals.self;
 static long performance_frequency = 1;
-
-static boolean decompressor_print_timing;
+/* January PDB: public, module 33 .bss+0xcc0; explicit zero avoids COMMON. */
+boolean decompressor_print_timing = FALSE;
 
 /* ---------- code */
 
@@ -758,6 +763,14 @@ static void cache_copy_initialize_file_data(
 		"c:\\halo\\SOURCE\\cache\\cache_files_decompress_windows.c",
 		964,
 		self->read_bytes_left>=sizeof(self->header));
+	/* port: a map that did not open, or is too short to hold a header, is a
+	bad file, not copied (the assertion goes on in a release build, and an
+	unopened file's size is -1, which it compared unsigned) */
+	if (self->source_file == INVALID_HANDLE_VALUE ||
+		self->read_bytes_left < (long)sizeof(self->header))
+	{
+		cache_copy_set_flag(_copy_bad_file_bit);
+	}
 
 	csmemset(self->overlapped_in_use_flags, 0, sizeof(self->overlapped_in_use_flags));
 	csmemset(self->overlapped_completed_flags, 0, sizeof(self->overlapped_completed_flags));
@@ -1085,7 +1098,7 @@ void cache_copy_end(
 	return;
 }
 
-static void CALLBACK cache_copy_FileIOCompletionRoutine(
+void CALLBACK cache_copy_FileIOCompletionRoutine(
 	unsigned long error_code,
 	unsigned long bytes_transferred,
 	OVERLAPPED *overlapped)
@@ -1176,7 +1189,11 @@ static void cache_copy_issue_read(
 		!BIT_VECTOR_TEST_FLAG(self->overlapped_in_use_flags, overlapped_index));
 	BIT_VECTOR_SET_FLAG(self->overlapped_in_use_flags, overlapped_index, TRUE);
 
+#ifdef HALO_64BIT
+	overlapped->hEvent = (HANDLE)(__INTPTR_TYPE__)overlapped_index;
+#else
 	overlapped->hEvent = (HANDLE)overlapped_index;
+#endif
 	overlapped->Offset = offset;
 	overlapped->OffsetHigh = 0;
 
@@ -1233,7 +1250,11 @@ static void cache_copy_issue_write(
 		!BIT_VECTOR_TEST_FLAG(self->overlapped_in_use_flags, overlapped_index));
 	BIT_VECTOR_SET_FLAG(self->overlapped_in_use_flags, overlapped_index, TRUE);
 
+#ifdef HALO_64BIT
+	overlapped->hEvent = (HANDLE)(__INTPTR_TYPE__)overlapped_index;
+#else
 	overlapped->hEvent = (HANDLE)overlapped_index;
+#endif
 	overlapped->Offset = offset;
 	overlapped->OffsetHigh = 0;
 
@@ -1394,7 +1415,6 @@ static void cache_copy_issue_write_internal(
 		size,
 		self->current_write_offset,
 		write_buffer_index);
-
 	self->current_write_offset += size;
 	self->write_bytes_left -= size;
 
@@ -1422,7 +1442,6 @@ static void cache_copy_initialize_read_data(
 
 	cache_copy_issue_read_raw(self, &self->header, sizeof(self->header), 0);
 	cache_copy_block_on_raw_read(self);
-
 	cache_file_header_verify(&self->header, "blah", TRUE);
 
 	self->read_bytes_left -= sizeof(self->header);
@@ -1572,7 +1591,6 @@ static void cache_copy_run_decompression(
 				zlib_stream->avail_in = FILE_BLOCK_SIZE;
 				zlib_stream->next_in = cache_copy_get_read_buffer(self, self->current_request);
 				self->current_read_sequence_count = 1;
-
 				match_assert(
 					"c:\\halo\\SOURCE\\cache\\cache_files_decompress_windows.c",
 					1163,
@@ -1608,10 +1626,28 @@ static void cache_copy_run_decompression(
 			decompressor_timer_start(_decompressor_timer_zlib_during_write_file);
 
 		zlib_result = inflate(zlib_stream, 0);
-
 		decompressor_timer_stop(_decompressor_timer_zlib);
 		if (self->write_requests_pending > 1)
 			decompressor_timer_stop(_decompressor_timer_zlib_during_write_file);
+
+		/* port: a stream that ends before the size the header gives the map
+		is a bad file: the rest of the cache file would be taken for it */
+		if (zlib_result == Z_STREAM_END &&
+			zlib_stream->total_out != (uLong)(self->header.size - sizeof(self->header)))
+		{
+			match_vassert(
+				"c:\\halo\\SOURCE\\cache\\cache_files_decompress_windows.c",
+				1248,
+				FALSE,
+				csprintf(
+					decompressor_globals.message,
+					"decompression ended after %lu of %ld bytes",
+					(unsigned long)zlib_stream->total_out,
+					self->header.size - (long)sizeof(self->header)));
+			cache_copy_set_flag(_copy_bad_file_bit);
+
+			break;
+		}
 
 		if (zlib_result == Z_OK || zlib_result == Z_STREAM_END)
 		{
@@ -1664,14 +1700,22 @@ static unsigned long __stdcall simple_cache_copy_thread(
 		cache_copy_initialize_read_buffers(self);
 		cache_copy_initialize_file_data(self);
 
-		if (!cache_copy_stop_requested())
+		/* port: nor is a bad file (cache_copy_initialize_file_data) read */
+		if (!cache_copy_stop_requested() && !(self->flags & ALL_COPY_FAILURE_FLAGS))
 		{
 			decompressor_timer_start(_decompressor_timer_setup);
 			cache_copy_initialize_read_data(self);
 			cache_copy_initialize_zlib(self);
 			decompressor_timer_stop(_decompressor_timer_setup);
 
-			if (cache_file_header_verify(&self->header, "cache decompressed", TRUE))
+			/* port: a header that is not a map's is a bad file, so the copy
+			fails (it ended as if it had worked, and the map was precached
+			again, or, of no size, seemed never to end) */
+			if (!cache_file_header_verify(&self->header, "cache decompressed", TRUE))
+			{
+				cache_copy_set_flag(_copy_bad_file_bit);
+			}
+			else
 			{
 				boolean keep_going = TRUE;
 

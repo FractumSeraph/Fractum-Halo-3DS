@@ -122,6 +122,9 @@ symbols in this file:
 
 #include "camera_scripting.h"
 #include "dead_camera.h"
+#include "coop_spectate.h" /* port: port/linux/game/coop_spectate.c */
+#include "sightjack.h" /* port (this fork): port/linux/game/sightjack.c */
+#include "follow_camera.h" /* port: port/linux/game/follow_camera.c */
 #include "editor_flying_camera.h"
 #include "first_person_camera.h"
 #include "flying_camera.h"
@@ -130,7 +133,6 @@ symbols in this file:
 #include "orbiting_camera.h"
 
 #include "editor/editor_stubs.h"
-#include "game/player_control.h"
 #include "game/players.h"
 #include "input/input.h"
 #include "main/console.h"
@@ -138,6 +140,9 @@ symbols in this file:
 
 #include "units/unit_definitions.h"
 #include "units/units.h"
+
+/* network_game_globals.c's */
+boolean network_game_distributed_client(void);
 
 /* ---------- constants */
 
@@ -175,7 +180,7 @@ static boolean director_update_controls(
 
 /* ---------- globals */
 
-char const *director_camera_mode_names[NUMBER_OF_DIRECTOR_CAMERA_MODES] =
+static char const *director_camera_mode_names[NUMBER_OF_DIRECTOR_CAMERA_MODES] =
 {
 	"following",
 	"orbiting",
@@ -184,14 +189,14 @@ char const *director_camera_mode_names[NUMBER_OF_DIRECTOR_CAMERA_MODES] =
 	"first person"
 };
 
-short const director_game_camera_modes[3] =
+static short const director_game_camera_modes[3] =
 {
 	_camera_first_person,
 	_camera_flying,
 	_camera_following
 };
 
-short const director_script_camera_record_camera_modes[4] =
+static short const director_script_camera_record_camera_modes[4] =
 {
 	_camera_first_person,
 	_camera_flying,
@@ -199,12 +204,12 @@ short const director_script_camera_record_camera_modes[4] =
 	_camera_orbiting
 };
 
-real const ticks_per_millisecond = 0.03f;
-real const friction = 5.f;
-real const acceleration_scale = 25.f;
-real const genius_boy = 1.3f;
+static real const ticks_per_millisecond = 0.03f;
+static real const friction = 5.f;
+static real const acceleration_scale = 25.f;
+static real const genius_boy = 1.3f;
 
-struct director_variable_definition variables[NUMBER_OF_DIRECTOR_VARIABLES] =
+static struct director_variable_definition variables[NUMBER_OF_DIRECTOR_VARIABLES] =
 {
 	{ 5, 4, NONE, { 0, 0 }, 0.15f, 0.f, -REAL_MAX, REAL_MAX, TRUE, { 0, 0, 0 } },
 	{ 6, 7, NONE, { 0, 0 }, 0.075f, 0.f, -REAL_MAX, REAL_MAX, FALSE, { 0, 0, 0 } },
@@ -212,9 +217,10 @@ struct director_variable_definition variables[NUMBER_OF_DIRECTOR_VARIABLES] =
 	{ 3, 2, NONE, { 0, 0 }, 0.075f, 0.f, -REAL_MAX, REAL_MAX, TRUE, { 0, 0, 0 } }
 };
 
-struct director_globals director_globals = {0};
+static struct director_globals director_globals = {0};
 boolean director_camera_switch_fast = FALSE;
 static boolean hyper_key_down = FALSE;
+boolean *director_camera_scripted;
 
 /* ---------- public code */
 
@@ -228,8 +234,8 @@ static struct director *director_get(
 void director_initialize(
 	void)
 {
-	director_camera_scripted = game_state_malloc("director scripting", NULL, sizeof(*director_camera_scripted));
-	director_camera_scripted->camera_scripted = FALSE;
+	director_camera_scripted = game_state_malloc("director scripting", NULL, 4);
+	*director_camera_scripted = FALSE;
 	return;
 }
 
@@ -253,7 +259,7 @@ void director_dispose_from_old_map(
 		director->debug_controls = FALSE;
 	}
 
-	director_camera_scripted->camera_scripted = FALSE;
+	*director_camera_scripted = FALSE;
 	return;
 }
 
@@ -491,10 +497,7 @@ static void director_process_variables(
 			&variables[variable_index];
 		struct director_variable_instance *instance =
 			&director->debug_variables[variable_index];
-		/* BUG (original): January tests the height definition for every
-		 * variable. A corrected build should test definition->has_hyper_scale.
-		 */
-		real hyper_scale = variables[_variable_height].has_hyper_scale
+		real hyper_scale = definition->has_hyper_scale
 			? director->debug_input_scale
 			: 1.f;
 		real velocity_scale =
@@ -644,7 +647,7 @@ void director_script_camera(
 {
 	short local_player_index;
 
-	director_camera_scripted->camera_scripted = scripted;
+	*director_camera_scripted = scripted;
 	for (local_player_index = 0;
 		local_player_index < MAXIMUM_NUMBER_OF_LOCAL_PLAYERS;
 		local_player_index++)
@@ -687,27 +690,66 @@ static void director_choose_camera_game(
 	}
 	else
 	{
-		struct player_datum *player = player_get(local_player_get_player_index(local_player_index));
-		boolean use_dead_camera = player->unit_index == NONE && player->statistics.deaths > 0;
+		long player_index = local_player_get_player_index(local_player_index);
+		struct player_datum *player = player_get(player_index);
+		/* port: and a network co-op player who hasn't spawned yet, waiting for
+		the level's first checkpoint, watches too */
+		boolean use_dead_camera = player->unit_index == NONE &&
+			(player->statistics.deaths > 0 || players_coop_waiting_to_start(player_index));
 
-		if (key)
+		/* port (this fork): a moderator watching a player sees through their
+		eyes (port/linux/game/sightjack.c), their own player held still and
+		its first-person weapon not drawn */
+		if (sightjack_watched_unit(local_player_index) != NONE)
+		{
+			director->inhibited_input = TRUE;
+			director->inhibited_facing = TRUE;
+			director->perspective = _director_perspective_third_person;
+			if (director->camera_proc != (director_camera_update_proc)sightjack_camera_update)
+			{
+				director_set_camera(
+					local_player_index,
+					(director_camera_update_proc)sightjack_camera_update,
+					FALSE);
+			}
+			return;
+		}
+		if (director->camera_proc == (director_camera_update_proc)sightjack_camera_update)
+			director_choose_game_perspective(local_player_index, TRUE);
+
+		/* (port: not a client in another's game, the host's rules: a flying
+		camera would see all of it, and one behind the player round its
+		corners) */
+		if (key && !network_game_distributed_client())
 			director_rotate_cameras(local_player_index, director_game_camera_modes, 3);
-		if (!director_camera_scripted->camera_scripted)
+		if (!*director_camera_scripted)
 		{
 			director_choose_game_perspective(local_player_index, initialize);
 			if (use_dead_camera)
 			{
-				if (director->camera_proc != (director_camera_update_proc)dead_camera_update)
+				/* port: a dead network co-op player watches a living teammate
+				(port/linux/game/coop_spectate.c), or its own body if nobody is
+				alive; in multiplayer, one with a long wait to respawn follows a
+				living player once the death camera is done
+				(port/linux/game/follow_camera.c) */
+				long watched_unit_index = coop_spectating() ? coop_spectate_unit(local_player_index) :
+					follow_camera_unit(local_player_index);
+
+				if (director->camera_proc != (director_camera_update_proc)dead_camera_update ||
+					(watched_unit_index != NONE &&
+						((struct dead_camera *)director->camera_data)->unit_index != watched_unit_index))
 				{
 					dead_camera_new(
 						(struct dead_camera *)director->camera_data,
 						local_player_index,
-						NONE);
+						watched_unit_index);
 					director_set_camera(
 						local_player_index,
 						(director_camera_update_proc)dead_camera_update,
 						TRUE);
 				}
+				if (watched_unit_index != NONE)
+					coop_spectate_camera((struct dead_camera *)director->camera_data);
 			}
 			else if (director->camera_proc == (director_camera_update_proc)dead_camera_update)
 			{
@@ -793,7 +835,14 @@ static boolean director_update_controls(
 		else
 		{
 			byte ticks = gamepad->buttons[_gamepad_analog_button_black];
-			switch_camera = ticks > 0 && ticks % TICKS_PER_SECOND == 0;
+			/* The hold count is in 30 Hz ticks (input_xbox.c) and this runs
+			once a frame, several frames a tick: switch once per second held,
+			on the frame the count reaches it. */
+			static byte last_ticks[MAXIMUM_NUMBER_OF_LOCAL_PLAYERS];
+
+			switch_camera = ticks > 0 && ticks % TICKS_PER_SECOND == 0 &&
+				ticks != last_ticks[local_player_index];
+			last_ticks[local_player_index] = ticks;
 		}
 
 		if (director->camera_proc !=
@@ -1030,7 +1079,7 @@ void director_initialize_for_saved_game(
 	void)
 {
 	director_initialize_for_new_map();
-	director_script_camera(director_camera_scripted->camera_scripted);
+	director_script_camera(*director_camera_scripted);
 
 	return;
 }

@@ -91,13 +91,17 @@ symbols in this file:
 #include "flying_camera.h"
 #include "camera_scripting.h"
 #include "director.h"
-#include "game/player_control.h"
+#include "game/players.h"
+#include "interface/terminal.h"
 #include "main/console.h"
 #include "observer.h"
 #include "static_camera.h"
 #include "render/render.h"
 #include "scenario/scenario.h"
 #include "scenario/scenario_definitions.h"
+#ifdef HALO_64BIT
+#include "interface/terminal.h"
+#endif
 
 /* ---------- constants */
 

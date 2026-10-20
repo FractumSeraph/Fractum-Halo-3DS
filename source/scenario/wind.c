@@ -59,7 +59,6 @@ symbols in this file:
 struct wind_state
 {
 	boolean valid;
-	byte pad[3];
 	real velocity_variance;
 	real_euler_angles2d angular_variance;
 	real velocity;
@@ -68,20 +67,6 @@ struct wind_state
 
 typedef char wind_state_size_assert[
 	sizeof(struct wind_state) == 0x20 ? 1 : -1];
-
-struct wind_globals
-{
-	boolean initialized;
-	byte pad[3];
-	real_vector3d variance[3][64];
-	short count;
-	word pad2;
-	struct wind_state states[32];
-	long time;
-};
-
-typedef char wind_globals_size_assert[
-	sizeof(struct wind_globals) == 0xD0C ? 1 : -1];
 
 struct structure_weather_palette_entry
 {
@@ -114,7 +99,7 @@ static void wind_variance_get(
 	real_vector3d *wind,
 	real local_variation_rate,
 	real maximum_magnitude);
-void wind_variance_initialize(
+static void wind_variance_initialize(
 	void);
 void uniform_cubic_spline_vector3d(
 	real_vector3d *result,
@@ -128,7 +113,18 @@ void uniform_cubic_spline_vector3d(
 
 /* ---------- globals */
 
-extern struct wind_globals wind_globals;
+struct
+{
+	boolean initialized;
+	real_vector3d variance[3][64];
+	short count;
+	struct wind_state wind_states[32];
+	long time;
+} wind_globals;
+
+typedef char wind_globals_size_assert[
+	sizeof(wind_globals) == 0xD0C ? 1 : -1];
+
 long global_environment_index = NONE;
 
 /* ---------- public code */
@@ -189,6 +185,7 @@ void wind_update(
 	void)
 {
 	short weather_palette_index;
+	short weather_palette_count;
 	struct structure_bsp *structure_bsp = global_structure_bsp_get();
 	struct tag_block *weather_palette_block;
 
@@ -199,9 +196,11 @@ void wind_update(
 	wind_globals.time++;
 	weather_palette_index = 0;
 	weather_palette_block = &structure_bsp->weather_palette;
+	/* port: no more entries than there are wind states (a map's count) */
+	weather_palette_count = (short)MIN(weather_palette_block->count, (long)NUMBEROF(wind_globals.wind_states));
 
 	for (;
-		weather_palette_index < weather_palette_block->count;
+		weather_palette_index < weather_palette_count;
 		weather_palette_index++)
 	{
 		struct structure_weather_palette_entry *weather_palette =
@@ -209,7 +208,7 @@ void wind_update(
 				weather_palette_block,
 				weather_palette_index,
 				struct structure_weather_palette_entry);
-		struct wind_state *state = &wind_globals.states[weather_palette_index];
+		struct wind_state *state = &wind_globals.wind_states[weather_palette_index];
 
 		if (weather_palette->wind.index != NONE)
 		{
@@ -267,7 +266,7 @@ void wind_update(
 		}
 	}
 
-	wind_globals.count = (short)weather_palette_block->count;
+	wind_globals.count = weather_palette_count;
 
 	return;
 }
@@ -282,7 +281,7 @@ void scenario_get_current_from_weather_palette(
 
 	if (VALID_INDEX(weather_palette_index, wind_globals.count))
 	{
-		state = &wind_globals.states[weather_palette_index];
+		state = &wind_globals.wind_states[weather_palette_index];
 		if (state->valid)
 		{
 			struct structure_weather_palette_entry *weather_palette =
@@ -374,7 +373,8 @@ boolean scenario_get_current(
 				fog_region_index,
 				struct structure_fog_region);
 
-			if (fog_region->fog_palette_index != NONE
+			/* port: and the palette entry is one the map has */
+			if (VALID_INDEX(fog_region->fog_palette_index, structure_bsp->fog_palette.count)
 				&& fog_region->weather_palette_index != NONE)
 			{
 				struct structure_fog_palette_entry *fog_palette =
@@ -446,7 +446,7 @@ void scenario_get_water_current(
 
 /* ---------- private code */
 
-void wind_variance_initialize(
+static void wind_variance_initialize(
 	void)
 {
 	short control_point_index;

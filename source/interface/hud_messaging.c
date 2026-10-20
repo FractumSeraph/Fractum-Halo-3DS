@@ -129,10 +129,12 @@ symbols in this file:
 #include "interface/hud_draw.h"
 #include "bitmaps/bitmap_color_conversion.h"
 #include "interface/hud.h"
+#include "interface/hud_definitions.h"
 #include "interface/hud_messaging.h"
 #include "interface/interface.h"
 #include "interface/ui_widget.h"
 #include "items/item_definitions.h"
+#include "memory/data.h"
 #include "rasterizer/rasterizer.h"
 #include "render/render.h"
 #include "render/render_debug.h"
@@ -144,8 +146,12 @@ symbols in this file:
 #include "text/font_group.h"
 #include "text/text_group.h"
 #include "text/unicode.h"
+#include "network_coop.h" /* port: port/linux/game/network_coop.c */
 
 #include <stddef.h>
+#ifdef HALO_64BIT
+#include "memory/data.h"
+#endif
 
 /* ---------- constants */
 
@@ -292,17 +298,6 @@ struct hud_state_message_element
 	byte data;
 };
 
-struct icon_hud_element_definition
-{
-	short sequence_index;
-	short width_offset;
-	point2d offset;
-	pixel32 color;
-	char frame_rate;
-	byte flags;
-	short text_index;
-};
-
 struct hud_state_message_text_info_definition
 {
 	short string_index;
@@ -344,13 +339,6 @@ struct hud_message_text_definition
 	long unused2C[21];
 };
 
-struct hud_scripted_globals_definition
-{
-	boolean show_hud;
-	boolean show_hud_help_text;
-	byte reserved2[2];
-};
-
 struct hud_timer_data_definition
 {
 	long reference_time;
@@ -360,22 +348,6 @@ struct hud_timer_data_definition
 	short corner;
 	boolean paused;
 	boolean enabled;
-};
-
-struct hud_absolute_placement_definition
-{
-	short corner;
-	short pad;
-	long unused[8];
-};
-
-struct hud_placement_definition
-{
-	point2d offset;
-	real_vector2d scale;
-	short multiplayer_scaling_flags;
-	short pad;
-	long unused[5];
 };
 
 struct hud_objective_runtime_definition
@@ -395,27 +367,6 @@ struct hud_messaging_globals_definition
 	struct hud_state_message_definition *help_message;
 	struct hud_objective_runtime_definition objective;
 	struct hud_timer_data_definition timer;
-};
-
-struct hud_color_definition
-{
-	unsigned long color;
-	unsigned long flash_color;
-	real flash_period;
-	real flash_delay;
-	short number_of_flashes;
-	word flash_flags;
-	real flash_length;
-	unsigned long disabled_color;
-	union
-	{
-		long unused;
-		struct
-		{
-			short up_ticks;
-			short fade_ticks;
-		} objective;
-	} custom;
 };
 
 struct number_hud_element_definition
@@ -442,40 +393,6 @@ struct hud_number_definition
 	long unused[19];
 };
 
-struct hud_timer_definition
-{
-	struct hud_color_definition color;
-	struct hud_color_definition time_up_color;
-	long unused[10];
-};
-
-struct hud_messaging_parameters_definition
-{
-	struct hud_absolute_placement_definition absolute_placement;
-	struct hud_placement_definition placement;
-	struct tag_reference single_player_font;
-	struct tag_reference multi_player_font;
-	real up_time;
-	real fade_time;
-	real_argb_color state_color;
-	real_argb_color text_color;
-	real spacing;
-	struct tag_reference hud_item_messages;
-	struct tag_reference messaging_icons;
-	struct tag_reference alternate_icon_text;
-	struct tag_block button_icons;
-	struct hud_color_definition color;
-	struct tag_reference hud_messages;
-	struct hud_color_definition objective_color;
-};
-
-struct hud_globals_definition
-{
-	struct hud_messaging_parameters_definition messaging;
-	byte reserved120[0x240];
-	struct hud_timer_definition timer_definition;
-};
-
 typedef char hud_timer_data_size_assert[
 	sizeof(struct hud_timer_data_definition) == 0x10 ? 1 : -1];
 typedef char hud_message_valid_offset_assert[
@@ -484,6 +401,7 @@ typedef char hud_message_size_assert[
 	sizeof(struct hud_message_definition) == 0x8C ? 1 : -1];
 typedef char hud_state_message_text_info_size_assert[
 	sizeof(struct hud_state_message_text_info_definition) == 4 ? 1 : -1];
+#ifndef HALO_64BIT
 typedef char hud_state_message_info_size_assert[
 	sizeof(union hud_state_message_info_definition) == 4 ? 1 : -1];
 typedef char hud_state_message_runtime_size_assert[
@@ -496,8 +414,10 @@ typedef char hud_state_message_runtime_valid_offset_assert[
 	offsetof(struct hud_state_message_runtime_definition, valid) == 0x228 ? 1 : -1];
 typedef char hud_state_message_runtime_is_text_flags_offset_assert[
 	offsetof(struct hud_state_message_runtime_definition, is_text_flags) == 0x229 ? 1 : -1];
+#endif
 typedef char hud_messaging_datum_state_message_offset_assert[
 	offsetof(struct hud_messaging_datum_definition, state_message) == 0x230 ? 1 : -1];
+#ifndef HALO_64BIT
 typedef char hud_messaging_datum_leave_first_line_blank_offset_assert[
 	offsetof(struct hud_messaging_datum_definition, leave_first_line_blank) == 0x45E ? 1 : -1];
 typedef char hud_messaging_datum_custom_message_offset_assert[
@@ -520,6 +440,7 @@ typedef char hud_messaging_timer_flash_cutoff_offset_assert[
 	offsetof(struct hud_messaging_globals_definition, timer.flash_cutoff) == 0x119E ? 1 : -1];
 typedef char hud_messaging_timer_enabled_offset_assert[
 	offsetof(struct hud_messaging_globals_definition, timer.enabled) == 0x11A7 ? 1 : -1];
+#endif
 typedef char hud_messaging_parameters_size_assert[
 	sizeof(struct hud_messaging_parameters_definition) == 0x120 ? 1 : -1];
 typedef char hud_messaging_single_player_font_index_offset_assert[
@@ -552,6 +473,11 @@ static void render_state_text(
 	rectangle2d *cursor_bounds,
 	wchar_t const *text,
 	boolean custom);
+/* port: original Xbox high-resolution glyphs, port/linux/game/hud_hires_tags.c */
+boolean hud_hires_button_draw(struct icon_hud_element_definition const *icon,
+	rectangle2d *cursor, pixel32 color);
+struct bitmap_data const *hud_hires_sprite_bitmap(struct bitmap_data const *bitmap, short sequence_index);
+
 static void render_state_bitmap(
 	rectangle2d *bounds,
 	rectangle2d *cursor_bounds,
@@ -561,9 +487,7 @@ static void render_state_bitmap(
 /* ---------- globals */
 
 static struct hud_messaging_globals_definition *hud_messaging_globals;
-extern struct hud_globals_definition *hud_globals;
-extern struct hud_messaging_parameters_definition *hud_msg_def;
-extern struct hud_scripted_globals_definition *hud_scripted_globals;
+struct hud_messaging_parameters_definition *hud_msg_def;
 static char button_mappings[_icon_custom_1 - _icon_action] =
 {
 	2,
@@ -632,6 +556,10 @@ static void render_state_bitmap(
 	if (bitmap && _texture_cache_bitmap_get_hardware_format(
 		(struct bitmap_data *)bitmap, FALSE, TRUE))
 	{
+		/* port: keep gameplay prompts on the high-resolution HUD path. */
+		if (hud_hires_button_draw(icon, cursor_bounds, color))
+			return;
+		bitmap = hud_hires_sprite_bitmap(bitmap, icon->sequence_index);
 		scale = local_player_count() > 1 ? 0.75f : 1.0f;
 		point.x = (short)(icon->offset.x * scale + cursor_bounds->x0);
 		point.y = (short)(cursor_bounds->y1 - icon->offset.y * scale);
@@ -709,6 +637,7 @@ void scripted_hud_set_state_message(
 {
 	struct scenario *scenario = global_scenario_get();
 
+	network_coop_note_hud(_coop_hud_help_text, message_index);
 	if (hud_scripted_globals->show_hud_help_text &&
 		scenario->hud_messages.index != NONE)
 	{
@@ -729,6 +658,7 @@ void scripted_hud_set_flashing_state(
 {
 	long time;
 
+	network_coop_note_hud(_coop_hud_help_flash, flash);
 	if (flash && !hud_messaging_globals->use_flash)
 	{
 		time = game_time_get();
@@ -759,6 +689,7 @@ void scripted_hud_set_objective(
 {
 	struct scenario *scenario = global_scenario_get();
 
+	network_coop_note_hud(_coop_hud_objective, message_index);
 	if (scenario->hud_messages.index != NONE)
 	{
 		struct hud_message_text_definition *hud_messages =
@@ -838,6 +769,47 @@ void scripted_hud_show_timer(
 {
 	hud_messaging_globals->timer.enabled = show;
 	return;
+}
+
+/* port: the script timer and the scenario's message count, for network
+co-op (port/linux/game/network_coop.c) */
+void hud_messaging_port_timer_get(
+	struct hud_timer_state *state)
+{
+	struct hud_timer_data_definition const *timer = &hud_messaging_globals->timer;
+
+	state->reference_time = timer->reference_time;
+	state->ticks = timer->ticks;
+	state->flash_cutoff = timer->flash_cutoff;
+	state->x = timer->position.n[0];
+	state->y = timer->position.n[1];
+	state->corner = timer->corner;
+	state->paused = timer->paused;
+	state->enabled = timer->enabled;
+}
+
+void hud_messaging_port_timer_set(
+	struct hud_timer_state const *state)
+{
+	struct hud_timer_data_definition *timer = &hud_messaging_globals->timer;
+
+	timer->reference_time = state->reference_time;
+	timer->ticks = state->ticks;
+	timer->flash_cutoff = state->flash_cutoff;
+	timer->position.n[0] = state->x;
+	timer->position.n[1] = state->y;
+	timer->corner = PIN(state->corner, 0, 4);
+	timer->paused = state->paused;
+	timer->enabled = state->enabled;
+}
+
+short hud_messaging_port_message_count(
+	void)
+{
+	struct scenario *scenario = global_scenario_get();
+
+	return scenario->hud_messages.index != NONE ?
+		(short)HUD_MESSAGE_TEXT_DEFINITION_GET(scenario->hud_messages.index)->messages.count : 0;
 }
 
 void scripted_hud_pause_timer(
@@ -953,6 +925,9 @@ void hud_render_timer(
 		numbers.placement.offset = timer->position;
 		numbers.placement.scale.i = 1.0f;
 		numbers.placement.scale.j = 1.0f;
+		/* port: this scripted element has no authored scaling flags. The PC
+		 * digit renderer reads them, so stack data must not halve its glyphs. */
+		numbers.placement.multiplayer_scaling_flags = 0;
 
 		hud_number_index = interface_get_tag_index(_interface_hud_digits);
 		if (hud_number_index != NONE)
@@ -1072,6 +1047,166 @@ void hud_render_timer(
 
 	return;
 }
+
+#ifdef HALO_GAME_BROWSER
+/* port: a game type's numbers in the HUD's own style, the script timer's
+(hud_render_timer): its digits, and the HUD globals' timer colors (Bomb's
+round, game_engine_bomb.c). Each is placed in pixels from the middle of the
+view, as the digits are drawn, so it keeps to the middle at any shape of
+screen */
+
+/* the digits' colon (hud_draw.c's _hud_number_colon_index) */
+#define HUD_PORT_COLON_INDEX 11
+/* (hud_draw.c's _bitmap_group_type_interface_bitmaps) */
+#define HUD_PORT_INTERFACE_BITMAPS 4
+
+/* a digit's advance (the digits' screen width), at a scale */
+static real hud_port_digit_advance(
+	real scale)
+{
+	long hud_number_index = interface_get_tag_index(_interface_hud_digits);
+
+	if (hud_number_index == NONE)
+		return 0.0f;
+	return (real)HUD_NUMBER_DEFINITION_GET(hud_number_index)->screen_width * scale;
+}
+
+/* a number centered on a point (pixels from the view's middle); a flashing
+one in the timer's flash, else in this color */
+static void hud_port_draw_number(
+	short local_player_index,
+	real x,
+	real y,
+	short value,
+	pixel32 color,
+	boolean flashing,
+	long flash_reference_time,
+	real scale,
+	boolean two_digits)
+{
+	struct hud_absolute_placement_definition placement;
+	struct number_hud_element_definition numbers;
+
+	csmemset(&placement, 0, sizeof(placement));
+	csmemset(&numbers, 0, sizeof(numbers));
+	placement.corner = _hud_anchor_center;
+	numbers.placement.offset.x = (short)(long)x;
+	numbers.placement.offset.y = (short)(long)y;
+	numbers.placement.scale.i = 1.0f;
+	numbers.placement.scale.j = 1.0f;
+	numbers.colors = hud_globals->timer_definition.color;
+	numbers.colors.color = color;
+	numbers.digits = (char)(two_digits || value > 9 ? 2 : 1);
+	numbers.number_flags = FLAG(_hud_number_show_all_leading_zeros_bit);
+	hud_draw_numbers(local_player_index, &placement, &numbers, value, NONE,
+		(short)(flashing ? FLAG(_hud_draw_flashing_bit) : 0), flash_reference_time, scale);
+}
+
+/* the digits' colon, centered on a point */
+static void hud_port_draw_colon(
+	short local_player_index,
+	real x,
+	real y,
+	pixel32 color,
+	real scale)
+{
+	long hud_number_index = interface_get_tag_index(_interface_hud_digits);
+	struct hud_absolute_placement_definition placement;
+	struct hud_placement_definition offset;
+	struct bitmap_data const *bitmap = NULL;
+	real_rectangle2d const *clip = NULL;
+	struct hud_number_definition *hud_number;
+	point2d point;
+
+	if (hud_number_index == NONE)
+		return;
+	hud_number = HUD_NUMBER_DEFINITION_GET(hud_number_index);
+	csmemset(&placement, 0, sizeof(placement));
+	csmemset(&offset, 0, sizeof(offset));
+	placement.corner = _hud_anchor_center;
+	offset.offset.x = (short)(long)x;
+	offset.offset.y = (short)(long)y;
+	offset.scale.i = 1.0f;
+	offset.scale.j = 1.0f;
+	hud_calculate_point(local_player_index, &placement, &offset, NULL, local_player_count() > 1, scale, &point);
+	hud_retrieve_bitmap_and_bounding_rect(hud_number->number_bitmap.index, 0, HUD_PORT_COLON_INDEX, &bitmap, &clip);
+	if (bitmap && _texture_cache_bitmap_get_hardware_format((struct bitmap_data *)bitmap, FALSE, TRUE))
+	{
+		hud_draw_bitmap_direct(bitmap, _hud_anchor_center, &point, clip, scale, 0.0f, color,
+			bitmap_group_get(hud_number->number_bitmap.index)->type == HUD_PORT_INTERFACE_BITMAPS);
+	}
+}
+
+/* the view's half height, in the digits' pixels */
+static real hud_port_half_height(
+	void)
+{
+	return (real)(render.camera.window_bounds.y1 - render.camera.window_bounds.y0) * 0.5f;
+}
+
+void hud_render_round(
+	short local_player_index,
+	long ticks,
+	long warning_ticks,
+	long red_score,
+	pixel32 red_color,
+	long blue_score,
+	pixel32 blue_color)
+{
+	real advance = hud_port_digit_advance(1.0f);
+	real y = -hud_port_half_height() + 2.0f * advance;
+	real half_width = 0.0f;
+
+	if (advance <= 0.0f)
+		return;
+	/* the clock: minutes and seconds, as the timer has them */
+	if (ticks != NONE)
+	{
+		long seconds = (MAX(ticks, 0) + TICKS_PER_SECOND - 1) / TICKS_PER_SECOND;
+		short minutes = (short)MIN(seconds / 60, 99);
+		real minute_digits = minutes > 9 ? 2.0f : 1.0f;
+		boolean flashing = ticks <= warning_ticks;
+		pixel32 color = ticks > 0 ? hud_globals->timer_definition.color.color :
+			hud_globals->timer_definition.time_up_color.color;
+		real x;
+
+		half_width = (minute_digits + 3.0f) * advance * 0.5f;
+		x = -half_width;
+		hud_port_draw_number(local_player_index, x + minute_digits * advance * 0.5f, y, minutes, color,
+			flashing && ticks > 0, 0, 1.0f, FALSE);
+		x += minute_digits * advance;
+		hud_port_draw_colon(local_player_index, x + advance * 0.5f, y, color, 1.0f);
+		x += advance;
+		hud_port_draw_number(local_player_index, x + advance, y, (short)(seconds % 60), color,
+			flashing && ticks > 0, 0, 1.0f, TRUE);
+	}
+	/* each team's score beside it, red's left and blue's right */
+	if (red_score != NONE)
+	{
+		hud_port_draw_number(local_player_index, -(half_width + 2.5f * advance), y, (short)MIN(red_score, 99),
+			red_color, FALSE, 0, 1.0f, FALSE);
+	}
+	if (blue_score != NONE)
+	{
+		hud_port_draw_number(local_player_index, half_width + 2.5f * advance, y, (short)MIN(blue_score, 99),
+			blue_color, FALSE, 0, 1.0f, FALSE);
+	}
+}
+
+void hud_render_large_count(
+	short local_player_index,
+	long value)
+{
+	/* (four times the digits, in the upper half of the view, flashing as
+	the timer does near its end) */
+	real advance = hud_port_digit_advance(1.0f);
+
+	if (advance <= 0.0f || value < 0)
+		return;
+	hud_port_draw_number(local_player_index, 0.0f, -hud_port_half_height() * 0.4f, (short)MIN(value, 99),
+		hud_globals->timer_definition.color.color, TRUE, 0, 4.0f, FALSE);
+}
+#endif
 
 void hud_set_state_message(
 	short local_player_index,
@@ -1238,6 +1373,7 @@ void scripted_hud_messages_clear(
 	struct hud_messaging_datum_definition *datum = hud_messaging_globals->message_data;
 	long datum_count = NUMBER_OF_HUD_MESSAGING_DATUMS;
 
+	network_coop_note_hud(_coop_hud_messages_clear, 0);
 	do
 	{
 		struct hud_message_definition *message = datum->messages;
@@ -1641,6 +1777,22 @@ void hud_messaging_update(
 					case _hud_message_type_icon:
 						{
 							short icon_index = NONE;
+							wchar_t key_text[48];
+
+							/* port: the keyboard's key, "[E]", in place of the
+							controller's button while the keyboard or mouse was
+							used last (input_abstraction_port_icon_key) */
+							if (element->data <= _icon_look &&
+								input_abstraction_port_icon_key(
+									local_player_index,
+									element->data,
+									FALSE,
+									key_text,
+									NUMBEROF(key_text)))
+							{
+								render_state_text(&line_bounds, &line_cursor, key_text, FALSE);
+								break;
+							}
 
 							if (element->data > _icon_right_stick)
 							{
@@ -1665,6 +1817,24 @@ void hud_messaging_update(
 										0x457,
 										custom_index < NUMBER_OF_HUD_CUSTOM_ICONS,
 										"custom_index<NUMBER_OF_HUD_CUSTOM_ICONS");
+									/* port: the icon is the map's (a message element's
+									data, retail up to custom 2) and indexes the message's
+									8 custom icons: one past them is not drawn, said once */
+									if (custom_index >= NUMBER_OF_HUD_CUSTOM_ICONS)
+									{
+										static boolean bad_custom_icon_reported = FALSE;
+
+										if (!bad_custom_icon_reported)
+										{
+											bad_custom_icon_reported = TRUE;
+											error(
+												_error_silent,
+												"hud message uses custom icon %d (of %d)",
+												custom_index,
+												NUMBER_OF_HUD_CUSTOM_ICONS);
+										}
+										break;
+									}
 									if (TEST_FLAG(state_message->is_text_flags, custom_index))
 									{
 										short string_index = state_message->info[custom_index].text.string_index;
@@ -1730,7 +1900,17 @@ void hud_messaging_update(
 								}
 								else
 								{
-									error(_error_silent, "help text cannot use custom icons");
+									/* Help text has no custom icons. Leave this one out.
+									The button icon list is the wrong list, and its index
+									is still NONE. */
+									static boolean help_custom_icon_reported = FALSE;
+
+									if (!help_custom_icon_reported)
+									{
+										help_custom_icon_reported = TRUE;
+										error(_error_silent, "help text cannot use custom icons");
+									}
+									break;
 								}
 							}
 							else
@@ -1738,7 +1918,7 @@ void hud_messaging_update(
 								icon_index = element->data;
 							}
 
-							if (icon_index < hud_globals->messaging.button_icons.count)
+							if (icon_index >= 0 && icon_index < hud_globals->messaging.button_icons.count)
 							{
 								struct icon_hud_element_definition const *icon;
 
@@ -1920,10 +2100,15 @@ void hud_messaging_update(
 					wchar_t formatted[256];
 					short value_scale = MAX(item->item.hud_message_value_scale, 1);
 
-					usprintf(
-						formatted,
-						item_text,
-						message->quantity / value_scale);
+					/* port: the item's text (the map's) is the format: as
+					one only if it takes the count alone, and bounded */
+					if (item_text && ustring_format_takes(item_text, "d"))
+					{
+						usnprintf(formatted, NUMBEROF(formatted), item_text, message->quantity / value_scale);
+						formatted[NUMBEROF(formatted) - 1] = 0;
+					}
+					else
+						ustrncpy_terminated(formatted, item_text, NUMBEROF(formatted));
 					rasterizer_draw_unicode_string(
 						&message_bounds,
 						NULL,

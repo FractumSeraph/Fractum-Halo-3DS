@@ -320,6 +320,7 @@ symbols in this file:
 #include "saved games/game_state.h"
 #include "saved games/player_profile.h"
 #include "saved games/playlist_profile.h"
+#include "interface/player_ui.h"
 #include "text/text_group.h"
 #include "tag_files/tag_groups.h"
 /* the saved game file checksum is an XDK content signature, and enumerated
@@ -425,11 +426,13 @@ struct saved_game_files_globals
 	boolean memory_units_dirty;
 	boolean enumeration_in_progress;
 };
+#ifndef HALO_64BIT
 
 typedef char verify_saved_game_files_globals_memory_units_dirty_offset[
 	offsetof(struct saved_game_files_globals, memory_units_dirty) == 0x117 ? 1 : -1];
 typedef char verify_saved_game_files_globals_size[
 	sizeof(struct saved_game_files_globals) == 0x11C ? 1 : -1];
+#endif
 
 /* ---------- prototypes */
 
@@ -486,12 +489,12 @@ static short enumerate_default_profiles(
 /* ---------- globals */
 
 /* only the hard drive is supported by this build */
-static wchar_t *memory_unit_root_path[NUMBER_OF_SUPPORTED_MEMORY_UNITS] =
+static wchar_t memory_unit_root_path[NUMBER_OF_SUPPORTED_MEMORY_UNITS][4] =
 {
-	L"u:\\"
+	{ L'u', L':', L'\\', 0 }
 };
 
-static char *memory_unit_mapfile_path[NUMBER_OF_SUPPORTED_MEMORY_UNITS] =
+static char memory_unit_mapfile_path[NUMBER_OF_SUPPORTED_MEMORY_UNITS][sizeof("z:\\saved\\hdmu.map")] =
 {
 	"z:\\saved\\hdmu.map"
 };
@@ -851,17 +854,22 @@ void saved_game_file_remember_last_used_multiplayer_map(
 	char const *map_name)
 {
 	struct file_reference file;
+	/* port: the name in a buffer of the size written (callers' may be
+	smaller: the menus' map list's are 64 bytes), the rest zeros */
+	char name[MAXIMUM_FILENAME_LENGTH+1];
 
 	match_assert(
 		"c:\\halo\\SOURCE\\saved games\\saved_game_files.c",
 		1207,
 		map_name);
+	csmemset(name, 0, sizeof(name));
+	csstrncpy(name, map_name, sizeof(name) - 1);
 
 	if (file_reference_create_from_path(&file, "z:\\lastmpmp.txt", FALSE) &&
 		file_create(&file) &&
 		file_open(&file, FLAG(_permission_write_bit)))
 	{
-		if (!file_write(&file, MAXIMUM_FILENAME_LENGTH+1, map_name))
+		if (!file_write(&file, MAXIMUM_FILENAME_LENGTH+1, name))
 		{
 			error(_error_silent, "failed to write to '%s'", "z:\\lastmpmp.txt");
 		}
@@ -1541,6 +1549,12 @@ boolean delete_enumerated_saved_game_file(
 						error(_error_silent, "remove_nth_entry_in_mapfile() failed");
 						success = FALSE;
 					}
+					else
+					{
+						/* port: the files after it moved down the list; the
+						indices the players hold follow them */
+						player_ui_saved_game_file_removed(profile_index);
+					}
 
 					if (memory_unit != _memory_unit_hard_drive)
 					{
@@ -1568,6 +1582,30 @@ boolean delete_enumerated_saved_game_file(
 	return success;
 }
 
+/* port: a file's index once the file of removed_index has left its memory
+unit's list (delete_enumerated_saved_game_file): the files after it move
+down one, so their indices do; NONE for the file removed */
+long saved_game_file_index_after_removal(
+	long profile_index,
+	long removed_index)
+{
+	long n;
+	long removed_n;
+
+	if (profile_index == NONE || removed_index == NONE ||
+		SAVED_GAME_FILE_INDEX_MEMORY_UNIT(profile_index) != SAVED_GAME_FILE_INDEX_MEMORY_UNIT(removed_index))
+	{
+		return profile_index;
+	}
+	n = SAVED_GAME_FILE_INDEX_FILE_INDEX(profile_index);
+	removed_n = SAVED_GAME_FILE_INDEX_FILE_INDEX(removed_index);
+	if (n == removed_n)
+		return NONE;
+	if (n < removed_n)
+		return profile_index;
+	return (long)(((unsigned long)profile_index & ~(0xFFFUL << 16)) | ((unsigned long)(n - 1) << 16));
+}
+
 void saved_game_file_get_useable_untitled_profile_name(
 	wchar_t *display_name)
 {
@@ -1593,7 +1631,7 @@ void saved_game_file_get_useable_untitled_profile_name(
 		for (index = 0; index < MAXIMUM_UNTITLED_SAVED_GAMES; index++)
 		{
 			usnprintf(display_name, MAX_GAMENAME-1,
-				unicode_string_list_get_string(string_list_index, _saved_game_file_string_untitled_name_format),
+				ustring_format_checked(unicode_string_list_get_string(string_list_index, _saved_game_file_string_untitled_name_format), "d"),
 				index+1);
 			display_name[MAX_GAMENAME-1] = 0;
 
@@ -1880,6 +1918,7 @@ static void enumerate_memory_units(
 									message[MAXIMUM_FILENAME_LENGTH] = 0;
 									error(
 										_error_silent,
+										"%s",
 										wide_to_ascii(message, (char *)message, sizeof(message)));
 									file.type = NONE;
 								}
@@ -2219,7 +2258,8 @@ static short enumerate_default_playlist_profiles(
 	{
 		while (profile_index < number_of_profiles)
 		{
-			wchar_t *display_name = unicode_string_list_get_string(string_list_index, profile_index);
+			/* port: and the port's own built-ins' (playlist_profile.c) */
+			wchar_t const *display_name = playlist_profile_default_name(profile_index, string_list_index);
 
 			_snprintf(path, MAXIMUM_FILENAME_LENGTH, "z:\\saved\\playlists\\default_playlist\\%02d\\blam.lst", profile_index);
 
@@ -2296,7 +2336,8 @@ static short enumerate_default_player_profiles(
 	{
 		while (profile_index < NUMBER_OF_DEFAULT_PROFILES)
 		{
-			wchar_t *display_name = unicode_string_list_get_string(string_list_index, profile_index);
+			/* port: and the port's own built-ins' (playlist_profile.c) */
+			wchar_t const *display_name = playlist_profile_default_name(profile_index, string_list_index);
 
 			_snprintf(path, MAXIMUM_FILENAME_LENGTH, "z:\\saved\\player_profiles\\default_profile\\%02d.sav", profile_index);
 

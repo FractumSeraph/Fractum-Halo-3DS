@@ -33,6 +33,7 @@ symbols in this file:
 /* ---------- headers */
 
 #include "cseries.h"
+#include "cseries/errors.h"
 #include "math/real_math.h"
 #include "models/model_animation_definitions.h"
 #include "models/model_definitions.h"
@@ -90,6 +91,9 @@ static void biped_limp_noodle_adjust_orientations(
 	real_matrix4x3 *node_matrices,
 	long node_count,
 	real_point3d const *last_positions);
+static boolean biped_limp_noodle_nodes_valid(
+	long biped_index,
+	struct animation_graph const *animation_graph);
 /* ---------- globals */
 
 static struct collision_feature_list features;
@@ -199,16 +203,6 @@ static boolean biped_limp_noodle_valid_joint_rotation(
 					&plane_normal,
 					projection_distance,
 					&rotate_to_position);
-#if !defined(HALO_LINUX) && !defined(HALO_N3DS)
-				/* the native ports (port/linux, port/android, port/windows, port/n3ds) skip
-				this check: it holds only with the Xbox's x87 precision, and single
-				precision math misses it far from the world origin (the projected
-				point is still correct to within the rounding) */
-				match_assert(
-					"c:\\halo\\SOURCE\\units\\biped_limp_noodle.c",
-					231,
-					realcmp(plane3d_distance_to_point(&plane, &rotate_to_position), 0.f));
-#endif
 
 				vector_from_points3d(
 					&node_matrices[node->parent_node_index].position,
@@ -537,9 +531,11 @@ static void biped_limp_noodle_move_relax_and_constrain_positions(
 					}
 					else
 					{
-						if (node->next_sibling_node_index != NONE)
+						/* port: no more than node_queue holds (a map's links,
+						which could go in a loop) */
+						if (node->next_sibling_node_index != NONE && queue_tail < (short)NUMBEROF(node_queue))
 							node_queue[queue_tail++] = node->next_sibling_node_index;
-						if (node->first_child_node_index != NONE)
+						if (node->first_child_node_index != NONE && queue_tail < (short)NUMBEROF(node_queue))
 							node_queue[queue_tail++] = node->first_child_node_index;
 						continue;
 					}
@@ -547,9 +543,11 @@ static void biped_limp_noodle_move_relax_and_constrain_positions(
 			}
 
 next_node:
-			if (node->next_sibling_node_index != NONE)
+			/* port: no more than node_queue holds (a map's links, which could
+			go in a loop) */
+			if (node->next_sibling_node_index != NONE && queue_tail < (short)NUMBEROF(node_queue))
 				node_queue[queue_tail++] = node->next_sibling_node_index;
-			if (node->first_child_node_index != NONE)
+			if (node->first_child_node_index != NONE && queue_tail < (short)NUMBEROF(node_queue))
 				node_queue[queue_tail++] = node->first_child_node_index;
 		}
 		while (queue_head != queue_tail);
@@ -712,6 +710,14 @@ boolean biped_limp_noodle_relax_nodes_onto_environment(
 		biped->biped.limp_body_current_relaxation_iterations >=
 		biped->biped.limp_body_max_relaxation_iterations;
 
+	/* port: a graph whose nodes don't fit the biped is done relaxing (a
+	map's counts and links) */
+	if (!relaxation_complete &&
+		!biped_limp_noodle_nodes_valid(biped_index, animation_graph))
+	{
+		relaxation_complete = TRUE;
+	}
+
 	if (!relaxation_complete)
 	{
 #ifdef HALO_N3DS
@@ -724,23 +730,91 @@ boolean biped_limp_noodle_relax_nodes_onto_environment(
         if(((unsigned int)game_time_get()+(unsigned short)biped_index)%stride) return FALSE;
 #endif
 		long node_index;
+		/* port: the limp body poses the graph's nodes, in the biped's node
+		matrices, which are its model's. A Halo PC map's graph may have
+		more nodes than its model (beavercreek_rev_beta's cyborg's has 20,
+		its model 19), which Halo PC's engine posed past the matrices: such
+		a body is posed in a copy of them with the graph's every node, the
+		extra ones where their parents are, and the model's taken back */
+		long model_node_count = definition->object.model.index == NONE ? 1 :
+			model_definition_get(definition->object.model.index)->nodes.count;
+		real_matrix4x3 padded_matrices[MAXIMUM_NODES_PER_ANIMATION];
+		real_matrix4x3 *limp_matrices = node_matrices;
+
+		if (animation_graph->nodes.count > model_node_count &&
+			animation_graph->nodes.count <= MAXIMUM_NODES_PER_ANIMATION)
+		{
+			csmemcpy(padded_matrices, node_matrices, model_node_count * sizeof(real_matrix4x3));
+			for (node_index = model_node_count; node_index < animation_graph->nodes.count; node_index++)
+			{
+				short parent_index = TAG_BLOCK_GET_ELEMENT(&animation_graph->nodes, node_index,
+					struct animation_graph_node)->parent_node_index;
+
+				padded_matrices[node_index] = padded_matrices[parent_index >= 0 && parent_index < node_index ?
+					parent_index : 0];
+			}
+			limp_matrices = padded_matrices;
+		}
 
 		for (node_index = 0; node_index < animation_graph->nodes.count; node_index++)
 		{
 			last_positions[node_index] =
-				node_matrices[node_index].position;
+				limp_matrices[node_index].position;
 		}
 
-		biped_limp_noodle_move_relax_and_constrain_positions(biped_index, node_matrices);
+		biped_limp_noodle_move_relax_and_constrain_positions(biped_index, limp_matrices);
 		biped_limp_noodle_adjust_orientations(
 			biped_index,
-			node_matrices,
+			limp_matrices,
 			animation_graph->nodes.count,
 			last_positions);
+		if (limp_matrices != node_matrices)
+			csmemcpy(node_matrices, padded_matrices, model_node_count * sizeof(real_matrix4x3));
 
 		if (biped->biped.limp_body_current_relaxation_iterations < CHAR_MAX)
 			biped->biped.limp_body_current_relaxation_iterations++;
 	}
 
 	return relaxation_complete;
+}
+
+/* port: TRUE when the graph's nodes fit last_positions, node_queue and the
+biped's node matrices, and every link names one of them (a map's counts and
+indices). The relaxation walks them without checking. Released bipeds have at
+most 41 nodes, as many as their models, and no bad links. */
+static boolean biped_limp_noodle_nodes_valid(
+	long biped_index,
+	struct animation_graph const *animation_graph)
+{
+	static boolean reported = FALSE;
+	struct object_datum *object = object_get(biped_index);
+	long node_count = animation_graph->nodes.count;
+	boolean valid = node_count > 0 &&
+		node_count <= MAXIMUM_NODES_PER_ANIMATION &&
+		node_count <= object->object.node_matrices.size / (long)sizeof(real_matrix4x3);
+	long node_index;
+
+	for (node_index = 0; valid && node_index < node_count; node_index++)
+	{
+		struct animation_graph_node *node = TAG_BLOCK_GET_ELEMENT(
+			&animation_graph->nodes,
+			node_index,
+			struct animation_graph_node);
+
+		if ((node->next_sibling_node_index != NONE && !VALID_INDEX(node->next_sibling_node_index, node_count)) ||
+			(node->first_child_node_index != NONE && !VALID_INDEX(node->first_child_node_index, node_count)) ||
+			(node_index && !VALID_INDEX(node->parent_node_index, node_count)))
+		{
+			valid = FALSE;
+		}
+	}
+
+	if (!valid && !reported)
+	{
+		reported = TRUE;
+		error(_error_silent, "### ERROR %s has %ld animation nodes or a bad node link; its body doesn't relax",
+			tag_get_name(object->definition_index), node_count);
+	}
+
+	return valid;
 }

@@ -184,7 +184,6 @@ symbols in this file:
 #define limit2d limit2d_inline
 #include "game/game.h"
 #undef limit2d
-#include "game/player_control.h"
 #include "game/player_control_runtime.h"
 #include "players.h"
 #include "player_queues_new.h"
@@ -199,6 +198,7 @@ symbols in this file:
 #include "engine_input.h"
 #endif
 #include "input/input_abstraction.h"
+#include "interface/ui_widget.h"
 #include "interface/player_ui.h"
 #include "items/weapons.h"
 #include "main/main.h"
@@ -213,6 +213,7 @@ symbols in this file:
 #include "units/vehicles.h"
 
 #include "real_math.h"
+#include "network_coop.h" /* port: port/linux/game/network_coop.c */
 
 /* ---------- constants */
 
@@ -243,7 +244,42 @@ enum mouse_button
 
 real const MOUSE_YAW_SCALE = 0.0031415927f;
 real const MOUSE_PITCH_SCALE = 0.0031415927f;
-static real const ANALOG_BUTTON_SCALE = 1.f / 255.f;
+
+enum
+{
+	_player_control_action_bit,
+	_player_control_jump_bit,
+	_player_control_accept_bit,
+	_player_control_back_bit,
+	_player_control_primary_trigger_bit,
+	_player_control_grenade_trigger_bit,
+	_player_control_zoom_bit,
+	_player_control_look_relative_up_bit,
+	_player_control_look_relative_down_bit,
+	_player_control_look_relative_left_bit,
+	_player_control_look_relative_right_bit,
+	_player_control_move_relative_forward_bit,
+	_player_control_move_relative_backward_bit,
+	_player_control_move_relative_right_bit,
+	_player_control_move_relative_left_bit,
+};
+
+enum
+{
+	_player_control_camera_control_disabled_bit,
+	_player_control_look_relative_all_directions_flags = 0x780,
+	_player_control_move_relative_all_directions_flags = 0x7800,
+};
+
+enum
+{
+	_player_control_rotate_weapons_bit,
+	_player_control_rotate_grenades_bit,
+	_player_control_input_zoom_bit,
+	_player_control_debug_rotate_units_bit,
+	_player_control_debug_rotate_all_units_bit,
+	_player_control_debug_ninja_rope_bit,
+};
 
 /* ---------- macros */
 
@@ -295,13 +331,32 @@ typedef char mouse_state_size_assert[
 typedef char mouse_state_buttons_offset_assert[
 	offsetof(struct mouse_state, buttons) == 0xC ? 1 : -1];
 
+struct player_control_globals_data
+{
+	unsigned long action_flags;
+	unsigned long action_test_flags;
+	unsigned long suppressed_action_flags;
+	unsigned long flags;
+	struct player_control players[MAXIMUM_NUMBER_OF_LOCAL_PLAYERS];
+};
+
+typedef char player_control_globals_size_assert[
+	sizeof(struct player_control_globals_data) == 0x110 ? 1 : -1];
+typedef char player_control_globals_players_offset_assert[
+	offsetof(struct player_control_globals_data, players) == 0x10 ? 1 : -1];
+typedef char player_control_globals_action_test_flags_offset_assert[
+	offsetof(struct player_control_globals_data, action_test_flags) == 0x4 ? 1 : -1];
+typedef char player_control_globals_suppressed_action_flags_offset_assert[
+	offsetof(struct player_control_globals_data, suppressed_action_flags) == 0x8 ? 1 : -1];
+typedef char player_control_globals_flags_offset_assert[
+	offsetof(struct player_control_globals_data, flags) == 0xC ? 1 : -1];
+
 /* ---------- prototypes */
 
-void player_aiming_vector_from_facing(
-	long player_index,
-	real_vector3d *facing_direction,
-	real_euler_angles2d const *facing_angles);
-
+struct player_control *player_control_get(
+	short local_player_index);
+void player_control_dispose_from_old_map(
+	void);
 static void player_control_modify_desired_angles(
 	short local_player_index,
 	real delta_yaw,
@@ -317,6 +372,11 @@ static void get_local_player_input_blob(
 static void handle_one_player_input(
 	short local_player_index,
 	real time_delta_sec);
+long player_control_get_desired_weapon(
+	short local_player_index,
+	long unit_index);
+static boolean player_control_camera_control_is_active(
+	void);
 
 /* ---------- globals */
 
@@ -334,6 +394,12 @@ real player_look_pitch_rate[MAXIMUM_NUMBER_OF_LOCAL_PLAYERS] = {0};
 boolean controls_enable_crouch = FALSE;
 boolean controls_enable_doubled_spin = FALSE;
 boolean controls_swap_doubled_spin_state = FALSE;
+/* The native builds read input once a frame and draw several frames per
+30 Hz tick (port/linux/game/render_interpolation.c). The pitch autolevel and
+limits were stepped once per input update, a tick on the Xbox, so they step
+by the ticks the frame lasted; an impulse applied from a tick steps by one. */
+static real player_control_angle_step_ticks = 1.f;
+static real player_control_autolevel_time[MAXIMUM_NUMBER_OF_LOCAL_PLAYERS];
 
 /* ---------- public code */
 
@@ -379,7 +445,7 @@ void player_control_dispose_from_old_map(
 	return;
 }
 
-boolean player_control_camera_control_is_active(
+static boolean player_control_camera_control_is_active(
 	void)
 {
 	return (boolean)(!TEST_FLAG(
@@ -540,6 +606,23 @@ static void player_action_clear(
 	return;
 }
 
+/* port: whether a menu of the player's own is up (a network game's pause
+menu, which pauses nothing): its controller drives the menu, not the player,
+whose D-pad and sticks would otherwise move them as they move about it. The
+buttons still held as it closes are let go of first (ui_widget_delete). */
+static boolean player_control_port_menu_has_controller(
+	short local_player_index)
+{
+	long player_index = local_player_get_player_index(local_player_index);
+	short gamepad_index;
+
+	if (player_index == NONE)
+		return FALSE;
+	gamepad_index = player_get(player_index)->local_player_index;
+	return gamepad_index >= 0 && gamepad_index < MAXIMUM_NUMBER_OF_LOCAL_PLAYERS &&
+		ui_widgets_active_for_local_player(gamepad_index);
+}
+
 static void handle_one_player_input(
 	short local_player_index,
 	real time_delta_sec)
@@ -572,7 +655,8 @@ static void handle_one_player_input(
 			player->desired_angles.yaw);
 	}
 
-	if (director_inhibited_input(local_player_index))
+	if (director_inhibited_input(local_player_index) ||
+		player_control_port_menu_has_controller(local_player_index))
 	{
 		csmemset(&input, 0, sizeof(input));
 	}
@@ -670,10 +754,12 @@ static void handle_one_player_input(
 
 		if (!director_inhibited_facing(local_player_index))
 		{
+			player_control_angle_step_ticks = time_delta_sec * TICKS_PER_SECOND;
 			player_control_modify_desired_angles(
 				local_player_index,
 				input.facing_delta.yaw,
 				input.facing_delta.pitch);
+			player_control_angle_step_ticks = 1.f;
 		}
 
 		if (unit->object.parent_object_index == NONE)
@@ -683,8 +769,14 @@ static void handle_one_player_input(
 				input.facing_delta.pitch < 0.0001f &&
 				player->magnetism_level < 0.0001f)
 			{
+				/* count ticks, not frames (see player_control_angle_step_ticks) */
+				long ticks;
+
+				player_control_autolevel_time[local_player_index] += time_delta_sec * TICKS_PER_SECOND;
+				ticks = (long)player_control_autolevel_time[local_player_index];
+				player_control_autolevel_time[local_player_index] -= (real)ticks;
 				player->autolevel_ticks = (char)PIN(
-					player->autolevel_ticks + 1,
+					player->autolevel_ticks + ticks,
 					0,
 					127);
 				player->use_autolevel =
@@ -692,6 +784,7 @@ static void handle_one_player_input(
 			}
 			else
 			{
+				player_control_autolevel_time[local_player_index] = 0.f;
 				player->autolevel_ticks = 0;
 				player->use_autolevel = FALSE;
 			}
@@ -1072,6 +1165,8 @@ static void get_local_player_input_blob(
 					real yaw_spin_scale;
 					real pitch_spin_scale;
 					real_euler_angles2d look_delta;
+					/* port: the touch controls' swipe or gyroscope this frame */
+					boolean touching = FALSE;
 
 					if (input_state->buttons[_button_scope_zoom] &&
 						controls_enable_doubled_spin)
@@ -1099,12 +1194,39 @@ static void get_local_player_input_blob(
 						constants->look_function.count>1);
 					look_delta.yaw = evaluate_piecewise_linear_function(
 						constants->look_function.count,
-						constants->look_function.address,
+						xbox_pointer(constants->look_function.address),
 						clamped_yaw) * yaw_spin_scale * look_yaw_rate;
 					look_delta.pitch = evaluate_piecewise_linear_function(
 						constants->look_function.count,
-						constants->look_function.address,
+						xbox_pointer(constants->look_function.address),
 						clamped_pitch) * pitch_spin_scale * look_pitch_rate;
+					{
+						/* port: the touch controls' swipe (port/linux/src/xinput_sdl.c),
+						a turn this frame, made a rate as the stick's look is: the
+						zoom, the stun and the magnetism below act on it as on the
+						stick's, so that it slows over a target and follows a moving
+						one (input.touch_aim_assist); the swipe inverted as the stick
+						is, the gyroscope as the phone turns */
+						extern int halo_linux_touch_look(short gamepad_index, real *yaw, real *pitch, real *gyro_yaw,
+							real *gyro_pitch);
+						real touch_yaw;
+						real touch_pitch;
+						real gyro_yaw;
+						real gyro_pitch;
+						real touch_scale = time_delta_sec * TICKS_PER_SECOND;
+
+						if (halo_linux_touch_look(gamepad_index, &touch_yaw, &touch_pitch, &gyro_yaw, &gyro_pitch) &&
+							touch_scale > _real_epsilon)
+						{
+							touching = TRUE;
+							if (input_abstraction_port_look_inverted(gamepad_index))
+							{
+								touch_pitch = -touch_pitch;
+							}
+							look_delta.yaw += (touch_yaw + gyro_yaw) / touch_scale;
+							look_delta.pitch += (touch_pitch + gyro_pitch) / touch_scale;
+						}
+					}
 
 #ifdef HALO_N3DS
                     look_delta.yaw *= n3ds_input_touch_look_scale(0);
@@ -1166,8 +1288,20 @@ static void get_local_player_input_blob(
 							&control->magnetism_level,
 							&target_angular_position,
 							&target_angular_velocity);
+						{
+							/* no magnetism for the mouse (port/linux/src/xinput_sdl.c),
+							nor for the touch controls without their aim assist */
+							extern int halo_linux_mouse_aiming(short gamepad_index);
+							extern int halo_linux_touch_aiming(short gamepad_index);
+
+							if (halo_linux_mouse_aiming(gamepad_index) || halo_linux_touch_aiming(gamepad_index))
+							{
+								control->magnetism_level = 0.f;
+							}
+						}
 						if (player_magnetism_flag && control->magnetism_level > 0.f &&
-							(fabs(clamped_yaw) > _real_epsilon ||
+							(touching ||
+							fabs(clamped_yaw) > _real_epsilon ||
 							fabs(clamped_pitch) > _real_epsilon ||
 							fabs(input->throttle.i) > _real_epsilon ||
 							fabs(input->throttle.j) > _real_epsilon))
@@ -1205,7 +1339,6 @@ static void get_local_player_input_blob(
 						input->facing_delta.yaw = facing_scale * look_delta.yaw;
 						input->facing_delta.pitch = facing_scale * look_delta.pitch;
 					}
-#ifdef HALO_LINUX
 					{
 						/* direct mouse aim (port/linux/src/xinput_sdl.c) */
 						extern int halo_linux_mouse_look(short gamepad_index, real *yaw, real *pitch);
@@ -1227,7 +1360,6 @@ static void get_local_player_input_blob(
 							input->facing_delta.pitch += mouse_pitch;
 						}
 					}
-#endif
 				}
 				else
 				{
@@ -1280,10 +1412,14 @@ static void get_local_player_input_blob(
 				{
 					struct biped_datum *biped = biped_try_and_get(player->unit_index);
 
+					/* (crouching takes a stick short of all the way; port: the
+					keyboard always moves all the way, so its crouch key
+					crouches at any speed, as Halo PC's does) */
 					if (biped &&
 						(controls_enable_crouch ||
 						TEST_FLAG(biped->biped.flags, _biped_airborne_bit) ||
-						magnitude_squared2d(&input->throttle) < 0.98f * 0.98f))
+						magnitude_squared2d(&input->throttle) < 0.98f * 0.98f ||
+						input_abstraction_port_crouch(gamepad_index)))
 					{
 						SET_FLAG(
 							input->unit_control_flags,
@@ -1292,8 +1428,10 @@ static void get_local_player_input_blob(
 					}
 				}
 
-				input->primary_trigger =
-					(real)input_state->buttons[_button_fire] * ANALOG_BUTTON_SCALE;
+				/* port: the fire control's pull, not how long it is held
+				(input_abstraction_port_primary_trigger) */
+				input->primary_trigger = effective_buttons[_button_fire] ?
+					input_abstraction_port_primary_trigger(gamepad_index) : 0.f;
 				SET_FLAG(
 					input->unit_control_flags,
 					_unit_control_weapon_primary_trigger_bit,
@@ -1314,6 +1452,20 @@ static void get_local_player_input_blob(
 					input->unit_control_flags,
 					_unit_control_action_bit,
 					effective_buttons[_button_action_reload]);
+				/* port: the keyboard's reload key (port/linux/include/
+				halo_keyboard.h), which the controller's X shares with the
+				action */
+				if (!TEST_FLAG(control->inhibited_button_bit_vector, _button_action_reload) &&
+					input_abstraction_port_reload(gamepad_index))
+				{
+					SET_FLAG(input->unit_control_flags, _unit_control_weapon_reload_bit, TRUE);
+				}
+				/* port: and its action key acts only, never reloading */
+				if (TEST_FLAG(input->unit_control_flags, _unit_control_action_bit) &&
+					input_abstraction_port_action_only(gamepad_index))
+				{
+					SET_FLAG(input->unit_control_flags, UNIT_CONTROL_PORT_ACTION_ONLY_BIT, TRUE);
+				}
 				SET_FLAG(
 					input->unit_control_flags,
 					_unit_control_swap_weapons_bit,
@@ -1351,6 +1503,9 @@ static void get_local_player_input_blob(
 					_button_action_reload))
 				{
 					input->accept = gamepad->buttons[_gamepad_analog_button_a];
+					/* port: and the keyboard's jump key */
+					if (!input->accept)
+						input->accept = input_abstraction_port_accept(gamepad_index);
 				}
 			}
 		}
@@ -1589,25 +1744,85 @@ boolean player_control_action_test_look_relative_all_directions(
 		_player_control_look_relative_all_directions_flags);
 }
 
+/* The actions the scripts test for (player_control_action_test_*) that a
+player's unit control, turning, sticks and trigger show. A local player's
+come from its input blob; in network co-op the host's scripts count a
+client's too (port/linux/game/network_distributed.c), so Pillar of
+Autumn's tutorial goes on for whichever player does what it asks. */
+void player_control_action_test_note(
+	unsigned long unit_control_flags,
+	real_euler_angles2d const *facing_delta,
+	real_vector2d const *throttle,
+	real primary_trigger)
+{
+	struct player_control_globals_data *globals = player_control_globals;
+
+	if (TEST_FLAG(unit_control_flags, _unit_control_action_bit))
+	{
+		globals->action_flags |= FLAG(_player_control_action_bit);
+	}
+	if (TEST_FLAG(unit_control_flags, _unit_control_jump_bit))
+	{
+		globals->action_flags |= FLAG(_player_control_jump_bit);
+	}
+	if (TEST_FLAG(unit_control_flags, _unit_control_throw_grenade_bit))
+	{
+		globals->action_flags |= FLAG(_player_control_grenade_trigger_bit);
+	}
+	if (primary_trigger > 0.f)
+	{
+		globals->action_flags |= FLAG(_player_control_primary_trigger_bit);
+	}
+
+	if (facing_delta->pitch > 0.f)
+	{
+		globals->action_flags |= FLAG(_player_control_look_relative_up_bit);
+	}
+	else if (facing_delta->pitch < 0.f)
+	{
+		globals->action_flags |= FLAG(_player_control_look_relative_down_bit);
+	}
+	if (facing_delta->yaw > 0.f)
+	{
+		globals->action_flags |= FLAG(_player_control_look_relative_left_bit);
+	}
+	else if (facing_delta->yaw < 0.f)
+	{
+		globals->action_flags |= FLAG(_player_control_look_relative_right_bit);
+	}
+	if (throttle->i > 0.f)
+	{
+		globals->action_flags |= FLAG(_player_control_move_relative_forward_bit);
+	}
+	else if (throttle->i < 0.f)
+	{
+		globals->action_flags |= FLAG(_player_control_move_relative_backward_bit);
+	}
+	if (throttle->j > 0.f)
+	{
+		globals->action_flags |= FLAG(_player_control_move_relative_right_bit);
+	}
+	else if (throttle->j < 0.f)
+	{
+		globals->action_flags |= FLAG(_player_control_move_relative_left_bit);
+	}
+}
+
 static void player_control_action_test_check_reset_input_blob(
 	struct input_blob *input)
 {
 	struct player_control_globals_data *globals;
 
-	if (input->accept && cinematic_can_be_skipped())
+	if (input->accept && (cinematic_can_be_skipped() || network_coop_skip_offered()))
 	{
-		main_skip_cinematic();
+		/* port: in network co-op the players vote to skip (network_coop.c) */
+		if (!network_coop_vote_skip())
+			main_skip_cinematic();
 	}
 
+	player_control_action_test_note(input->unit_control_flags, &input->facing_delta, &input->throttle,
+		input->primary_trigger);
 	globals = player_control_globals;
-	if (TEST_FLAG(input->unit_control_flags, _unit_control_action_bit))
-	{
-		globals->action_flags |= FLAG(_player_control_action_bit);
-	}
-	if (TEST_FLAG(input->unit_control_flags, _unit_control_jump_bit))
-	{
-		globals->action_flags |= FLAG(_player_control_jump_bit);
-	}
 	if (input->accept)
 	{
 		globals->action_flags |= FLAG(_player_control_accept_bit);
@@ -1616,50 +1831,9 @@ static void player_control_action_test_check_reset_input_blob(
 	{
 		globals->action_flags |= FLAG(_player_control_back_bit);
 	}
-	if (input->primary_trigger > 0.f)
-	{
-		globals->action_flags |= FLAG(_player_control_primary_trigger_bit);
-	}
-	if (TEST_FLAG(input->unit_control_flags, _unit_control_throw_grenade_bit))
-	{
-		globals->action_flags |= FLAG(_player_control_grenade_trigger_bit);
-	}
 	if (TEST_FLAG(input->player_control_flags, _player_control_input_zoom_bit))
 	{
 		globals->action_flags |= FLAG(_player_control_zoom_bit);
-	}
-
-	if (input->facing_delta.pitch > 0.f)
-	{
-		globals->action_flags |= FLAG(_player_control_look_relative_up_bit);
-	}
-	else if (input->facing_delta.pitch < 0.f)
-	{
-		globals->action_flags |= FLAG(_player_control_look_relative_down_bit);
-	}
-	if (input->facing_delta.yaw > 0.f)
-	{
-		globals->action_flags |= FLAG(_player_control_look_relative_left_bit);
-	}
-	else if (input->facing_delta.yaw < 0.f)
-	{
-		globals->action_flags |= FLAG(_player_control_look_relative_right_bit);
-	}
-	if (input->throttle.i > 0.f)
-	{
-		globals->action_flags |= FLAG(_player_control_move_relative_forward_bit);
-	}
-	else if (input->throttle.i < 0.f)
-	{
-		globals->action_flags |= FLAG(_player_control_move_relative_backward_bit);
-	}
-	if (input->throttle.j > 0.f)
-	{
-		globals->action_flags |= FLAG(_player_control_move_relative_right_bit);
-	}
-	else if (input->throttle.j < 0.f)
-	{
-		globals->action_flags |= FLAG(_player_control_move_relative_left_bit);
 	}
 
 	if (!TEST_FLAG(globals->action_test_flags, _player_control_action_bit))
@@ -1910,6 +2084,7 @@ static void player_control_modify_desired_angles(
 				"c:\\halo\\SOURCE\\game\\player_control.c",
 				0x4F2,
 				player->desired_angles.pitch);
+			error *= player_control_angle_step_ticks;
 			if (pitch_autolevel != 0.f)
 			{
 				interpolate_scalar(
@@ -1932,8 +2107,8 @@ static void player_control_modify_desired_angles(
 		}
 	}
 
-	interpolate_scalar(&player->pitch_minimum, pitch_minimum, _pi / 256.f);
-	interpolate_scalar(&player->pitch_maximum, pitch_maximum, _pi / 256.f);
+	interpolate_scalar(&player->pitch_minimum, pitch_minimum, _pi / 256.f * player_control_angle_step_ticks);
+	interpolate_scalar(&player->pitch_maximum, pitch_maximum, _pi / 256.f * player_control_angle_step_ticks);
 
 	player->desired_angles.pitch += delta_pitch;
 	player->desired_angles.pitch = PIN(

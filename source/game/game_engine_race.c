@@ -106,7 +106,7 @@ symbols in this file:
 #include "cseries/errors.h"
 #include "game_engine_place.h"
 #include "game_engine_race.h"
-#include "game/game_engine_runtime.h"
+#include "game/game_engine.h"
 #include "game_globals.h"
 #include "players.h"
 #include "objects/objects.h"
@@ -117,6 +117,7 @@ symbols in this file:
 #include "text/unicode.h"
 #include "units/units.h"
 
+
 /* ---------- constants */
 
 enum
@@ -124,7 +125,8 @@ enum
 	MAXIMUM_RACE_FLAGS = 32,
 	MAXIMUM_RACE_VEHICLES = 8,
 	MAXIMUM_RACE_VEHICLES_TO_DELETE = 32,
-	MULTIPLAYER_MAXIMUM_PLAYERS = 16,
+	/* port: the native builds' session limit (halo_port_limits.h) */
+	MULTIPLAYER_MAXIMUM_PLAYERS = HALO_PORT_MAXIMUM_NETWORK_PLAYERS,
 };
 
 enum race_type
@@ -203,15 +205,6 @@ enum multiplayer_game_text
 
 /* ---------- structures */
 
-struct scenario_netgame_flag
-{
-	real_point3d position;
-	real facing;
-	short type;
-	short team_index;
-	byte unused[0x80];
-};
-
 typedef char verify_scenario_netgame_flag_size[
 	sizeof(struct scenario_netgame_flag) == 0x94 ? 1 : -1];
 
@@ -227,10 +220,7 @@ struct race_globals
 	byte padCD[3];
 };
 
-typedef char verify_race_globals_size[
-	sizeof(struct race_globals) == 0xD0 ? 1 : -1];
-typedef char verify_race_globals_vehicles_have_been_added_offset[
-	offsetof(struct race_globals, vehicles_have_been_added) == 0xCC ? 1 : -1];
+/* January's layout; the port's per-player arrays are larger */
 
 /* ---------- prototypes */
 
@@ -260,16 +250,93 @@ static long find_closest_vehicle(
 	long ignore_these_count);
 static void spawn_race_vehicles(
 	void);
+static void race_engine_dispose(
+	void);
+static boolean race_engine_initialize_for_new_map(
+	void);
+static void race_engine_dispose_from_old_map(
+	void);
+static void race_engine_player_added(
+	long player_index);
+static void race_engine_game_ending(
+	void);
+static void race_engine_game_starting(
+	void);
+static void race_engine_statistics_append(
+	long statistic);
+static void race_engine_handle_client_message(
+	void *message);
+static void race_engine_handle_server_message(
+	void *message);
+static void race_engine_pregame_post_rasterize(
+	void);
+static void race_engine_post_rasterize(
+	void);
+static void race_engine_player_update(
+	long player_index);
+static void race_engine_weapon_update(
+	long item_index,
+	struct weapon_datum *weapon);
+static void race_engine_player_damaged_player(
+	long killing_player_index,
+	long dead_player_index,
+	boolean friendly_fire);
+static void race_engine_player_killed_player(
+	long killing_player_index,
+	long killing_object_index,
+	long dead_player_index,
+	boolean friendly_fire);
+static boolean race_engine_display_score(
+	long player_index,
+	long message,
+	long message_player_index,
+	wchar_t *buffer,
+	long buffer_size);
+static void race_engine_prespawn_player_update(
+	long player_index);
+static boolean race_goal_matches_player(
+	long player_index,
+	long goal_index);
+static long race_engine_get_score(
+	long player_index,
+	enum get_score_type score_type);
+static wchar_t *race_get_score_string(
+	long player_index,
+	wchar_t *string);
+static wchar_t *race_get_score_header_string(
+	wchar_t *string);
+static wchar_t *race_get_team_score_string(
+	long team_index,
+	wchar_t *string);
+static long race_engine_did_player_win(
+	long player_index);
+static void race_engine_update(
+	void);
 
 /* ---------- globals */
 
 extern long timeout_for_endgame_sound;
 
-struct race_globals race_globals = { 0 };
+static struct race_globals race_globals = { 0 };
+
+/* network_game_globals.c's */
+boolean network_game_distributed_client(void);
+
+/* port: the host's events a client of the distributed netcode shows, by
+absolute player index (each machine counts them, a client as it last had
+them from the host): flags touched, laps and new best laps */
+static struct
+{
+	byte touches[MULTIPLAYER_MAXIMUM_PLAYERS];
+	byte laps[MULTIPLAYER_MAXIMUM_PLAYERS];
+	byte best_laps[MULTIPLAYER_MAXIMUM_PLAYERS];
+} race_events;
+
+static void race_show_lap(long player_index);
 
 /* ---------- public code */
 
-void race_engine_dispose(
+static void race_engine_dispose(
 	void)
 {
 	return;
@@ -351,7 +418,8 @@ void race_flags_make_unique(
 {
 	struct scenario *scenario = global_scenario_get();
 	unsigned long used_flags = 0;
-	short itr;
+	/* port: a long counter, for a map's long count */
+	long itr;
 
 	for (itr = 0; itr < scenario->netgame_flags.count; itr++)
 	{
@@ -390,57 +458,70 @@ void race_flags_make_unique(
 	return;
 }
 
-void race_engine_dispose_from_old_map(
+static void race_engine_dispose_from_old_map(
 	void)
 {
 	return;
 }
 
-void race_engine_player_added(
+static void race_engine_player_added(
 	long player_index)
 {
+	long slot = DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index);
+
 	player_get(player_index)->multiplayer_special = 0;
+	/* port: not the laps of a player who quit from the slot (as slayer's):
+	a normal race starts everyone at the same flag, the others at the first
+	touched */
+	race_globals.lap_bit_vector[slot] = 0;
+	if (game_engine_get_variant()->game_engine_variant.race.race_type != _race_type_normal)
+		race_globals.first_flag[slot] = NONE;
+	if (!game_engine_has_teams())
+		race_globals.team_laps[slot] = 0;
+	race_events.touches[slot] = 0;
+	race_events.laps[slot] = 0;
+	race_events.best_laps[slot] = 0;
 
 	return;
 }
 
-void race_engine_game_ending(
+static void race_engine_game_ending(
 	void)
 {
 	return;
 }
 
-void race_engine_game_starting(
+static void race_engine_game_starting(
 	void)
 {
 	return;
 }
 
-void race_engine_statistics_append(
+static void race_engine_statistics_append(
 	long statistic)
 {
 	return;
 }
 
-void race_engine_handle_client_message(
+static void race_engine_handle_client_message(
 	void *message)
 {
 	return;
 }
 
-void race_engine_handle_server_message(
+static void race_engine_handle_server_message(
 	void *message)
 {
 	return;
 }
 
-void race_engine_pregame_post_rasterize(
+static void race_engine_pregame_post_rasterize(
 	void)
 {
 	return;
 }
 
-void race_engine_post_rasterize(
+static void race_engine_post_rasterize(
 	void)
 {
 	return;
@@ -456,27 +537,9 @@ static void race_complete_lap(
 	long team_score;
 
 	race_globals.lap_bit_vector[DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index)] = 0;
-	game_engine_play_multiplayer_sound(_multiplayer_sound_countdown_timer_end);
 	player->statistics.multiplayer_statistics.race_statistics.last_lap_time = (short)lap_time;
-
-	if (game_engine_get_variant()->game_engine_variant.race.race_type == _race_type_flag_rally)
-	{
-		game_show_score_you_ally_enemy(
-			player_index,
-			_race_message_you_touched_a_flag_rally,
-			_race_message_ally_touched_a_flag_rally,
-			_race_message_enemy_completed_a_lap,
-			player_index);
-	}
-	else
-	{
-		game_show_score_you_ally_enemy(
-			player_index,
-			_race_message_you_completed_a_lap,
-			_race_message_ally_completed_a_lap,
-			_race_message_enemy_completed_a_lap,
-			player_index);
-	}
+	race_show_lap(player_index);
+	race_events.laps[DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index)]++;
 
 	if (player->statistics.multiplayer_statistics.race_statistics.laps == 0)
 	{
@@ -491,6 +554,7 @@ static void race_complete_lap(
 				player_index,
 				_race_message_new_best_lap_time,
 				player_index);
+			race_events.best_laps[DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index)]++;
 		}
 	}
 
@@ -532,6 +596,34 @@ static void race_complete_lap(
 		race_globals.team_laps[player->team_index] = team_score;
 	if (race_globals.team_laps[player->team_index] >= game_engine_get_variant()->universal_variant.score_to_win)
 		game_engine_end_game();
+
+	return;
+}
+
+/* port: what a lap shows every machine's players (the host's from the lap,
+a client's from the host's state) */
+static void race_show_lap(
+	long player_index)
+{
+	game_engine_play_multiplayer_sound(_multiplayer_sound_countdown_timer_end);
+	if (game_engine_get_variant()->game_engine_variant.race.race_type == _race_type_flag_rally)
+	{
+		game_show_score_you_ally_enemy(
+			player_index,
+			_race_message_you_touched_a_flag_rally,
+			_race_message_ally_touched_a_flag_rally,
+			_race_message_enemy_completed_a_lap,
+			player_index);
+	}
+	else
+	{
+		game_show_score_you_ally_enemy(
+			player_index,
+			_race_message_you_completed_a_lap,
+			_race_message_ally_completed_a_lap,
+			_race_message_enemy_completed_a_lap,
+			player_index);
+	}
 
 	return;
 }
@@ -656,6 +748,7 @@ static void race_touch_flag(
 		long *lap_bit_vector = &race_globals.lap_bit_vector[absolute_player_index];
 
 		game_engine_play_multiplayer_sound(_multiplayer_sound_countdown_timer);
+		race_events.touches[absolute_player_index]++;
 
 		if (race_globals.first_flag[absolute_player_index] == NONE)
 		{
@@ -692,7 +785,7 @@ static void race_touch_flag(
 	return;
 }
 
-void race_engine_weapon_update(
+static void race_engine_weapon_update(
 	long item_index,
 	struct weapon_datum *weapon)
 {
@@ -762,7 +855,7 @@ static void build_player_speeds(
 	return;
 }
 
-void race_engine_player_damaged_player(
+static void race_engine_player_damaged_player(
 	long killing_player_index,
 	long dead_player_index,
 	boolean friendly_fire)
@@ -770,7 +863,7 @@ void race_engine_player_damaged_player(
 	return;
 }
 
-void race_engine_player_killed_player(
+static void race_engine_player_killed_player(
 	long killing_player_index,
 	long killing_object_index,
 	long dead_player_index,
@@ -779,7 +872,7 @@ void race_engine_player_killed_player(
 	return;
 }
 
-boolean race_engine_display_score(
+static boolean race_engine_display_score(
 	long player_index,
 	long message,
 	long message_player_index,
@@ -833,7 +926,7 @@ boolean race_engine_display_score(
 			}
 			else
 				string = L"";
-			usnprintf(buffer, buffer_size, string, other_player->name);
+			usnprintf(buffer, buffer_size, ustring_format_checked(string, "s"), other_player->name);
 		}
 		break;
 
@@ -848,7 +941,7 @@ boolean race_engine_display_score(
 			}
 			else
 				string = L"";
-			usnprintf(buffer, buffer_size, string, other_player->name);
+			usnprintf(buffer, buffer_size, ustring_format_checked(string, "s"), other_player->name);
 		}
 		break;
 
@@ -870,7 +963,7 @@ boolean race_engine_display_score(
 			usnprintf(
 				buffer,
 				buffer_size,
-				string,
+				ustring_format_checked(string, "df"),
 				other_player->statistics.multiplayer_statistics.race_statistics.laps + 1,
 				lap_time);
 		}
@@ -889,7 +982,7 @@ boolean race_engine_display_score(
 		usnprintf(
 			buffer,
 			buffer_size,
-			string,
+			ustring_format_checked(string, "sd"),
 			other_player->name,
 			other_player->statistics.multiplayer_statistics.race_statistics.laps + 1);
 		break;
@@ -907,7 +1000,7 @@ boolean race_engine_display_score(
 		usnprintf(
 			buffer,
 			buffer_size,
-			string,
+			ustring_format_checked(string, "sd"),
 			other_player->name,
 			other_player->statistics.multiplayer_statistics.race_statistics.laps);
 		break;
@@ -927,7 +1020,7 @@ boolean race_engine_display_score(
 			}
 			else
 				string = L"";
-			usnprintf(buffer, buffer_size, string, best_lap_time);
+			usnprintf(buffer, buffer_size, ustring_format_checked(string, "f"), best_lap_time);
 		}
 		break;
 
@@ -948,7 +1041,7 @@ boolean race_engine_display_score(
 				usnprintf(
 					buffer,
 					buffer_size,
-					string,
+					ustring_format_checked(string, "s"),
 					get_place_name(game_engine_get_place(player_index, _get_score_team)));
 			}
 			else
@@ -965,7 +1058,7 @@ boolean race_engine_display_score(
 				usnprintf(
 					buffer,
 					buffer_size,
-					string,
+					ustring_format_checked(string, "sd"),
 					get_place_name(game_engine_get_place(player_index, _get_score_team)),
 					other_player->statistics.multiplayer_statistics.race_statistics.laps);
 			}
@@ -985,7 +1078,7 @@ boolean race_engine_display_score(
 			usnprintf(
 				buffer,
 				buffer_size,
-				string,
+				ustring_format_checked(string, "s"),
 				get_place_name(game_engine_get_place(player_index, _get_score_team)));
 		}
 		else
@@ -1002,7 +1095,7 @@ boolean race_engine_display_score(
 			usnprintf(
 				buffer,
 				buffer_size,
-				string,
+				ustring_format_checked(string, "sdd"),
 				get_place_name(game_engine_get_place(player_index, _get_score_team)),
 				other_player->statistics.multiplayer_statistics.race_statistics.laps + 1,
 				game_engine_get_variant()->universal_variant.score_to_win);
@@ -1017,13 +1110,13 @@ boolean race_engine_display_score(
 	return result;
 }
 
-void race_engine_prespawn_player_update(
+static void race_engine_prespawn_player_update(
 	long player_index)
 {
 	return;
 }
 
-boolean race_goal_matches_player(
+static boolean race_goal_matches_player(
 	long player_index,
 	long goal_index)
 {
@@ -1060,7 +1153,7 @@ static long count_bits_32(
 	return count;
 }
 
-long race_engine_get_score(
+static long race_engine_get_score(
 	long player_index,
 	enum get_score_type score_type)
 {
@@ -1073,9 +1166,11 @@ long race_engine_get_score(
 	}
 	else
 	{
-		long team_index = player->team_index;
+		/* port: lap_bit_vector is kept per player; January read it by team
+		index, which picks another player's flags */
 		long laps = player->statistics.multiplayer_statistics.race_statistics.laps;
-		long flags_touched = count_bits_32(race_globals.lap_bit_vector[team_index]);
+		long flags_touched = count_bits_32(
+			race_globals.lap_bit_vector[DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index)]);
 
 		score = laps * (MAXIMUM_RACE_FLAGS + 1) + flags_touched;
 	}
@@ -1083,7 +1178,7 @@ long race_engine_get_score(
 	return score;
 }
 
-wchar_t *race_get_score_string(
+static wchar_t *race_get_score_string(
 	long player_index,
 	wchar_t *string)
 {
@@ -1098,7 +1193,7 @@ wchar_t *race_get_score_string(
 	return string;
 }
 
-wchar_t *race_get_score_header_string(
+static wchar_t *race_get_score_header_string(
 	wchar_t *string)
 {
 	short string_index =
@@ -1112,12 +1207,13 @@ wchar_t *race_get_score_header_string(
 	else
 		header_string = L"";
 
-	ustrcpy(string, header_string);
+	/* port: bounded (a map's text, into its callers' score_string[256]) */
+	ustrncpy_terminated(string, header_string, 256);
 
 	return string;
 }
 
-wchar_t *race_get_team_score_string(
+static wchar_t *race_get_team_score_string(
 	long team_index,
 	wchar_t *string)
 {
@@ -1126,7 +1222,7 @@ wchar_t *race_get_team_score_string(
 	return string;
 }
 
-long race_engine_did_player_win(
+static long race_engine_did_player_win(
 	long player_index)
 {
 	if (game_engine_has_teams())
@@ -1275,7 +1371,7 @@ static void spawn_race_vehicles(
 	return;
 }
 
-void race_engine_player_update(
+static void race_engine_player_update(
 	long player_index)
 {
 	struct player_datum *player = player_get(player_index);
@@ -1285,7 +1381,10 @@ void race_engine_player_update(
 		_race_message_show_score,
 		player_index);
 
-	if (player->unit_index != NONE && game_engine_can_score())
+	/* (a client of the distributed netcode has the host's laps:
+	game_engine_race_read_network_state and the players' statistics) */
+	if (!network_game_distributed_client() &&
+		player->unit_index != NONE && game_engine_can_score())
 	{
 		struct unit_datum *unit = unit_get(player->unit_index);
 		long netgame_flag_index;
@@ -1318,19 +1417,32 @@ void race_engine_player_update(
 	return;
 }
 
-void race_engine_update(
+static void race_engine_update(
 	void)
 {
 	if (game_time_get() == 2)
 	{
-		delete_race_vehicles();
-		spawn_race_vehicles();
+		boolean vehicles_added;
+
+		/* (a client of the distributed netcode has the host's vehicles, and
+		announces those the host spawns) */
+		if (!network_game_distributed_client())
+		{
+			delete_race_vehicles();
+			spawn_race_vehicles();
+			vehicles_added = race_globals.vehicles_have_been_added;
+		}
+		else
+		{
+			vehicles_added = find_closest_vehicle(NULL, NULL, 0) != NONE &&
+				race_get_vehicle_to_spawn(0) != NONE;
+		}
 		game_engine_play_multiplayer_sound(
 			game_engine_has_teams() ?
 				_multiplayer_sound_team_race :
 				_multiplayer_sound_race);
 
-		if (race_globals.vehicles_have_been_added)
+		if (vehicles_added)
 		{
 			switch (game_engine_get_variant()->universal_variant.vehicle_set)
 			{
@@ -1352,7 +1464,8 @@ void race_engine_update(
 		}
 	}
 
-	if (game_engine_has_teams())
+	/* (a client ends the game when the host has) */
+	if (game_engine_has_teams() && !network_game_distributed_client())
 	{
 		if (!race_team_can_win_game(0))
 			game_engine_end_game();
@@ -1365,7 +1478,7 @@ void race_engine_update(
 	return;
 }
 
-boolean race_engine_initialize_for_new_map(
+static boolean race_engine_initialize_for_new_map(
 	void)
 {
 	long lowest_flag_index = MAXIMUM_RACE_FLAGS;
@@ -1376,6 +1489,7 @@ boolean race_engine_initialize_for_new_map(
 
 	race_globals.vehicles_have_been_added = FALSE;
 	csmemset(&race_globals, 0, sizeof(race_globals));
+	csmemset(&race_events, 0, sizeof(race_events));
 	timeout_for_endgame_sound = 30;
 
 	for (itr = 0; itr < scenario->netgame_flags.count; itr++)
@@ -1469,3 +1583,107 @@ struct game_engine race_engine =
 };
 
 /* ---------- private code */
+
+/* the distributed netcode (port/linux/game/network_distributed.c): the game
+type's state the host sends its clients, which take it as it is (not
+whether this machine has added its race vehicles, nor the track's flags,
+which it has from the map as the host has) */
+struct race_network_state
+{
+	struct race_globals globals;
+	/* the host's events (race_events) */
+	byte touches[MULTIPLAYER_MAXIMUM_PLAYERS];
+	byte laps[MULTIPLAYER_MAXIMUM_PLAYERS];
+	byte best_laps[MULTIPLAYER_MAXIMUM_PLAYERS];
+	/* each player's race statistics (which their laps' messages show: the
+	players' statistics come less often and may be lost), by absolute
+	index */
+	short last_lap_times[MULTIPLAYER_MAXIMUM_PLAYERS];
+	short best_lap_times[MULTIPLAYER_MAXIMUM_PLAYERS];
+	short laps_completed[MULTIPLAYER_MAXIMUM_PLAYERS];
+};
+
+typedef char verify_race_network_state_size[
+	sizeof(struct race_network_state) <= GAME_ENGINE_MAXIMUM_NETWORK_STATE_SIZE ? 1 : -1];
+
+long game_engine_race_write_network_state(
+	byte *buffer,
+	long size)
+{
+	struct race_network_state state;
+	struct data_iterator iterator;
+	struct player_datum *player;
+
+	if (size < (long)sizeof(state))
+		return 0;
+	csmemset(&state, 0, sizeof(state));
+	state.globals = race_globals;
+	csmemcpy(state.touches, race_events.touches, sizeof(state.touches));
+	csmemcpy(state.laps, race_events.laps, sizeof(state.laps));
+	csmemcpy(state.best_laps, race_events.best_laps, sizeof(state.best_laps));
+	data_iterator_new(&iterator, player_data);
+	while ((player = (struct player_datum *)data_iterator_next(&iterator)))
+	{
+		long absolute_index = DATUM_INDEX_TO_ABSOLUTE_INDEX(iterator.datum_index);
+		struct race_statistics *statistics = &player->statistics.multiplayer_statistics.race_statistics;
+
+		if (absolute_index >= MULTIPLAYER_MAXIMUM_PLAYERS)
+			continue;
+		state.last_lap_times[absolute_index] = statistics->last_lap_time;
+		state.best_lap_times[absolute_index] = statistics->best_lap_time;
+		state.laps_completed[absolute_index] = statistics->laps;
+	}
+	csmemcpy(buffer, &state, sizeof(state));
+	return sizeof(state);
+}
+
+boolean game_engine_race_read_network_state(
+	byte const *buffer,
+	long size,
+	boolean first)
+{
+	struct race_network_state state;
+	boolean vehicles_have_been_added = race_globals.vehicles_have_been_added;
+	unsigned long lap_completed_value = race_globals.lap_completed_value;
+	struct data_iterator iterator;
+	struct player_datum *player;
+
+	if (size != (long)sizeof(state))
+		return FALSE;
+	csmemcpy(&state, buffer, sizeof(state));
+	race_globals = state.globals;
+	race_globals.vehicles_have_been_added = vehicles_have_been_added;
+	race_globals.lap_completed_value = lap_completed_value;
+	/* the players' race statistics, and the host's events since the last
+	state, shown as the host showed them (race_touch_flag,
+	race_complete_lap: a lap's messages with the lap's times and the laps
+	before it) */
+	data_iterator_new(&iterator, player_data);
+	while ((player = (struct player_datum *)data_iterator_next(&iterator)))
+	{
+		long absolute_index = DATUM_INDEX_TO_ABSOLUTE_INDEX(iterator.datum_index);
+		struct race_statistics *statistics = &player->statistics.multiplayer_statistics.race_statistics;
+		short laps;
+
+		if (absolute_index >= MULTIPLAYER_MAXIMUM_PLAYERS)
+			continue;
+		laps = state.laps_completed[absolute_index];
+		statistics->last_lap_time = state.last_lap_times[absolute_index];
+		statistics->best_lap_time = state.best_lap_times[absolute_index];
+		statistics->laps = laps > 0 ? laps - 1 : 0;
+		if (!first)
+		{
+			if (state.touches[absolute_index] != race_events.touches[absolute_index])
+				game_engine_play_multiplayer_sound(_multiplayer_sound_countdown_timer);
+			if (state.laps[absolute_index] != race_events.laps[absolute_index])
+				race_show_lap(iterator.datum_index);
+			if (state.best_laps[absolute_index] != race_events.best_laps[absolute_index])
+				game_show_score_extended(iterator.datum_index, _race_message_new_best_lap_time, iterator.datum_index);
+		}
+		statistics->laps = laps;
+	}
+	csmemcpy(race_events.touches, state.touches, sizeof(race_events.touches));
+	csmemcpy(race_events.laps, state.laps, sizeof(race_events.laps));
+	csmemcpy(race_events.best_laps, state.best_laps, sizeof(race_events.best_laps));
+	return TRUE;
+}

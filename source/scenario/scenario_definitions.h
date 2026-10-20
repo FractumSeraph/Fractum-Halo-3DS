@@ -148,7 +148,7 @@ struct scenario_structure_bsp_reference
 {
 	long file_offset;
 	long file_size;
-	void *base_address;
+	XPTR(void) base_address; /* tag data: an Xbox address */
 	byte unusedC[4];
 	struct tag_reference structure_bsp;
 };
@@ -207,6 +207,38 @@ struct encounter_player_starting_location
 	word pad12;
 	short game_types[4];
 	char __unknown1c[24];
+};
+
+struct scenario_netgame_flag
+{
+	real_point3d position;
+	real facing;
+	short type;
+	short team_index;
+	long unused[32];
+};
+
+struct scenario_netgame_equipment
+{
+	long flags;
+	short game_type[4];
+	short team_index;
+	short spawn_time;
+	long run_time_spawned_item_index;
+	long unused1[11];
+	real_point3d position;
+	real facing;
+	struct tag_reference item_collection;
+	long unused2[12];
+};
+
+struct scenario_starting_equipment
+{
+	long flags;
+	short game_type[4];
+	long unused1[12];
+	struct tag_reference item_collection[6];
+	long unused2[12];
 };
 
 struct scenario
@@ -281,6 +313,15 @@ struct scenario
 	struct tag_reference ingame_help_text;
 	struct tag_reference hud_messages;
 	struct tag_block structure_bsp_references; // scenario_structure_bsp_reference
+};
+
+struct scenario_cutscene_flag
+{
+	long runtime_unused;
+	char name[TAG_STRING_LENGTH];
+	real_point3d position;
+	real_euler_angles2d facing;
+	byte unused[0x24];
 };
 
 /* ---------- prototypes/EXAMPLE.C */

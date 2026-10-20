@@ -62,13 +62,32 @@ struct damage_data
 	struct projectile_material_response_definition const *material_response;
 };
 
+/* an object's vitality and recent damage, as the distributed netcode's host
+sends them (port/linux/game/network_distributed.c) */
+struct damage_network_state
+{
+	boolean shield_depleted;
+	boolean shield_charging;
+	boolean shield_over_charging;
+	real body_vitality;
+	real shield_vitality;
+	real current_body_damage;
+	real recent_body_damage;
+	real current_shield_damage;
+	real recent_shield_damage;
+};
+
 /* ---------- prototypes/DAMAGE.C */
 
 void damage_initialize(void);
+void damage_set_network_state(long object_index, struct damage_network_state const *state);
+void damage_get_network_state(long object_index, struct damage_network_state *state);
 void damage_dispose(void);
 void damage_initialize_for_new_map(void);
 void damage_dispose_from_old_map(void);
 void damage_render_debug(void);
+void render_debug_object_damage(
+	void);
 void object_initialize_vitality(long object_index, real *custom_body_vitality, real *custom_shield_vitality);
 void object_can_take_damage(long object_list_index);
 void object_cannot_take_damage(long object_list_index);
@@ -110,4 +129,9 @@ void render_debug_object_damage(void);
 
 /* ---------- public code */
 
+#ifdef HALO_64BIT
+void render_debug_object_damage(
+	void);
+
+#endif
 #endif // __DAMAGE_H

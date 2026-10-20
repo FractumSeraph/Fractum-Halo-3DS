@@ -143,7 +143,27 @@ struct hs_function_definition
 	short parameter_types[1];
 };
 
-struct hs_external_global_definition;
+#ifdef HALO_64BIT
+/* A function's parameter types: the first is in the definition, the rest
+follow it in its hs_function_definition_with_N_parameters wrapper. On the
+Xbox the two were contiguous; on a 64-bit host the definition is padded to
+its pointers' alignment, so the rest start sizeof(definition) in. */
+#define HS_FUNCTION_PARAMETER_TYPE(function, index) \
+	((index) == 0 ? (function)->parameter_types[0] : \
+		((short const *)((char const *)(function) + sizeof(struct hs_function_definition)))[(index) - 1])
+
+/* the same, contiguous, for code that walks them as an array (hs_runtime.c) */
+short const *hs_function_parameter_types(
+	struct hs_function_definition const *function);
+#endif
+
+struct hs_external_global_definition
+{
+	char const *name;
+	short type;
+	short pad;
+	void *address;
+};
 
 /* ---------- prototypes/HS.C */
 
@@ -151,7 +171,11 @@ void hs_initialize(
 	void);
 void hs_initialize_for_new_map(
 	void);
+void hs_dispose_from_old_map(
+	void);
 void hs_update(
+	void);
+void hs_node_gc(
 	void);
 void hs_dispose(
 	void);
@@ -169,10 +193,17 @@ void hs_runtime_initialize(
 	void);
 void hs_runtime_initialize_for_new_map(
 	void);
+/* port: network co-op (port/linux/game/network_coop.c) */
+void hs_runtime_port_shift_sleep_times(
+	long ticks);
 void hs_runtime_update(
 	void);
 long hs_runtime_evaluate(
 	long expression_index);
+/* port: whether the running script waits on the call it evaluates, which
+is a sleep_until's condition (hs_runtime.c) */
+boolean hs_runtime_waiting_on_call(
+	void);
 char const *hs_runtime_get_executing_thread_name(
 	void);
 boolean hs_wake_by_name(
@@ -226,8 +257,29 @@ short hs_global_get_type(
 	short global_index);
 char const *hs_global_get_name(
 	short global_index);
+/* port: the map's scripts and global initializers that call a function a
+map's scripts may not (hs_scenario_functions_check) */
+boolean hs_scenario_script_disabled(
+	short script_index);
+boolean hs_scenario_global_initializer_disabled(
+	short global_index);
+
+/* ---------- prototypes/HS_GLOBALS_EXTERNAL.C */
+
+/* port: the external globals a map's scripts may set */
+boolean hs_external_global_settable_by_maps(
+	short global_index);
 /* ---------- prototypes/HS_COMPILE.C */
 
+void hs_compile_initialize(
+	boolean compiling_scenario);
+void hs_compile_dispose(
+	void);
+long hs_compile_expression(
+	long source_size,
+	char const *source,
+	char const **error_message,
+	char const **error_source);
 boolean hs_parse(
 	long expression_index,
 	short expected_type);
@@ -236,6 +288,9 @@ void hs_compile(
 	char const *source,
 	char const **error_message,
 	char const **error_source);
+boolean hs_compile_postprocess(
+	char const **error_message_pointer,
+	char const **error_source_pointer);
 
 /* ---------- globals */
 
@@ -248,4 +303,9 @@ extern boolean debug_trigger_volumes;
 
 /* ---------- public code */
 
+#ifdef HALO_64BIT
+void hs_node_gc(
+	void);
+
+#endif
 #endif // __HS_H

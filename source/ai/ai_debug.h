@@ -368,6 +368,7 @@ typedef char ai_debug_state_ballistic_lineoffire_valid_offset_assert[
 	offsetof(struct ai_debug_state, ballistic_lineoffire_valid) == 0x4C2F4 ? 1 : -1];
 typedef char ai_debug_state_ballistic_lineoffire_point_count_offset_assert[
 	offsetof(struct ai_debug_state, ballistic_lineoffire_point_count) == 0x4C4D4 ? 1 : -1];
+#ifndef HALO_64BIT
 typedef char ai_debug_state_field_859F4_offset_assert[
 	offsetof(struct ai_debug_state, field_859F4) == 0x859F4 ? 1 : -1];
 typedef char ai_debug_state_path_state_offset_assert[
@@ -391,6 +392,7 @@ typedef char ai_debug_actor_record_field_3C_offset_assert[
 typedef char ai_debug_state_field_7D380_offset_assert[
 	offsetof(struct ai_debug_state, evaluation_context_valid) == 0x7D380 ? 1 : -1];
 
+#endif
 struct actor_debug_info
 {
 	long last_render_id;
@@ -505,7 +507,7 @@ struct actor_debug_info
 	long vision_last_time;
 	real vision_last_maximum_distance;
 	real vision_last_perception_factor;
-	short num_debug_evaluations;
+	short perception_awareness_speed;
 	short firing_position_type_mismatch_ticks;
 };
 
@@ -540,9 +542,13 @@ void ai_debug_render(
 void ai_debug_vocalize(
 	char const *priority_name,
 	char const *vocalization_name);
+void ai_debug_speak_list(
+	char const *list_name);
 
 void ai_debug_change_selected_encounter(
 	boolean a1);
+void ai_debug_teleport_to(
+	long ai_index);
 
 void ai_debug_change_selected_actor(
 	boolean a1);

@@ -58,7 +58,6 @@ symbols in this file:
 
 /* ---------- headers */
 
-#include "rasterizer/rasterizer_frame_statistics.h"
 #include <stdlib.h>
 
 #include "cseries.h"
@@ -66,7 +65,7 @@ symbols in this file:
 #include "interface/hud_draw.h"
 #include "bitmaps/bitmap_color_conversion.h"
 #include "rasterizer.h"
-#include "rasterizer_debug.h"
+#include "rasterizer_console_vars.h"
 #include "rasterizer_geometry.h"
 #include "rasterizer/xbox/rasterizer_xbox_debug.h"
 #include "rasterizer/xbox/rasterizer_xbox_draw_primitives.h"
@@ -105,7 +104,11 @@ struct rasterizer_debug_primitive
 	boolean opaque;
 };
 
+#ifdef HALO_64BIT
+/* the Xbox packing only matched January's .data layout; native here */
+#else
 #pragma pack(push, 1)
+#endif
 struct rasterizer_debug_data
 {
 	boolean initialized;
@@ -119,16 +122,11 @@ struct rasterizer_debug_data
 	long primitive_count;
 	boolean geometry_buffer_full_warning;
 };
+#ifndef HALO_64BIT
 #pragma pack(pop)
+#endif
 
-struct rasterizer_debug_options_prefix
-{
-	byte reserved00[2];
-	short stats;
-	byte reserved04[0x21];
-	boolean debug_geometry;
-};
-
+#ifdef HALO_64BIT
 struct rasterizer_debug_window_parameters_prefix
 {
 	byte reserved00[8];
@@ -136,25 +134,22 @@ struct rasterizer_debug_window_parameters_prefix
 	real_vector3d camera_forward;
 };
 
+#else
 typedef char rasterizer_debug_data_size_assert[
 	sizeof(struct rasterizer_debug_data) == 0x21 ? 1 : -1];
+#endif
 typedef char rasterizer_debug_primitive_size_assert[
 	sizeof(struct rasterizer_debug_primitive) == 0x3C ? 1 : -1];
-typedef char rasterizer_debug_options_debug_geometry_offset_assert[
-	offsetof(struct rasterizer_debug_options_prefix, debug_geometry) == 0x25 ? 1 : -1];
 
 /* ---------- prototypes */
 
+long rasterizer_debug_new_primitive(
+	long *primitive_count);
+void rasterizer_debug_test(
+	void);
 static int __cdecl rasterizer_debug_compare_primitives(
 	void const *primitive0_pointer,
 	void const *primitive1_pointer);
-long rasterizer_debug_new_primitive(
-	long *primitive_count);
-void rasterizer_debug_line_shaded(
-	real_point3d const *p0,
-	real_point3d const *p1,
-	real_argb_color const *color0,
-	real_argb_color const *color1);
 void rasterizer_debug_triangle_shaded(
 	real_point3d const *p0,
 	real_point3d const *p1,
@@ -166,9 +161,6 @@ void rasterizer_debug_triangle_shaded(
 /* ---------- globals */
 
 static struct rasterizer_debug_data debug_data;
-
-extern struct rasterizer_debug_options_prefix rasterizer_debug_options;
-extern struct rasterizer_debug_window_parameters_prefix global_window_parameters;
 
 /* ---------- public code */
 
@@ -183,7 +175,7 @@ long rasterizer_debug_new_primitive(
 		primitive_index = (*primitive_count)++;
 		debug_data.primitive_count++;
 
-		if (rasterizer_debug_options.stats==_rasterizer_stats_geometry)
+		if (rasterizer_debug_options.statistics_mode==_rasterizer_stats_geometry)
 		{
 			rasterizer_frame_statistics.debug_primitive_count++;
 		}
@@ -334,7 +326,7 @@ void rasterizer_debug_draw(
 
 	if (debug_data.initialized &&
 		debug_data.primitive_count>0 &&
-		rasterizer_debug_options.debug_geometry)
+		rasterizer_debug_options.draw_debug_geometry)
 	{
 		match_assert(
 			"c:\\halo\\SOURCE\\rasterizer\\rasterizer_debug.c",
@@ -539,7 +531,7 @@ void rasterizer_debug_line_shaded(
 	real_argb_color const *color0,
 	real_argb_color const *color1)
 {
-	if (debug_data.initialized && rasterizer_debug_options.debug_geometry)
+	if (debug_data.initialized && rasterizer_debug_options.draw_debug_geometry)
 	{
 		match_assert(
 			"c:\\halo\\SOURCE\\rasterizer\\rasterizer_debug.c",
@@ -573,12 +565,12 @@ void rasterizer_debug_line_shaded(
 				real_vector3d delta0;
 				real_vector3d delta1;
 
-				delta0.i = global_window_parameters.camera_position.x-p0->x;
-				delta0.j = global_window_parameters.camera_position.y-p0->y;
-				delta0.k = global_window_parameters.camera_position.z-p0->z;
-				delta1.i = global_window_parameters.camera_position.x-p1->x;
-				delta1.j = global_window_parameters.camera_position.y-p1->y;
-				delta1.k = global_window_parameters.camera_position.z-p1->z;
+				delta0.i = global_window_parameters.camera.position.x-p0->x;
+				delta0.j = global_window_parameters.camera.position.y-p0->y;
+				delta0.k = global_window_parameters.camera.position.z-p0->z;
+				delta1.i = global_window_parameters.camera.position.x-p1->x;
+				delta1.j = global_window_parameters.camera.position.y-p1->y;
+				delta1.k = global_window_parameters.camera.position.z-p1->z;
 
 				primitive->vertex_count = 2;
 				primitive->vertices[0].point = *p0;
@@ -587,8 +579,8 @@ void rasterizer_debug_line_shaded(
 				primitive->vertices[1].color = real_argb_color_to_pixel32(color1);
 
 				primitive->distance = MIN(
-					dot_product3d(&global_window_parameters.camera_forward, &delta0),
-					dot_product3d(&global_window_parameters.camera_forward, &delta1));
+					dot_product3d(&global_window_parameters.camera.forward, &delta0),
+					dot_product3d(&global_window_parameters.camera.forward, &delta1));
 				primitive->opaque = opaque;
 			}
 		}
@@ -605,7 +597,7 @@ void rasterizer_debug_triangle_shaded(
 	real_argb_color const *color1,
 	real_argb_color const *color2)
 {
-	if (debug_data.initialized && rasterizer_debug_options.debug_geometry)
+	if (debug_data.initialized && rasterizer_debug_options.draw_debug_geometry)
 	{
 		match_assert(
 			"c:\\halo\\SOURCE\\rasterizer\\rasterizer_debug.c",
@@ -640,15 +632,15 @@ void rasterizer_debug_triangle_shaded(
 				real_vector3d delta1;
 				real_vector3d delta2;
 
-				delta0.i = global_window_parameters.camera_position.x-p0->x;
-				delta0.j = global_window_parameters.camera_position.y-p0->y;
-				delta0.k = global_window_parameters.camera_position.z-p0->z;
-				delta1.i = global_window_parameters.camera_position.x-p1->x;
-				delta1.j = global_window_parameters.camera_position.y-p1->y;
-				delta1.k = global_window_parameters.camera_position.z-p1->z;
-				delta2.i = global_window_parameters.camera_position.x-p2->x;
-				delta2.j = global_window_parameters.camera_position.y-p2->y;
-				delta2.k = global_window_parameters.camera_position.z-p2->z;
+				delta0.i = global_window_parameters.camera.position.x-p0->x;
+				delta0.j = global_window_parameters.camera.position.y-p0->y;
+				delta0.k = global_window_parameters.camera.position.z-p0->z;
+				delta1.i = global_window_parameters.camera.position.x-p1->x;
+				delta1.j = global_window_parameters.camera.position.y-p1->y;
+				delta1.k = global_window_parameters.camera.position.z-p1->z;
+				delta2.i = global_window_parameters.camera.position.x-p2->x;
+				delta2.j = global_window_parameters.camera.position.y-p2->y;
+				delta2.k = global_window_parameters.camera.position.z-p2->z;
 
 				primitive->vertex_count = 3;
 				primitive->vertices[0].point = *p0;
@@ -659,10 +651,10 @@ void rasterizer_debug_triangle_shaded(
 				primitive->vertices[2].color = real_argb_color_to_pixel32(color2);
 
 				primitive->distance = MIN(
-					dot_product3d(&global_window_parameters.camera_forward, &delta0),
+					dot_product3d(&global_window_parameters.camera.forward, &delta0),
 					MIN(
-						dot_product3d(&global_window_parameters.camera_forward, &delta1),
-						dot_product3d(&global_window_parameters.camera_forward, &delta2)));
+						dot_product3d(&global_window_parameters.camera.forward, &delta1),
+						dot_product3d(&global_window_parameters.camera.forward, &delta2)));
 				primitive->opaque = opaque;
 			}
 		}

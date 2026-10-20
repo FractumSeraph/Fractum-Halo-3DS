@@ -61,14 +61,14 @@ symbols in this file:
 
 #define SWAP8(q) \
 	(((q)>>56) | (((q)>>40)&0xff00) | (((q)>>24)&0xff0000) | (((q)>>8)&0xff000000) | \
-	 (((q)<<8)&0xff00000000ui64) | (((q)<<24)&0xff0000000000ui64) | \
-	 (((q)<<40)&0xff000000000000ui64) | ((q)<<56))
+	 (((q)<<8)&0xff00000000ULL) | (((q)<<24)&0xff0000000000ULL) | \
+	 (((q)<<40)&0xff000000000000ULL) | ((q)<<56))
 
 /* ---------- structures */
 
 /* ---------- prototypes */
 
-void _byte_swap_data(
+static void _byte_swap_data(
 	struct byte_swap_definition *definition,
 	void *data,
 	byte_swap_code *codes,
@@ -179,7 +179,7 @@ void byte_swap_memory(
 	return;
 }
 
-void _byte_swap_data(
+static void _byte_swap_data(
 	struct byte_swap_definition *definition,
 	void *data,
 	byte_swap_code *codes,
@@ -188,7 +188,7 @@ void _byte_swap_data(
 {
 	long code;
 	long offset;
-	long code_index;
+	long code_index = 0;
 	register long array_count;
 	long repeat_count;
 	long local_size;
@@ -348,14 +348,26 @@ long byte_swap_codes_size(
 	byte_swap_code *codes)
 {
 	struct byte_swap_definition definition;
+#ifdef HALO_64BIT
+	int size;
+	int next_code;
+#endif
 
 	definition.name = name;
 	definition.size = 0;
 	definition.codes = codes;
 	definition.signature = BYTE_SWAP_DEFINITION_SIGNATURE;
+#ifdef HALO_64BIT
+	_byte_swap_data(&definition, NULL, codes, &size, &next_code);
+#else
 	_byte_swap_data(&definition, NULL, codes, (long *)&name, (long *)&codes);
+#endif
 
+#ifdef HALO_64BIT
+	return size;
+#else
 	return (long)name;
+#endif
 }
 
 void byte_swap_data(

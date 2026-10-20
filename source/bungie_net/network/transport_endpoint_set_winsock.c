@@ -137,20 +137,10 @@ struct transport_endpoint_set
 	long needs_compaction;
 };
 
+/* the native builds raise FD_SETSIZE (port prefix headers) so that a server's
+set holds its listening socket and a socket for every machine */
 typedef char winsock_fd_set_size_assert[
-	sizeof(fd_set) == 0x104 ? 1 : -1];
-typedef char transport_endpoint_set_ep_array_offset_assert[
-	offsetof(struct transport_endpoint_set, ep_array) == 0x104 ? 1 : -1];
-typedef char transport_endpoint_set_max_endpoints_offset_assert[
-	offsetof(struct transport_endpoint_set, max_endpoints) == 0x108 ? 1 : -1];
-typedef char transport_endpoint_set_last_endpoint_index_offset_assert[
-	offsetof(struct transport_endpoint_set, last_endpoint_index) == 0x10C ? 1 : -1];
-typedef char transport_endpoint_set_current_endpoint_index_offset_assert[
-	offsetof(struct transport_endpoint_set, current_endpoint_index) == 0x110 ? 1 : -1];
-typedef char transport_endpoint_set_needs_compaction_offset_assert[
-	offsetof(struct transport_endpoint_set, needs_compaction) == 0x114 ? 1 : -1];
-typedef char transport_endpoint_set_size_assert[
-	sizeof(struct transport_endpoint_set) == 0x118 ? 1 : -1];
+	FD_SETSIZE >= HALO_PORT_MAXIMUM_NETWORK_MACHINES + 1 ? 1 : -1];
 
 /* ---------- prototypes */
 
@@ -187,7 +177,8 @@ static long get_next_available_set_array_index(
 		0x39,
 		set);
 	/* January permits one-past-capacity here; preserve the original boundary. */
-	if (set->last_endpoint_index > set->max_endpoints - 1)
+	/* ... except in the native builds, which keep to the array */
+	if (set->last_endpoint_index >= set->max_endpoints - 1)
 	{
 		return NONE;
 	}
@@ -270,7 +261,7 @@ short transport_initialize(
 #else
 	if (!transport_initialized)
 	{
-		WSADATA wsa_data = { 0 };
+		WSADATA info = { 0 };
 		XNetStartupParams startup_params = { 0 };
 		DWORD link_status;
 		DWORD address_status;
@@ -308,7 +299,7 @@ short transport_initialize(
 		if (XNetStartup(&startup_params) != 0)
 			return _transport_error_not_initialized;
 
-		wsa_error = WSAStartup(MAKEWORD(2, 0), &wsa_data);
+		wsa_error = WSAStartup(MAKEWORD(2, 0), &info);
 		if (wsa_error != 0)
 		{
 			XNetCleanup();
@@ -512,7 +503,7 @@ static int __cdecl poll_ep_array_compare_proc(
 
 short poll_endpoint_set(
 	struct transport_endpoint_set *set,
-	word timeout)
+	word millisec_timeout)
 {
 	short result = _transport_error_none;
 	struct timeval timeout_value;
@@ -529,7 +520,7 @@ short poll_endpoint_set(
 		0x1DE,
 		transport_initialized);
 
-	timeout_value.tv_usec = timeout * MILLISECONDS_PER_SECOND;
+	timeout_value.tv_usec = millisec_timeout * MILLISECONDS_PER_SECOND;
 	timeout_value.tv_sec = 0;
 
 	if (set->needs_compaction)

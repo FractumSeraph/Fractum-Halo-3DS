@@ -343,15 +343,15 @@ symbols in this file:
 #include "real_math.h"
 #include "game.h"
 #include "game_engine.h"
+#include "camera/camera_scripting.h"
 #include "game/cheats.h"
-#include "game/player_control.h"
 #include "game/player_control_runtime.h"
 #include "game/players.h"
 #include "game/local_players.h"
 #include "game/player_queues_new.h"
 #include "integer_math.h"
-#include "main/main_runtime.h"
 #include "input.h"
+#include "input/input_abstraction.h"
 #include "shell.h"
 #include "event_manager.h"
 #include "telnet_console.h"
@@ -364,21 +364,40 @@ symbols in this file:
 #include "cache/cache_files.h"
 #include "cache/predicted_resources.h"
 #include "bitmaps/bitmap_group.h"
-#include "bitmaps/bitmaps_internal.h"
+#include "bitmaps/bitmaps.h"
 #include "bitmaps/tiff_file.h"
 #include "interface/hud.h"
+#include "interface/hud_definitions.h"
 #include "interface/attract_mode.h"
 #include "interface/interface.h"
+#include "interface/marketing_and_strategic_business_development.h"
+#include "interface/player_ui.h"
 #include "interface/terminal.h"
 #include "saved games/player_profile.h"
 #include "saved games/game_state.h"
 #include "sound/sound_manager.h"
 #include "rasterizer/rasterizer.h"
-#include "rasterizer/rasterizer_debug.h"
-#include "rasterizer/rasterizer_debug_options.h"
+#include "rasterizer/rasterizer_console_vars.h"
 #include "bink/bink_playback.h"
 #include "main/d3d_intimacy.h"
 #include "networking/network_game_globals.h"
+#include "networking/network_game_manager.h"
+#include "networking/network_server_manager.h" /* port: a co-op game's level won */
+#include "network_coop.h" /* port: port/linux/game/network_coop.c */
+#include "map_share.h" /* port: port/linux/game/map_share.c */
+#include "profile_sections.h" /* port: port/linux/include/profile_sections.h */
+#ifdef HALO_3DS
+/* port: the 3DS's watchdog (port/3ds/include/n3ds_watch.h) */
+#include "n3ds_watch.h"
+#else
+#define N3DS_STEP(what) ((void)0)
+#endif
+#ifdef HALO_PROFILE
+#include "profile_trace.h" /* port: port/linux/src/profile_trace.c */
+#endif
+#ifdef HALO_WEB
+#include <emscripten.h> /* port: the browser runs the main loop (port/web/README.md) */
+#endif
 #include "camera/director.h"
 #include "camera/observer.h"
 #include "cutscene/cinematics.h"
@@ -390,6 +409,23 @@ symbols in this file:
 #include "text/draw_string.h"
 #include "text/font_group.h"
 #include "tag_files/files.h"
+#ifdef HALO_BROWSER
+#include <emscripten/emscripten.h>
+#include "../../port/web/src/web_online_ui.h"
+
+/* Browser performance meter (port/linux/src/sdl_platform.c). */
+void platform_web_frame_begin(void);
+void platform_web_frame_end(void);
+void platform_web_frame_stopped(long connection);
+void platform_log(const char *format, ...);
+#endif
+
+#ifdef HALO_64BIT
+#include "input/input_abstraction.h"
+#include "interface/player_ui.h"
+#include "interface/marketing_and_strategic_business_development.h"
+#endif
+#include "view_fov.h" /* port: display.fov, before the projection and culling */
 #ifdef HALO_N3DS
 #include "engine_cache.h"
 #endif
@@ -561,17 +597,13 @@ struct _main_globals
 	byte reserved61C[4];
 };
 
-struct main_hud_globals_definition
-{
-	byte reserved00[0x54];
-	long font_tag_index;
-};
-
 typedef char main_hud_globals_font_tag_index_offset_assert[
-	offsetof(struct main_hud_globals_definition, font_tag_index) == 0x54 ? 1 : -1];
+	offsetof(struct hud_globals_definition, messaging.single_player_font.index) == 0x54 ? 1 : -1];
 
+#ifndef HALO_64BIT
 typedef char main_globals_size_assert[
 	sizeof(struct _main_globals) == 0x620 ? 1 : -1];
+#endif
 typedef char main_globals_frame_start_milliseconds_offset_assert[
 	offsetof(struct _main_globals, frame_start_milliseconds) == 0x00 ? 1 : -1];
 typedef char main_globals_rasterizer_target_index_offset_assert[
@@ -588,6 +620,7 @@ typedef char main_globals_connection_offset_assert[
 	offsetof(struct _main_globals, connection) == 0x2C ? 1 : -1];
 typedef char main_globals_movie_offset_assert[
 	offsetof(struct _main_globals, movie) == 0x30 ? 1 : -1];
+#ifndef HALO_64BIT
 typedef char main_globals_defer_map_change_offset_assert[
 	offsetof(struct _main_globals, defer_map_change) == 0x45 ? 1 : -1];
 typedef char main_globals_reset_map_offset_assert[
@@ -635,6 +668,7 @@ typedef char main_globals_vblank_flip_deltas_offset_assert[
 typedef char main_globals_vblank_debug_string_offset_assert[
 	offsetof(struct _main_globals, vblank_debug_string) == 0x41C ? 1 : -1];
 
+#endif
 struct game_options
 {
 	unsigned long flags;
@@ -646,12 +680,6 @@ struct game_options
 
 typedef char game_options_size_assert[
 	sizeof(struct game_options) == 0x10C ? 1 : -1];
-
-struct _main_window_storage
-{
-	struct render_window window;
-	byte reservedAC[4];
-};
 
 #pragma pack(push, 1)
 struct _screenshot_and_framerate_globals
@@ -672,6 +700,12 @@ struct _screenshot_and_framerate_globals
 typedef char screenshot_and_framerate_globals_size_assert[
 	sizeof(struct _screenshot_and_framerate_globals) == 0x38B ? 1 : -1];
 
+void network_test_update(boolean main_menu_loaded, real seconds);
+#if defined(HALO_GAME_BROWSER) || defined(HALO_BROWSER)
+void chat_update(void);
+#endif
+void team_change_update(void);
+
 /* ---------- prototypes */
 
 static long sort_desired_local_player_controllers(
@@ -690,11 +724,8 @@ static void main_frame_rate_debug(
 
 static void main_new_map(
 	struct game_options *options);
-extern void scripted_camera_set(
-	word camera_point_index0,
-	word camera_point_index1,
-	long transition_time);
-extern struct main_hud_globals_definition *hud_globals;
+static void main_game_render(
+	double time_delta_since_tick_sec);
 
 /* ---------- globals */
 
@@ -726,8 +757,11 @@ static char const *scenario_paths[10] =
 	"levels\\d40\\d40"
 };
 
-static struct _main_window_storage window_storage = { 0 };
 static struct _main_globals main_globals = { 0 };
+/* Keep the original globals layout; these clocks belong to pending requests. */
+static long main_loss_last_tick;
+static long main_respawn_last_tick;
+static long main_save_last_tick;
 boolean debug_force_frame_rate_update = FALSE;
 boolean debug_no_drawing = FALSE;
 boolean debug_game_save = FALSE;
@@ -736,6 +770,7 @@ boolean display_framerate = FALSE;
 boolean display_vblank_deltas = FALSE;
 boolean display_precache_progress = FALSE;
 struct _screenshot_and_framerate_globals global_screenshot_count = { 0 };
+boolean debug_render_freeze;
 
 /* ---------- public code */
 
@@ -933,6 +968,11 @@ void main_won_map(
 void main_lost_map(
 	void)
 {
+	if (!main_globals.lost_map)
+	{
+		main_globals.loss_timer = 0;
+		main_loss_last_tick = game_time_get();
+	}
 	main_globals.saving_map = FALSE;
 	main_globals.lost_map = TRUE;
 	return;
@@ -993,9 +1033,14 @@ void main_save_map_nonsafe(
 void main_respawn(
 	boolean in_multiplayer)
 {
+	if (!main_globals.respawn)
+	{
+		main_globals.respawn_timer = 0;
+		main_respawn_last_tick = game_time_get();
+	}
 	main_globals.respawn = TRUE;
 	if (in_multiplayer)
-		main_globals.respawn_timer = 91;
+		main_globals.respawn_timer = 92;
 	return;
 }
 
@@ -1148,6 +1193,32 @@ static void screenshot_record(
 	return;
 }
 
+/* port_config.c's */
+double config_real(const char *name);
+unsigned long config_changes(void);
+
+/* port: display.far_clip_distance, how far the world is drawn (1024 as on
+the Xbox, to 10000). It is a floor under the camera's far clip, applied each
+frame: the map's own value, a script or init.txt can raise the clip beyond it
+but not lower it below it, and it holds across map loads and joins. Render
+only; the game's state never reads it. The near clip stays as it was, and the
+fog (which can end the view sooner) still applies after this. */
+static real far_clip_distance_floor(
+	void)
+{
+	static unsigned long read_at = (unsigned long)-1;
+	static real distance = 1024.0f;
+
+	if (read_at != config_changes())
+	{
+		real value = (real)config_real("display.far_clip_distance");
+
+		read_at = config_changes();
+		distance = valid_real(value) ? PIN(value, 1024.0f, 10000.0f) : 1024.0f;
+	}
+
+	return distance;
+}
 void set_window_camera_values(
 	struct render_window *window,
 	struct observer_result const *observer)
@@ -1157,11 +1228,12 @@ void set_window_camera_values(
 		window->rasterizer_camera.position = observer->position;
 		window->rasterizer_camera.forward = observer->forward;
 		window->rasterizer_camera.up = observer->up;
+		/* port: display.fov's view, the local render view only (view_fov.c) */
 		window->rasterizer_camera.vertical_field_of_view =
-			2.0f * arctangent(
+			render_fov_vertical(window->local_player_index, 2.0f * arctangent(
 				0.75f * render_camera_get_adjusted_field_of_view_tangent(
 					observer->field_of_view),
-				1.0f);
+				1.0f));
 
 		if (window->local_player_index != NONE &&
 			!console_is_active() &&
@@ -1202,7 +1274,7 @@ void set_window_camera_values(
 
 	window->rasterizer_camera.mirrored = FALSE;
 	window->rasterizer_camera.z_near = rasterizer_globals.near_clip_distance;
-	window->rasterizer_camera.z_far = rasterizer_globals.far_clip_distance;
+	window->rasterizer_camera.z_far = MAX(rasterizer_globals.far_clip_distance, far_clip_distance_floor());
 	if (!debug_render_freeze)
 		window->render_camera = window->rasterizer_camera;
 
@@ -1265,6 +1337,11 @@ short main_get_solo_level_from_name(
 	char lower_name[128] = { 0 };
 	short level;
 
+	/* port: a Halo PC map (name@ce, @pc or @md) is never one of the
+	campaign's levels, whatever its name holds (OpenCE's build-145 found
+	this of its Custom Edition maps) */
+	if (strchr(name, '@'))
+		return NONE;
 	csstrncpy(lower_name, name, NUMBEROF(lower_name) - 1);
 	lower_name[NUMBEROF(lower_name) - 1] = 0;
 	strlwr(lower_name);
@@ -1297,6 +1374,17 @@ short main_get_current_solo_level(
 	void)
 {
 	return main_get_solo_level_from_name(main_globals.soloplayer_map_name);
+}
+
+boolean main_campaign_in_progress(
+	void)
+{
+	/* The browser may query presence after WebAssembly is instantiated but
+	 * before game_time_globals exists. Keep this accessor safe during that
+	 * startup window instead of calling game_in_progress(), which asserts. */
+	return !main_globals.main_menu_scenario_loaded &&
+		main_globals.connection == _game_connection_local &&
+		main_get_current_solo_level() != NONE;
 }
 
 char const *main_get_solo_level_name(
@@ -1441,6 +1529,16 @@ short main_get_window_count(
 
 	return single_window ? 1 : PIN(local_player_count(), 1, MAXIMUM_WINDOWS);
 }
+
+#ifdef HALO_PROFILE
+/* port: whether the main menu's map is the one loaded (profile_console.c: a
+recording of debug.profile_record_when = "game" waits for another) */
+boolean main_menu_is_loaded(
+	void)
+{
+	return main_globals.main_menu_scenario_loaded;
+}
+#endif
 
 #ifdef HALO_N3DS
 static void n3ds_campaign_loading_begin(void)
@@ -1618,6 +1716,8 @@ void main_save_map_safe(
 		main_globals.ticks_until_next_save_check = 0;
 		main_globals.ticks_unable_to_save = 0;
 		main_globals.safe_intervals = 0;
+		/* (the tick before: the first check is at once) */
+		main_save_last_tick = game_time_get()-1;
 	}
 	return;
 }
@@ -1632,6 +1732,8 @@ void main_save_map_no_timeout(
 		main_globals.ticks_until_next_save_check = 0;
 		main_globals.ticks_unable_to_save = 0;
 		main_globals.safe_intervals = 0;
+		/* (the tick before: the first check is at once) */
+		main_save_last_tick = game_time_get()-1;
 	}
 	main_globals.save_map_timeout = FALSE;
 	return;
@@ -1705,10 +1807,100 @@ void main_movie_stop(
 	return;
 }
 
+void main_crash(
+	char const *str)
+{
+	/* BUG (original, deliberate): the "crash" script command ("crashes (for debugging).")
+	 * faults on purpose by storing this literal through the null pointer; the August and
+	 * September 2001 builds (debug and retail) and January all emit this one store. */
+	*(char **)NULL = "chucky was here!  NULL belongs to me!!!!!";
+	return;
+}
+
+/* port: the native build's identity (port/linux/src/build_identity.c), for
+the halt screen, with where the whole log is (OpenCE 48342f52) */
+static char const *port_build_identity(
+	void)
+{
+	extern char const *build_identity(void);
+	static char banner[256];
+
+	snprintf(banner, sizeof(banner),
+		"%s\r\nFull log: debug.txt (game data folder)\r\nRecent messages (newest first):",
+		build_identity());
+	return banner;
+}
+
+/* port: the halt screen's messages, the newest first, at most 8 lines of at
+most 110 characters, so that the failure shows when older messages run off
+the screen (OpenCE 48342f52) */
+static char const *port_error_tail(
+	char const *messages)
+{
+	enum { MAX_LINES = 8, MAX_LINE_BYTES = 110 };
+	static char recent[MAX_LINES * (MAX_LINE_BYTES + 5) + 1];
+	static char const too_many[] = "[...too many errors to print...]";
+	char const *lines[MAX_LINES];
+	size_t lengths[MAX_LINES];
+	char const *cursor;
+	char const *start;
+	size_t length;
+	size_t copied;
+	size_t used = 0;
+	unsigned int count = 0;
+	unsigned int index;
+
+	for (cursor = messages; *cursor; )
+	{
+		start = cursor;
+		while (*cursor && *cursor != '\r' && *cursor != '\n')
+			cursor++;
+		length = (size_t)(cursor - start);
+		while (*cursor == '\r' || *cursor == '\n')
+			cursor++;
+		if (!length || (length >= sizeof(too_many) - 1 && !strncmp(start, too_many, sizeof(too_many) - 1)))
+			continue;
+		if (count == MAX_LINES)
+		{
+			for (index = 1; index < MAX_LINES; index++)
+			{
+				lines[index - 1] = lines[index];
+				lengths[index - 1] = lengths[index];
+			}
+			count--;
+		}
+		lines[count] = start;
+		lengths[count++] = length;
+	}
+	if (!count)
+		return "No recent messages. See debug.txt for details.\r\n";
+	for (index = count; index > 0; index--)
+	{
+		length = lengths[index - 1];
+		copied = length < MAX_LINE_BYTES ? length : MAX_LINE_BYTES;
+		memcpy(recent + used, lines[index - 1], copied);
+		used += copied;
+		if (copied < length)
+		{
+			memcpy(recent + used, "...", 3);
+			used += 3;
+		}
+		recent[used++] = '\r';
+		recent[used++] = '\n';
+	}
+	recent[used] = 0;
+	return recent;
+}
+
 void main_print_version(
 	void)
 {
-	console_printf(FALSE, "halobeta xbox 01.01.14.2342 Jan 14 2002 12:49:20");
+	/* port: the native build's identity (port/linux/src/build_identity.c),
+	then the Xbox build the game's code is */
+	extern char const *build_identity(void);
+
+	console_printf(FALSE, "%s", build_identity());
+	console_printf(FALSE, "from halobeta xbox 01.01.14.2342 Jan 14 2002 12:49:20");
 	return;
 }
 
@@ -1832,6 +2024,12 @@ void main_roll_credits(
 void main_pregame_render(
 	void)
 {
+	/* Name, type and function scope from the 2003 PC demo PDB and the HCEX PDB (static local
+	   struct render_window window of main_pregame_render). Neither PDB records the block: placing it
+	   at the top of the function is unattested. January corroborates: .bss +0, the 0xAC-byte window
+	   padded to 0xB0 before main_globals, referenced only by this function. */
+	static struct render_window window;
+
 	collision_log_continue_period(TRUE);
 	sound_render();
 	{
@@ -1839,13 +2037,13 @@ void main_pregame_render(
 		real_vector3d forward = { 0.0f, 0.0f, 1.0f };
 		real_vector3d up = { 0.0f, 1.0f, 0.0f };
 
-		window_storage.window.local_player_index = NONE;
-		window_storage.window.console_window = TRUE;
-		window_storage.window.rasterizer_camera.position = position;
-		window_storage.window.rasterizer_camera.forward = forward;
-		window_storage.window.rasterizer_camera.up = up;
-		window_storage.window.rasterizer_camera.mirrored = FALSE;
-		window_storage.window.rasterizer_camera.vertical_field_of_view =
+		window.local_player_index = NONE;
+		window.console_window = TRUE;
+		window.rasterizer_camera.position = position;
+		window.rasterizer_camera.forward = forward;
+		window.rasterizer_camera.up = up;
+		window.rasterizer_camera.mirrored = FALSE;
+		window.rasterizer_camera.vertical_field_of_view =
 			2.0f * arctangent(
 				0.75f * render_camera_get_adjusted_field_of_view_tangent(
 					DEGREES_TO_RADIANS(80.0f)),
@@ -1853,13 +2051,13 @@ void main_pregame_render(
 		compute_window_bounds(
 			0,
 			1,
-			&window_storage.window.rasterizer_camera.viewport_bounds,
-			&window_storage.window.rasterizer_camera.window_bounds);
-		window_storage.window.rasterizer_camera.z_near = 0.01f;
-		window_storage.window.rasterizer_camera.z_far = 1.0f;
-		window_storage.window.render_camera = window_storage.window.rasterizer_camera;
+			&window.rasterizer_camera.viewport_bounds,
+			&window.rasterizer_camera.window_bounds);
+		window.rasterizer_camera.z_near = 0.01f;
+		window.rasterizer_camera.z_far = 1.0f;
+		window.render_camera = window.rasterizer_camera;
 		render_frame_pregame(
-			&window_storage.window,
+			&window,
 			main_globals.movie);
 	}
 	collision_log_end_period();
@@ -1867,11 +2065,40 @@ void main_pregame_render(
 	return;
 }
 
+/* port: a network co-op host reverts to its last saved state with its
+clock kept going forward, and the clients follow through the co-op syncs
+(network_coop.c). FALSE without a saved state, which would reset the map
+on the host alone. */
+static boolean main_coop_host_revert(
+	void)
+{
+	long now = game_time_get();
+
+	if (!game_state_port_saved_game_valid())
+		return FALSE;
+	game_state_revert();
+	network_coop_reverted(now);
+	ui_widgets_disable_pause_game(30);
+	return TRUE;
+}
+
+static boolean main_coop_host(
+	void)
+{
+	return game_connection() == _game_connection_network_server && network_coop_active();
+}
+
 static void main_revert_map_private(
 	void)
 {
-	game_state_revert();
-	ui_widgets_disable_pause_game(30);
+	/* (a network client never reverts on its own: its game is the host's) */
+	if (main_coop_host())
+		main_coop_host_revert();
+	else if (game_connection() != _game_connection_network_client)
+	{
+		game_state_revert();
+		ui_widgets_disable_pause_game(30);
+	}
 	main_globals.revert_map = FALSE;
 	return;
 }
@@ -1879,11 +2106,29 @@ static void main_revert_map_private(
 static void main_skip_cinematic_private(
 	void)
 {
-	if (cinematic_can_be_skipped())
+	/* port: only a local game or a network co-op host reverts to skip; a
+	network game's other machines would be left out of step */
+	boolean skippable = cinematic_can_be_skipped();
+	boolean skipped = FALSE;
+
+	if (skippable && main_coop_host())
+	{
+		skipped = main_coop_host_revert();
+		if (skipped)
+			network_coop_skip_done();
+	}
+	else if (skippable && game_connection() == _game_connection_local)
 	{
 		game_state_revert();
 		ui_widgets_disable_pause_game(30);
+		skipped = TRUE;
+	}
+	if (skipped)
 		main_globals.revert_map = FALSE;
+	else if (main_coop_host())
+	{
+		error(_error_silent, "co-op: cutscene not skipped (skippable %d, saved state %d)",
+			skippable, game_state_port_saved_game_valid());
 	}
 	main_globals.skip_cinematic = FALSE;
 	return;
@@ -1933,26 +2178,40 @@ static void main_save_map_private(
 
 		if (save_map_safely)
 		{
-			if (main_globals.ticks_unable_to_save++ >= 240 &&
-				main_globals.save_map_timeout)
+			/* port: the counts below are of game ticks, as on the Xbox, whose
+			loop ran once a tick (30 a second). This loop runs once a frame, and
+			at 60 frames a second or more a checkpoint gave up in a few seconds,
+			before the fight it waited on was over: few checkpoints came */
+			long current_tick = game_time_get();
+			long ticks = current_tick-main_save_last_tick;
+
+			if (current_tick < main_save_last_tick)
+				ticks = 0;
+			main_save_last_tick = current_tick;
+
+			while (ticks-- > 0 && !save_map)
 			{
-				if (debug_game_save)
-					console_printf(FALSE, "gave up trying to save");
-				main_globals.saving_map = FALSE;
-				return;
-			}
-			else if (main_globals.ticks_until_next_save_check-- <= 0)
-			{
-				if (game_safe_to_save())
+				if (main_globals.ticks_unable_to_save++ >= 240 &&
+					main_globals.save_map_timeout)
 				{
-					if (main_globals.safe_intervals++ >= 3)
-						save_map = TRUE;
+					if (debug_game_save)
+						console_printf(FALSE, "gave up trying to save");
+					main_globals.saving_map = FALSE;
+					return;
 				}
-				else
+				else if (main_globals.ticks_until_next_save_check-- <= 0)
 				{
-					main_globals.safe_intervals = 0;
+					if (game_safe_to_save())
+					{
+						if (main_globals.safe_intervals++ >= 3)
+							save_map = TRUE;
+					}
+					else
+					{
+						main_globals.safe_intervals = 0;
+					}
+					main_globals.ticks_until_next_save_check = 10;
 				}
-				main_globals.ticks_until_next_save_check = 10;
 			}
 		}
 		else
@@ -1964,6 +2223,8 @@ static void main_save_map_private(
 
 		if (save_map)
 		{
+			/* port: remember where the players are, for network co-op respawns */
+			players_note_checkpoint();
 			hud_autosave(TRUE);
 			main_globals.save_map_completed = TRUE;
 			main_globals.saving_map = FALSE;
@@ -1982,6 +2243,34 @@ static void main_switch_to_structure_bsp_private(
 	return;
 }
 
+/* The original post-increment test expires on its 92nd 30 Hz update.
+   Render-only frames must not advance it. Saturate so blocked co-op
+   respawns can retry indefinitely without overflowing the short counter. */
+static boolean main_death_timer_expired(
+	short *timer,
+	long *last_tick,
+	boolean advance)
+{
+	long current_tick = game_time_get();
+	unsigned long elapsed_ticks = 0;
+
+	if (current_tick < *last_tick)
+	{
+		/* A checkpoint/core load can move the simulation clock backwards. */
+		*timer = 0;
+	}
+	else
+	{
+		elapsed_ticks = (unsigned long)current_tick - (unsigned long)*last_tick;
+	}
+	*last_tick = current_tick;
+
+	if (!advance)
+		return FALSE;
+
+	*timer = (short)MIN(92, (unsigned long)*timer + elapsed_ticks);
+	return *timer >= 92;
+}
 #ifdef HALO_N3DS
 static void main_lost_map_private(void);
 static void main_won_map_private(void);
@@ -2107,14 +2396,20 @@ void n3ds_main_mission_save_step(boolean before_tick)
 static void main_lost_map_private(
 	void)
 {
-	if (!game_time_get_paused())
+	if (main_death_timer_expired(
+		&main_globals.loss_timer, &main_loss_last_tick,
+		!game_time_get_paused()))
 	{
-		if (main_globals.loss_timer++ > 90)
-		{
-			main_globals.lost_map = FALSE;
-			main_globals.loss_timer = 0;
+		main_globals.lost_map = FALSE;
+		main_globals.loss_timer = 0;
+		/* port: in network co-op, everyone dying respawns the players where
+		they were at the last checkpoint, without a revert. A mission the
+		scripts failed (game_lost, with players still alive: d40's timer,
+		a50's Keyes) does revert, or its failure cutscene would never end. */
+		if (game_connection() != _game_connection_network_server)
 			game_state_revert();
-		}
+		else if (players_are_all_dead() || !main_coop_host_revert())
+			players_respawn_at_checkpoint();
 	}
 	return;
 }
@@ -2122,13 +2417,13 @@ static void main_lost_map_private(
 static void main_respawn_private(
 	void)
 {
-	if (!game_time_get_paused() && !cinematic_in_progress())
+	if (main_death_timer_expired(
+		&main_globals.respawn_timer, &main_respawn_last_tick,
+		!game_time_get_paused() && !cinematic_in_progress()) &&
+		players_respawn_coop())
 	{
-		if (main_globals.respawn_timer++ > 90 && players_respawn_coop())
-		{
-			main_globals.respawn = FALSE;
-			main_globals.respawn_timer = 0;
-		}
+		main_globals.respawn = FALSE;
+		main_globals.respawn_timer = 0;
 	}
 	return;
 }
@@ -2232,8 +2527,11 @@ static void main_frame_rate_debug(
 			FILE *file;
 
 			GetSystemTime(&system_time);
-			sprintf(
+			/* port: snprintf, here and below (a map's tag's name may be any
+			length) */
+			snprintf(
 				core_name,
+				sizeof(core_name),
 				"%s_slow_%d_%d_%d_%d_%d_%d.bin",
 				scenario_name,
 				system_time.wMonth,
@@ -2243,7 +2541,7 @@ static void main_frame_rate_debug(
 				system_time.wMinute,
 				system_time.wSecond);
 			game_state_save_core(core_name);
-			sprintf(init_file_name, "d:\\%s_init.txt", scenario_name);
+			snprintf(init_file_name, sizeof(init_file_name), "d:\\%s_init.txt", scenario_name);
 
 			file = fopen(init_file_name, "r");
 			if (!file)
@@ -2272,9 +2570,28 @@ static void main_won_map_private(
 {
 	short level;
 	short local_player_index;
+
+	/* port: when a network co-op level is won, the round ends for everyone as
+	in multiplayer, back to the lobby, and the next round is the campaign's
+	next level (The Maw's: The Pillar of Autumn). A level not in the campaign
+	repeats. */
+	if (game_connection() == _game_connection_network_server && network_coop_active())
+	{
+		struct network_game *game = network_game_get_game();
+
+		main_globals.won_map = FALSE;
+		level = game ? main_get_solo_level_from_name(game->map.name) : NONE;
+		player_profile_save_level_completed(0);
+		network_game_server_port_cooperative_won(level != NONE ?
+			main_get_solo_level_name((level + 1) % NUMBER_OF_SINGLE_PLAYER_LEVELS) : NULL);
+		return;
+	}
 	main_globals.want_to_be_at_main_menu = TRUE;
 	main_globals.won_map = FALSE;
-	level = main_get_solo_level_from_name(main_globals.soloplayer_map_name) + 1;
+	level = main_get_solo_level_from_name(main_globals.soloplayer_map_name);
+	/* port: a level not in the campaign (a Halo PC map's) has no next one,
+	rather than the first */
+	level = level == NONE ? NONE : level + 1;
 	if (level >= 10)
 		level = NONE;
 	for (local_player_index = 0; local_player_index < player_spawn_count; local_player_index++)
@@ -2298,6 +2615,10 @@ void main_set_map_name(
 static void main_exit(
 	void)
 {
+#ifdef HALO_PROFILE
+	/* port: the profiling build's recording written out before the game goes */
+	profile_trace_shutdown();
+#endif
 	switch (main_globals.connection)
 	{
 	case _game_connection_network_server:
@@ -2331,7 +2652,6 @@ static boolean main_framerate_throttle_enabled(
 	return rasterizer_globals.framerate_throttle;
 }
 
-#ifdef HALO_LINUX
 /* The native ports draw a frame whenever the display can show one, paced
 by vsync, and frames fall between the 30 Hz ticks
 (port/linux/game/render_interpolation.c): no vertical blank throttle, and
@@ -2376,7 +2696,6 @@ static void main_update_time_unthrottled(
 		rasterizer_globals.frame_and_vertical_blank_index;
 }
 
-#endif
 static void main_update_time(
 	void)
 {
@@ -2392,13 +2711,11 @@ static void main_update_time(
 	short short_target_index;
 	real seconds_elapsed;
 
-#ifdef HALO_LINUX
 	if (halo_interpolation_enabled())
 	{
 		main_update_time_unthrottled();
 		return;
 	}
-#endif
 	end_milliseconds = system_milliseconds();
 	minimum_target_index = MAX(
 		main_globals.rasterizer_target_index,
@@ -2635,7 +2952,6 @@ void main_rasterizer_throttle(
 	unsigned long start_milliseconds;
 	short lapsed_frames;
 	boolean did_throttle;
-	boolean precache_in_progress;
 	boolean synchronized;
 	char const *description;
 
@@ -2643,26 +2959,24 @@ void main_rasterizer_throttle(
 	did_throttle = FALSE;
 	main_globals.rasterizer_throttle_start_index =
 		rasterizer_globals.frame_and_vertical_blank_index + 1;
-#ifdef HALO_LINUX
 	if (rasterizer_globals.framerate_throttle && !halo_interpolation_enabled())
-#else
-	if (rasterizer_globals.framerate_throttle)
-#endif
 	{
 		target_index = main_globals.rasterizer_target_index;
 		target_index--;
 		if ((__int64)rasterizer_globals.frame_and_vertical_blank_index < target_index)
 		{
 			start_milliseconds = system_milliseconds();
-			precache_in_progress = cache_files_precache_in_progress();
 			did_throttle = TRUE;
 			profile_idle_start();
 			while ((__int64)rasterizer_globals.frame_and_vertical_blank_index < target_index)
 			{
-				if (precache_in_progress)
-				{
-					Sleep(1);
-				}
+				/* port: a sleep between looks, not only while a map
+				precaches: the Xbox spun here, which on a port holds a core
+				busy for most of each frame of a game held at 30 frames a
+				second (display.interpolation off). A millisecond is well
+				inside a 33 ms frame (Windows sets its timer to 1 ms:
+				win32_posix.c) */
+				Sleep(1);
 				if (system_milliseconds() > start_milliseconds + 1000)
 				{
 					console_warning(
@@ -2869,30 +3183,69 @@ static void screenshot_render(
 	return;
 }
 
+/* port: when the main menu's build number box (set_textbox_to_build_number,
+empty) was last drawn: the main menu's screen is up while it is */
+unsigned long main_version_box_shown;
+
+/* port: this build's version (build_identity_watermark), small and faint
+in the bottom right corner, where the Xbox's build number was, clear of the
+HUD: on the main menu's own screen (none of the screens it leads to, whose
+button prompts are there), and in a game with display.version_watermark
+while no menu is up */
+static void main_version_watermark_render(
+	void)
+{
+	extern char const *build_identity_watermark(void);
+	extern int config_boolean(char const *name);
+	extern boolean main_menu_is_active(void);
+	/* (light grey, faint) */
+	real_argb_color color = { 0.4f, 0.8f, 0.8f, 0.8f };
+	long font_tag_index;
+	rectangle2d bounds;
+	boolean shown;
+
+	if (main_menu_is_active())
+		shown = system_milliseconds() - main_version_box_shown < 250;
+	else
+		shown = config_boolean("display.version_watermark") && !ui_widgets_active();
+	if (!shown)
+		return;
+	font_tag_index = tag_loaded(FONT_GROUP_TAG, "ui\\small_ui");
+	if (font_tag_index == NONE)
+		font_tag_index = hud_globals->messaging.single_player_font.index;
+	if (font_tag_index == NONE)
+		return;
+	bounds = render.camera.window_bounds;
+	bounds.x1 = (short)(bounds.x1 - 8);
+	bounds.y0 = (short)(bounds.y1 - 22);
+	bounds.y1 = (short)(bounds.y1 - 4);
+	draw_string_set_format(NONE, _text_justification_right, 0);
+	draw_string_set_color(&color);
+	draw_string_set_font(font_tag_index);
+	rasterizer_draw_string(&bounds, NULL, NULL, 0, build_identity_watermark());
+}
+
 void main_framerate_render(
 	void)
 {
+	main_version_watermark_render();
+
 	if (display_framerate)
 	{
 		long font_tag_index;
 
-		font_tag_index = hud_globals->font_tag_index;
+		font_tag_index = hud_globals->messaging.single_player_font.index;
 		if (font_tag_index != NONE)
 		{
 			real frame_seconds;
 			real frame_rate_real;
 			long frame_rate;
 			rectangle2d bounds;
-#ifdef HALO_LINUX
 			/* room for three digits under C99 snprintf, which (unlike MSVC's
 			_snprintf) keeps a byte of the count for the terminator */
 			char frame_rate_string[8];
-#else
-			char frame_rate_string[4];
-#endif
 
 			bounds = render.camera.window_bounds;
-#ifdef HALO_LINUX
 			/* The native ports draw at the display's refresh rate, up to
 			hundreds of frames a second: show frames per second averaged over
 			half a second, counting each frame once (split screen draws this
@@ -2919,13 +3272,6 @@ void main_framerate_render(
 				(void)frame_seconds;
 				(void)frame_rate_real;
 			}
-#else
-			frame_seconds = MAX(main_globals.seconds_elapsed, 0.01f);
-			frame_rate_real = 1.0f / frame_seconds;
-			frame_rate = fast_ftol(frame_rate_real);
-			if (main_globals.vblank_interval_held)
-				frame_rate = 60 / main_globals.vblank_interval_current;
-#endif
 
 			_snprintf(
 				frame_rate_string,
@@ -2947,7 +3293,7 @@ void main_framerate_render(
 	{
 		long font_tag_index;
 
-		font_tag_index = hud_globals->font_tag_index;
+		font_tag_index = hud_globals->messaging.single_player_font.index;
 		if (font_tag_index != NONE)
 		{
 			short index;
@@ -2984,7 +3330,7 @@ void main_framerate_render(
 	{
 		long font_tag_index;
 
-		font_tag_index = hud_globals->font_tag_index;
+		font_tag_index = hud_globals->messaging.single_player_font.index;
 		if (font_tag_index != NONE)
 		{
 			real progress;
@@ -3029,6 +3375,42 @@ void halt_and_catch_fire(
 	struct rasterizer_frame_begin_parameters frame_parameters;
 	struct rasterizer_window_begin_parameters window_parameters;
 
+#ifdef HALO_BROWSER
+	platform_log("web halt: %s", error_get());
+
+	// A fatal error can arrive inside Emscripten's proxied main-loop callback.
+	// The native halt loop below never returns, so its presents cannot complete
+	// in that environment and instead become an unbounded CPU/swap loop.
+	// Stop future callbacks and terminate this web runtime; native builds retain
+	// the original on-screen halt behavior.
+	emscripten_cancel_main_loop();
+	emscripten_force_exit(EXIT_FAILURE);
+#endif
+
+#ifdef HALO_WEB
+	/* port: a browser shows only what a frame of its own main loop drew, and
+	this screen never returns to it: the game stops, and the page shows the
+	error from the log, where it already is (port/web/README.md) */
+	emscripten_cancel_main_loop();
+	abort();
+#endif
+#ifdef HALO_3DS
+	/* port: the trace file (port/3ds/README.md) has the halt too, and
+	whether this screen is drawn or a halt within it returns. A halt in
+	another thread than the main one does not draw this screen beside the
+	game's frames (the rasterizer is the main thread's): the thread stops
+	where it is, and the game goes on without it, as far as it can */
+	{
+		unsigned long n3ds_thread_id(void);
+		unsigned long n3ds_main_thread_id(void);
+		void n3ds_thread_sleep_forever(void);
+
+		platform_log("halt%s in thread %lu: %s", global_screenshot_count.halt_recursion_lock ? " within the halt screen (returning)" : "",
+			n3ds_thread_id(), error_get());
+		if (n3ds_thread_id() != n3ds_main_thread_id())
+			n3ds_thread_sleep_forever();
+	}
+#endif
 	if (!global_screenshot_count.halt_recursion_lock)
 	{
 		scenario = global_scenario_try_and_get();
@@ -3074,11 +3456,7 @@ void halt_and_catch_fire(
 					1.0f);
 			window_parameters.camera.z_near = rasterizer_globals.near_clip_distance;
 			window_parameters.camera.viewport_bounds.x0 = 0;
-#ifdef HALO_ANDROID
-			window_parameters.camera.viewport_bounds.x1 = (short)halo_android_screen_width();
-#else
-			window_parameters.camera.viewport_bounds.x1 = 640;
-#endif
+			window_parameters.camera.viewport_bounds.x1 = (short)halo_screen_width();
 			window_parameters.camera.viewport_bounds.y0 = 0;
 			window_parameters.camera.viewport_bounds.y1 = 480;
 			window_parameters.camera.z_far = rasterizer_globals.far_clip_distance;
@@ -3113,14 +3491,14 @@ void halt_and_catch_fire(
 					NULL,
 					&cursor,
 					-4,
-					"halobeta xbox 01.01.14.2342 built at: Jan 14 2002 12:49:20");
+					port_build_identity());
 				bounds.y0 = cursor.y - 1;
 				rasterizer_draw_string(
 					&bounds,
 					NULL,
 					&cursor,
 					-4,
-					error_get());
+					port_error_tail(error_get()));
 			}
 
 			rasterizer_transparent_geometry_draw(TRUE);
@@ -3139,6 +3517,17 @@ void halt_and_catch_fire(
 }
 
 #endif /* !HALO_N3DS */
+/* port: the main loop's steps, timed in the profiling build */
+PROFILE_SECTION(main_input_section, "input")
+PROFILE_SECTION(main_platform_events_section, "platform_events")
+PROFILE_SECTION(main_network_start_frame_section, "network_start_frame")
+PROFILE_SECTION(main_update_time_section, "main_update_time")
+PROFILE_SECTION(main_ui_update_section, "ui_update")
+PROFILE_SECTION(main_network_end_frame_section, "network_end_frame")
+PROFILE_SECTION(main_game_time_update_section, "game_time_update")
+PROFILE_SECTION(main_non_deterministic_update_section, "non_deterministic_update")
+PROFILE_SECTION(main_throttle_section, "throttle")
+PROFILE_SECTION(main_present_section, "present")
 
 void main_loop_of_death(
 	void)
@@ -3160,7 +3549,7 @@ void main_loop_of_death(
 	return;
 }
 
-void main_game_render(
+static void main_game_render(
 	double time_delta_since_tick_sec)
 {
 	boolean force_single_screen;
@@ -3216,9 +3605,7 @@ void main_game_render(
 
 			window->local_player_index = last_local_player_index;
 			observer = observer_get_camera(window->local_player_index);
-#ifdef HALO_LINUX
 			observer = render_interpolation_camera(window->local_player_index, observer);
-#endif
 		}
 		else
 		{
@@ -3259,31 +3646,11 @@ void main_game_render(
 	return;
 }
 
-void main_loop(
+static boolean main_loop_iteration(
 	void)
 {
 	boolean render_frame;
 	long connection;
-
-	if (!game_in_editor())
-	{
-		csstrncpy(main_globals.soloplayer_map_name, "levels\\b30\\b30", NUMBEROF(main_globals.soloplayer_map_name)-1);
-		main_globals.soloplayer_map_name[NUMBEROF(main_globals.soloplayer_map_name)-1] = '\0';
-	}
-
-	main_globals.want_to_be_at_main_menu = !game_in_editor();
-	main_globals.switch_to_structure_bsp_index = NONE;
-	main_globals.halt_time_scale = TRUE;
-
-	console_initialize();
-	debug_keys_initialize();
-	game_initialize();
-	console_startup();
-	main_setup_connection();
-	main_initialize_time();
-
-	while (TRUE)
-	{
 		if (!game_in_editor())
 		{
 			if (main_globals.switch_to_structure_bsp_index!=NONE)
@@ -3372,17 +3739,49 @@ void main_loop(
 		}
 
 		profile_frame_start();
+		profile_scope_enter(main_input_section)
 		input_frame_begin();
 		input_update();
 		input_abstraction_update();
+		profile_scope_exit(main_input_section)
+		profile_scope_enter(main_platform_events_section)
 		shell_idle();
 		event_manager_update();
 		telnet_console_process();
+		profile_scope_exit(main_platform_events_section)
 
 		if (!shell_application_is_paused())
 		{
 			render_frame = TRUE;
 
+			/* automated system link tests (port/linux/game/network_test.c) */
+			network_test_update(main_globals.main_menu_scenario_loaded, main_globals.seconds_elapsed);
+#ifdef HALO_BROWSER
+			/* Invite links request menu changes from the browser thread through an
+			atomic mailbox; all game state is changed here on Halo's thread. */
+			web_online_ui_update(main_globals.main_menu_scenario_loaded, main_globals.seconds_elapsed);
+			/* Delta Stats: a joined game's report (game_engine.c) */
+			{
+				void game_engine_web_report_update(void);
+
+				game_engine_web_report_update();
+			}
+#endif
+			/* port: voice chat, in the lobby and in game (port/linux/game/network_voice.c) */
+			{
+				void network_voice_update(void);
+
+				network_voice_update();
+			}
+			/* port: map sharing, in the lobby and in game (port/linux/game/map_share.c) */
+			map_share_update();
+#if defined(HALO_GAME_BROWSER) || defined(HALO_BROWSER)
+			/* text chat (port/linux/game/chat.c; the browser's too) */
+			chat_update();
+#endif
+			/* changing teams during a game (port/linux/game/team_change.c) */
+			team_change_update();
+			profile_scope_enter(main_network_start_frame_section)
 			connection = main_globals.connection;
 			if (connection==_game_connection_network_client)
 			{
@@ -3410,14 +3809,42 @@ void main_loop(
 			}
 			else if (connection==_game_connection_film_playback)
 			{
-				break;
+				profile_scope_exit(main_network_start_frame_section)
+				return FALSE;
 			}
+			profile_scope_exit(main_network_start_frame_section)
 
-			main_update_time();
+			profile_scope(main_update_time_section, main_update_time();)
+			profile_scope_enter(main_ui_update_section)
 			process_ui_widgets();
-			bink_playback_update();
+#ifdef HALO_GAME_BROWSER
+			{
+				/* the dedicated server's director (server/src/dedicated.c); the
+				game list's probe (server/src/probe.c); the game list's confirmed
+				players (port/linux/game/game_list_claims.c) and statistics
+				recorder (port/linux/game/game_stats.c); the game on Discord
+				(port/linux/game/discord_game.c) */
+				void dedicated_server_update(void);
+				void probe_update(void);
+				void game_list_claims_update(void);
+				void game_stats_update(void);
+				void discord_game_update(void);
 
-			if ((!game_in_editor() && (input_key_is_down(_key_end) || input_key_is_down(_key_escape))) || editor_should_exit())
+				dedicated_server_update();
+				probe_update();
+				game_list_claims_update();
+				game_stats_update();
+				discord_game_update();
+			}
+#endif
+			bink_playback_update();
+			profile_scope_exit(main_ui_update_section)
+
+			/* port: not End or Escape, the Xbox devkit keyboard's way out of a
+			game: here the keys reach the game only through the console and text
+			fields, where they are keys of their own (Escape closes the console),
+			and a map reset from them took down the main menu or froze a game */
+			if (editor_should_exit())
 			{
 				main_movie_stop();
 
@@ -3438,29 +3865,32 @@ void main_loop(
 					player_control_update((real)main_globals.halt_time_scale*main_globals.seconds_elapsed);
 
 					connection = main_globals.connection;
+					profile_scope_enter(main_network_end_frame_section)
 					if (connection>_game_connection_local && connection<=_game_connection_network_server && !network_game_client_end_frame())
 					{
 						display_error_when_main_menu_loaded(1);
 						network_game_abort();
 					}
+					profile_scope_exit(main_network_end_frame_section)
 
-					game_time_update((real)main_globals.halt_time_scale*main_globals.seconds_elapsed);
+					profile_scope(main_game_time_update_section,
+						game_time_update((real)main_globals.halt_time_scale*main_globals.seconds_elapsed);)
 
 					render_frame = main_globals.main_menu_scenario_loaded ||
 						(main_globals.halt_time_scale &&
 							(game_time_get_paused() || game_time_get_elapsed()>0 || game_time_get_speed()<1.0f));
-#ifdef HALO_LINUX
 					/* frames between ticks too (render_interpolation.c) */
 					if (halo_interpolation_enabled())
 						render_frame = main_globals.main_menu_scenario_loaded || main_globals.halt_time_scale;
-#endif
 					render_frame &= !game_engine_running() || game_time_get()>=3;
 
+					profile_scope_enter(main_non_deterministic_update_section)
 					collision_log_continue_period(1);
 					director_update((real)main_globals.halt_time_scale*main_globals.seconds_elapsed);
 					observer_update((real)main_globals.halt_time_scale*main_globals.seconds_elapsed);
 					collision_log_end_period();
 					game_engine_update_non_deterministic((real)main_globals.halt_time_scale*main_globals.seconds_elapsed);
+					profile_scope_exit(main_non_deterministic_update_section)
 				}
 
 				if (main_globals.saving_map)
@@ -3471,13 +3901,9 @@ void main_loop(
 				if (render_frame && !debug_no_drawing)
 				{
 					profile_render_start();
-#ifdef HALO_LINUX
 					render_interpolation_frame_begin();
 					main_game_render((double)main_globals.seconds_elapsed);
 					render_interpolation_frame_end();
-#else
-					main_game_render((double)main_globals.seconds_elapsed);
-#endif
 					profile_render_end();
 				}
 			}
@@ -3488,11 +3914,11 @@ void main_loop(
 				profile_render_end();
 			}
 
-			main_rasterizer_throttle();
+			profile_scope(main_throttle_section, main_rasterizer_throttle();)
 
 			if (render_frame && !debug_no_drawing)
 			{
-				main_present_frame();
+				profile_scope(main_present_section, main_present_frame();)
 			}
 		}
 
@@ -3506,12 +3932,82 @@ void main_loop(
 			main_reset_time();
 			main_globals.halt_time_scale = TRUE;
 		}
+	return TRUE;
+}
+
+#if defined(HALO_BROWSER) || defined(HALO_WEB)
+/* port: in a browser, the page's frames call the main loop one iteration at a
+time, and what an iteration drew shows once it returns (OpenCE's web build,
+HALO_WEB, as this fork's, HALO_BROWSER) */
+static void main_loop_web_iteration(
+	void *unused)
+{
+	boolean keep_running;
+
+	(void)unused;
+#ifdef HALO_BROWSER
+	platform_web_frame_begin();
+#endif
+	keep_running = main_loop_iteration();
+#ifdef HALO_BROWSER
+	platform_web_frame_end();
+#endif
+	if (!keep_running)
+	{
+#ifdef HALO_BROWSER
+		platform_web_frame_stopped((long)main_globals.connection);
+		platform_log("web main loop stopped (connection %ld)", (long)main_globals.connection);
+#endif
+		emscripten_cancel_main_loop();
+		error(_error_silent, "end of saved film");
+		main_exit();
+	}
+}
+#endif
+
+void main_loop(
+	void)
+{
+	if (!game_in_editor())
+	{
+		csstrncpy(main_globals.soloplayer_map_name, "levels\\b30\\b30", NUMBEROF(main_globals.soloplayer_map_name)-1);
+		main_globals.soloplayer_map_name[NUMBEROF(main_globals.soloplayer_map_name)-1] = '\0';
 	}
 
+	main_globals.want_to_be_at_main_menu = !game_in_editor();
+	main_globals.switch_to_structure_bsp_index = NONE;
+	main_globals.halt_time_scale = TRUE;
+
+	/* port: (each step named for the 3DS's watchdog) */
+	N3DS_STEP("console_initialize");
+	console_initialize();
+	debug_keys_initialize();
+	N3DS_STEP("game_initialize");
+	game_initialize();
+	N3DS_STEP("console_startup");
+	console_startup();
+	N3DS_STEP("main_setup_connection");
+	main_setup_connection();
+	N3DS_STEP("main_initialize_time");
+	main_initialize_time();
+	N3DS_STEP("main loop");
+
+#if defined(HALO_BROWSER) || defined(HALO_WEB)
+	/* Let the worker return to its event loop after each frame.  That is when
+	an implicit-swap OffscreenCanvas publishes its WebGL drawing buffer.  A
+	zero-rate Emscripten loop follows requestAnimationFrame. */
+	emscripten_set_main_loop_arg(main_loop_web_iteration, NULL, 0, 1);
+#else
+	while (main_loop_iteration())
+	{
+#ifdef HALO_3DS
+		/* port: (the 3DS's watchdog counts the passes) */
+		n3ds_main_loop_passes++;
+#endif
+	}
 	error(_error_silent, "end of saved film");
 	main_exit();
-
-	return;
+#endif
 }
 
 /* ---------- private code */

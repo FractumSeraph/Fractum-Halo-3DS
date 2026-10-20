@@ -228,7 +228,7 @@ symbols in this file:
 
 #include "cseries.h"
 
-#include "bitmaps/bitmaps_internal.h"
+#include "bitmaps/bitmaps.h"
 #include "bitmaps/bitmap_utilities.h"
 #include "bitmaps/bitmap_group.h"
 #include "bitmaps/s3tc/s3tc.h"
@@ -296,6 +296,23 @@ enum
 
 /* ---------- macros */
 
+#ifdef HALO_CUSTOM_EDITION
+/* port: a Custom Edition or HaloMD map's colors may be over 1 (a HaloMD
+map's change colors are 2): Halo PC's engine used them unchecked, as this
+does for such maps only; an Xbox map's are asserted as they always were */
+boolean cache_file_tags_are_ce(void);
+#define match_assert_valid_real_rgb_color(file, line, rgb) \
+match_vassert( \
+	file, \
+	line, \
+	cache_file_tags_are_ce() || valid_real_rgb_color(rgb), \
+	csprintf( \
+		temporary, \
+		"%s: assert_valid_real_rgb_color(%f, %f, %f)", \
+		#rgb, (*rgb).red, (*rgb).green, (*rgb).blue \
+	) \
+)
+#else
 #define match_assert_valid_real_rgb_color(file, line, rgb) \
 match_vassert( \
 	file, \
@@ -307,6 +324,7 @@ match_vassert( \
 		#rgb, (*rgb).red, (*rgb).green, (*rgb).blue \
 	) \
 )
+#endif
 
 /* ---------- structures */
 
@@ -405,10 +423,10 @@ static void bitmap_cm_vector_map(
 
 /* ---------- globals */
 
-real const oo_unsigned_short_max = 1.0f / UNSIGNED_SHORT_MAX;
-short bitmap_sharpen_negative_table[256]= {0};
-short bitmap_sharpen_positive_table[256]= {0};
-short bitmap_smooth_filter_coefficients[MAXIMUM_FILTER_SIZE]= {0};
+static real const oo_unsigned_short_max = 1.0f / UNSIGNED_SHORT_MAX;
+static short bitmap_sharpen_negative_table[256]= {0};
+static short bitmap_sharpen_positive_table[256]= {0};
+static short bitmap_smooth_filter_coefficients[MAXIMUM_FILTER_SIZE]= {0};
 
 /* ---------- public code */
 
@@ -1178,11 +1196,7 @@ static void bitmap_cm_smooth(
 	match_assert("c:\\halo\\SOURCE\\bitmaps\\bitmap_utilities.c", 0x354, bitmap->type==_bitmap_type_cube_map);
 	match_assert("c:\\halo\\SOURCE\\bitmaps\\bitmap_utilities.c", 0x355, filter_coefficients);
 
-	/* BUG (preserved for exact matching): January passes a newline as an
-	 * unused vararg even though the format has no conversion. A corrected
-	 * build should append the newline to the format string instead.
-	 */
-	fprintf(stdout, "### WARNING tried to smooth a cube map", "\r\n");
+	fprintf(stdout, "### WARNING tried to smooth a cube map\r\n");
 	fflush(stdout);
 
 	return;
@@ -1365,8 +1379,7 @@ static void bitmap_3d_sharpen(
 	match_assert("c:\\halo\\SOURCE\\bitmaps\\bitmap_utilities.c", 0x3E4, positive_table);
 	match_assert("c:\\halo\\SOURCE\\bitmaps\\bitmap_utilities.c", 0x3E5, negative_table);
 
-	/* BUG (preserved for exact matching): see bitmap_cm_smooth. */
-	fprintf(stdout, "### WARNING tried to sharpen a 3d bitmap", "\r\n");
+	fprintf(stdout, "### WARNING tried to sharpen a 3d bitmap\r\n");
 	fflush(stdout);
 
 	return;
@@ -1383,8 +1396,7 @@ static void bitmap_cm_sharpen(
 	match_assert("c:\\halo\\SOURCE\\bitmaps\\bitmap_utilities.c", 0x3F5, positive_table);
 	match_assert("c:\\halo\\SOURCE\\bitmaps\\bitmap_utilities.c", 0x3F6, negative_table);
 
-	/* BUG (preserved for exact matching): see bitmap_cm_smooth. */
-	fprintf(stdout, "### WARNING tried to sharpen a cube map", "\r\n");
+	fprintf(stdout, "### WARNING tried to sharpen a cube map\r\n");
 	fflush(stdout);
 
 	return;
@@ -2277,9 +2289,9 @@ real real_rgb_color_brightness(
 		color->blue * 0.114f;
 }
 
-struct hsv_color *rgb_color_to_hsv_color(
-	struct rgb_color const *rgb,
-	struct hsv_color *hsv)
+union hsv_color *rgb_color_to_hsv_color(
+	union rgb_color const *rgb,
+	union hsv_color *hsv)
 {
 	real red = (real)(long)rgb->red * (1.0f / 65535.0f);
 	real green = (real)(long)rgb->green * (1.0f / 65535.0f);
@@ -2366,9 +2378,9 @@ struct hsv_color *rgb_color_to_hsv_color(
 	return hsv;
 }
 
-struct rgb_color *hsv_color_to_rgb_color(
-	struct hsv_color const *hsv,
-	struct rgb_color *rgb)
+union rgb_color *hsv_color_to_rgb_color(
+	union hsv_color const *hsv,
+	union rgb_color *rgb)
 {
 	real scaled_hue;
 	real saturation;
@@ -2624,7 +2636,7 @@ union real_rgb_color *real_hsv_color_to_real_rgb_color(
 }
 
 union real_argb_color *argb_color_to_real_argb_color(
-	struct argb_color const *source,
+	union argb_color const *source,
 	union real_argb_color *result)
 {
 	result->alpha = (real)(long)source->alpha * oo_unsigned_short_max;
@@ -2635,7 +2647,7 @@ union real_argb_color *argb_color_to_real_argb_color(
 }
 
 union real_rgb_color *rgb_color_to_real_rgb_color(
-	struct rgb_color const *source,
+	union rgb_color const *source,
 	union real_rgb_color *result)
 {
 	result->red = (real)(long)source->red * oo_unsigned_short_max;
@@ -2742,15 +2754,6 @@ union real_rgb_color *rgb_colors_interpolate(
 			inverse_interpolation_factor * rgb_lower_bound->blue +
 			interpolation_factor * rgb_upper_bound->blue;
 	}
-
-#ifdef HALO_LINUX
-	/* the native builds' rounding can put an interpolation of two valid
-	colours a hair past 1 (a structure decal's random tint did, starting a
-	system link game on Blood Gulch); keep the result a valid colour */
-	rgb_result->red = PIN(rgb_result->red, 0.f, 1.f);
-	rgb_result->green = PIN(rgb_result->green, 0.f, 1.f);
-	rgb_result->blue = PIN(rgb_result->blue, 0.f, 1.f);
-#endif
 
 	match_assert_valid_real_rgb_color("c:\\halo\\SOURCE\\bitmaps\\bitmap_utilities.c", 0x95D, rgb_result);
 

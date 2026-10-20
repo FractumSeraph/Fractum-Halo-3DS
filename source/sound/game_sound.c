@@ -122,7 +122,8 @@ symbols in this file:
 
 enum
 {
-	MAXIMUM_GAME_LOOPING_SOUNDS = 1024,
+	/* the native builds' larger pool of object looping sounds (halo_port_capacity.h) */
+	MAXIMUM_GAME_LOOPING_SOUNDS = HALO_PORT_MAXIMUM_GAME_LOOPING_SOUNDS,
 	_cluster_sound_distance_unreachable_bit = 7,
 	CLUSTER_SOUND_DISTANCE_VALUE_MASK = 0x7F,
 	_game_looping_sound_unattached_bit = 0,
@@ -511,6 +512,16 @@ long unspatialized_impulse_sound_new(
 		0);
 }
 
+/* port: a co-op host sends its scripts' sounds to its clients
+(port/linux/game/network_coop.c; the kinds are in network_distributed.h) */
+enum
+{
+	_coop_sound_impulse,
+	_coop_sound_looping_start,
+	_coop_sound_looping_stop,
+};
+void network_coop_note_sound(short kind, long definition_index, long object_index, real scale);
+
 void scripted_sound_new(
 	long definition_index,
 	long source_object_index,
@@ -524,6 +535,7 @@ void scripted_sound_new(
 
 	if (definition_index != NONE)
 	{
+		network_coop_note_sound(_coop_sound_impulse, definition_index, source_object_index, scale);
 		definition = sound_definition_get(definition_index);
 		sound_stop_impulse(definition->scripting_sound_index);
 		definition->scripting_time = game_time_get()
@@ -736,6 +748,8 @@ static void scripted_looping_sound_stop_internal(
 void scripted_looping_sound_stop(
 	long sound_index)
 {
+	if (sound_index != NONE)
+		network_coop_note_sound(_coop_sound_looping_stop, sound_index, NONE, 0.0f);
 	scripted_looping_sound_stop_internal(sound_index, FALSE);
 
 	return;
@@ -754,6 +768,8 @@ void scripted_looping_sound_start(
 	{
 		definition = looping_sound_definition_get(sound_index);
 		scripted_looping_sound_stop(sound_index);
+		/* after the stop above, so clients get them in the same order */
+		network_coop_note_sound(_coop_sound_looping_start, sound_index, source_object_index, gain);
 		match_assert(
 			"c:\\halo\\SOURCE\\sound\\game_sound.c",
 			495,
@@ -904,12 +920,53 @@ void game_sound_set_mouth_aperture(
 	return;
 }
 
+/* The native ports draw several frames per game tick (port/linux/game/
+render_interpolation.c), and the sound manager refreshes every sound each
+frame; on the Xbox, frames and ticks were one. A sound's obstruction, a
+collision test from the camera, is computed once per tick and reused by the
+tick's other frames. */
+#define OBSTRUCTION_CACHE_SLOTS 128
+
+static struct
+{
+	boolean valid;
+	long game_time;
+	short local_player_index;
+	real_point3d position;
+	real obstruction;
+	real occlusion;
+} obstruction_cache[OBSTRUCTION_CACHE_SLOTS];
+
+static long obstruction_cache_slot(
+	short local_player_index,
+	real_point3d const *position)
+{
+	unsigned long const *words = (unsigned long const *)position;
+
+	return (long)(((words[0] * 73856093UL) ^ (words[1] * 19349663UL) ^ (words[2] * 83492791UL) ^
+		(unsigned long)local_player_index) % OBSTRUCTION_CACHE_SLOTS);
+}
+
 void compute_sound_obstruction(
 	short local_player_index,
 	struct sound_source *source,
 	real distance)
 {
 	struct observer_result const *camera = observer_get_camera(local_player_index);
+	long slot = obstruction_cache_slot(local_player_index, &source->location.position);
+	long now = game_time_get();
+
+	if (obstruction_cache[slot].valid &&
+		obstruction_cache[slot].game_time == now &&
+		obstruction_cache[slot].local_player_index == local_player_index &&
+		obstruction_cache[slot].position.x == source->location.position.x &&
+		obstruction_cache[slot].position.y == source->location.position.y &&
+		obstruction_cache[slot].position.z == source->location.position.z)
+	{
+		source->obstruction = obstruction_cache[slot].obstruction;
+		source->occlusion = obstruction_cache[slot].occlusion;
+		return;
+	}
 
 	match_assert(
 		"c:\\halo\\SOURCE\\sound\\game_sound.c",
@@ -982,6 +1039,12 @@ void compute_sound_obstruction(
 		926,
 		global_current_collision_user_depth > 1);
 	--global_current_collision_user_depth;
+	obstruction_cache[slot].valid = TRUE;
+	obstruction_cache[slot].game_time = now;
+	obstruction_cache[slot].local_player_index = local_player_index;
+	obstruction_cache[slot].position = source->location.position;
+	obstruction_cache[slot].obstruction = source->obstruction;
+	obstruction_cache[slot].occlusion = source->occlusion;
 
 	return;
 }

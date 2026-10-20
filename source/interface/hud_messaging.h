@@ -15,6 +15,7 @@ header included in hcex build.
 /* ---------- structures */
 
 struct icon_hud_element_definition;
+union real_argb_color;
 
 /* ---------- prototypes/HUD_MESSAGING.C */
 
@@ -26,25 +27,73 @@ void hud_messaging_dispose_from_old_map(
 	void);
 void hud_messaging_dispose(
 	void);
+/* port: network co-op (port/linux/game/network_coop.c) */
+struct hud_timer_state
+{
+	long reference_time;
+	short ticks;
+	short flash_cutoff;
+	short x, y;
+	short corner;
+	boolean paused;
+	boolean enabled;
+};
+void hud_messaging_port_timer_get(
+	struct hud_timer_state *state);
+void hud_messaging_port_timer_set(
+	struct hud_timer_state const *state);
+short hud_messaging_port_message_count(
+	void);
+
+void scripted_hud_set_state_message(
+	short message_index);
 void hud_messaging_globals_update(
 	void);
 void scripted_hud_set_flashing_state(
 	boolean flash);
+void scripted_hud_restart_flashing(
+	void);
 void scripted_hud_set_objective(
 	short message_index);
 void scripted_hud_set_timer_position(
 	short x,
 	short y,
 	short corner);
+void scripted_hud_show_timer(
+	boolean show);
+void scripted_hud_pause_timer(
+	boolean pause);
 void scripted_hud_set_timer_time(
 	short minutes,
 	word seconds);
+void scripted_hud_set_timer_warning_cutoff(
+	short minutes,
+	word seconds);
 short scripted_hud_get_timer_ticks(
+	void);
+void scripted_hud_time_code_show(
+	boolean show);
+void scripted_hud_time_code_start(
+	boolean start);
+void scripted_hud_time_code_reset(
 	void);
 void scripted_hud_messages_clear(
 	void);
 void hud_render_timer(
 	void);
+#ifdef HALO_GAME_BROWSER
+void hud_render_round(
+	short local_player_index,
+	long ticks,
+	long warning_ticks,
+	long red_score,
+	unsigned long red_color,
+	long blue_score,
+	unsigned long blue_color);
+void hud_render_large_count(
+	short local_player_index,
+	long value);
+#endif
 void hud_print_message(
 	short local_player_index,
 	wchar_t const *message);
@@ -78,6 +127,10 @@ void hud_set_state_text(
 	wchar_t const *message);
 wchar_t *hud_messaging_get_objective(
 	void);
+long hud_get_font_index(
+	void);
+union real_argb_color *hud_get_text_color(
+	union real_argb_color *result);
 
 /* ---------- globals */
 

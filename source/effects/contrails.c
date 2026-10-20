@@ -74,6 +74,9 @@ symbols in this file:
 #include "memory/data.h"
 #include "objects/object_definitions.h"
 #include "physics/point_physics.h"
+#ifdef HALO_64BIT
+#include "game/game.h"
+#endif
 #include "saved games/game_state.h"
 #include "scenario/scenario.h"
 
@@ -82,7 +85,10 @@ symbols in this file:
 enum
 {
 	MAXIMUM_CONTRAIL_INSTANCES = 4,
-	MAXIMUM_CONTRAIL_POINTS = 1024
+	/* the native builds' larger contrail point pool (halo_port_capacity.h);
+	contrail_update_points lists a contrail's points in an array of this size
+	without a bound check, so it must stay the size of the pool */
+	MAXIMUM_CONTRAIL_POINTS = HALO_PORT_MAXIMUM_CONTRAIL_POINTS
 };
 
 enum
@@ -187,8 +193,9 @@ real contrail_scale_random_value(
 void contrails_initialize(
 	void)
 {
-	contrail_data = game_state_data_new("contrail", 256, 0x44);
-	contrail_point_data = game_state_data_new("contrail point", 1024, 0x38);
+	/* the native builds' larger contrail pools (halo_port_capacity.h) */
+	contrail_data = game_state_data_new("contrail", HALO_PORT_MAXIMUM_CONTRAILS, 0x44);
+	contrail_point_data = game_state_data_new("contrail point", MAXIMUM_CONTRAIL_POINTS, 0x38);
 	if (contrail_data && contrail_point_data)
 		return;
 
@@ -364,6 +371,26 @@ void contrails_update(
 	real dt)
 {
 	long contrail_index;
+	/* The native builds update contrails every frame, several frames per
+	tick (port/linux/game/render_interpolation.c), but objects and their
+	markers move only on ticks: points due on a frame that ran no tick would
+	land on the last point, be skipped and be lost. Emit on the first frame
+	after each tick, for all the time since the last emission. */
+	static long last_point_game_time = NONE;
+	static real pending_point_dt = 0.0f;
+	real point_dt;
+
+	pending_point_dt += dt;
+	if (last_point_game_time != game_time_get())
+	{
+		last_point_game_time = game_time_get();
+		point_dt = pending_point_dt;
+		pending_point_dt = 0.0f;
+	}
+	else
+	{
+		point_dt = 0.0f;
+	}
 
 	for (contrail_index = data_next_index(contrail_data, NONE);
 		contrail_index != NONE;
@@ -404,7 +431,7 @@ void contrails_update(
 			{
 				contrail_add_points(
 					contrail_index,
-					contrail_compute_new_point_count(contrail_index, dt),
+					contrail_compute_new_point_count(contrail_index, point_dt),
 					TRUE);
 			}
 		}
@@ -515,16 +542,21 @@ static void contrail_verify(
 				"contrail %s attachment index %d is outside the valid range.",
 				tag_get_name(contrail->definition_index),
 				contrail->attachment_index));
-		match_vassert(
-			"c:\\halo\\SOURCE\\effects\\contrails.c",
-			655,
-			object->object.attachment_indices[contrail->attachment_index] == contrail_index,
-			csprintf(
-				temporary,
-				"contrail %s (%ld) has an object that thinks it's attached to %ld",
-				tag_get_name(contrail->definition_index),
-				contrail_index,
-				object->object.attachment_indices[contrail->attachment_index]));
+		/* port: and only an index the object holds (8; the first assert
+		only logs in a release build, and the count is the map's) */
+		if (VALID_INDEX(contrail->attachment_index, MAXIMUM_NUMBER_OF_ATTACHMENTS_PER_OBJECT))
+		{
+			match_vassert(
+				"c:\\halo\\SOURCE\\effects\\contrails.c",
+				655,
+				object->object.attachment_indices[contrail->attachment_index] == contrail_index,
+				csprintf(
+					temporary,
+					"contrail %s (%ld) has an object that thinks it's attached to %ld",
+					tag_get_name(contrail->definition_index),
+					contrail_index,
+					object->object.attachment_indices[contrail->attachment_index]));
+		}
 	}
 
 	for (instance_index = 0;

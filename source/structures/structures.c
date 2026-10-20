@@ -59,13 +59,13 @@ symbols in this file:
 /* ---------- headers */
 
 #include "cseries/cseries.h"
+#include "cseries/errors.h"
 #include "math/real_math.h"
 #include "math/geometry.h"
 #include "physics/collision_bsp_definitions.h"
 #include "physics/collisions.h"
 #include "physics/collision_usage.h"
 #include "rasterizer/rasterizer.h"
-#include "rasterizer/rasterizer_debug.h"
 #include "rasterizer/rasterizer_geometry_environment.h"
 #include "render/render.h"
 #include "scenario/scenario.h"
@@ -90,7 +90,7 @@ enum
 
 #define structure_material_get_vertex(material, vertex_index) \
 	((struct environment_vertex_compressed const *) \
-		(material)->compressed_vertex_data.address + (vertex_index))
+		xbox_pointer((material)->compressed_vertex_data.address) + (vertex_index))
 
 /* ---------- structures */
 
@@ -227,8 +227,10 @@ typedef char verify_structure_runtime_globals_size[
 /* ---------- globals */
 
 static struct structure_runtime_globals structure_globals;
+/* port: whether a map's malformed cluster portal was reported (once) */
+static boolean structure_warned_about_portal_vertices;
 
-extern boolean debug_fog_planes;
+boolean debug_fog_planes;
 
 /* ---------- public code */
 
@@ -301,6 +303,14 @@ boolean structure_cluster_unmarked(
 		0x10f,
 		cluster_index>=0 && cluster_index<MAXIMUM_CLUSTERS_PER_STRUCTURE);
 
+	/* port: a cluster index (from the map) that fits no cluster is never
+	unmarked, so it is skipped (nor was NONE: the mark it read was the
+	marker itself) */
+	if (cluster_index < 0 || cluster_index >= MAXIMUM_CLUSTERS_PER_STRUCTURE)
+	{
+		return FALSE;
+	}
+
 	return (boolean)(structure_globals.cluster_magic_numbers[cluster_index]!=structure_globals.cluster_marker);
 }
 
@@ -316,6 +326,12 @@ boolean structure_cluster_mark(
 		0x11f,
 		cluster_index>=0 && cluster_index<MAXIMUM_CLUSTERS_PER_STRUCTURE);
 
+	/* port: nor is it marked (its callers skip it) */
+	if (cluster_index < 0 || cluster_index >= MAXIMUM_CLUSTERS_PER_STRUCTURE)
+	{
+		return FALSE;
+	}
+
 	if (structure_globals.cluster_magic_numbers[cluster_index]!=structure_globals.cluster_marker)
 	{
 		structure_globals.cluster_magic_numbers[cluster_index]= structure_globals.cluster_marker;
@@ -328,31 +344,53 @@ boolean structure_cluster_mark(
 boolean sphere_intersects_cluster_portal(
 	struct structure_bsp *structure,
 	short portal_index,
-	real_point3d const *position,
+	real_point3d const *point,
 	real radius)
 {
 	struct structure_cluster_portal *portal = TAG_BLOCK_GET_ELEMENT(
 		&structure->cluster_portals,
 		portal_index,
 		struct structure_cluster_portal);
-	real_plane3d *collision_plane = TAG_BLOCK_GET_ELEMENT(
-		&TAG_BLOCK_GET_ELEMENT(
-			&structure->collision_bsp,
-			0,
-			struct collision_bsp)->bsp3d.planes,
-		portal->plane_index,
-		real_plane3d);
-	real plane_distance = plane3d_distance_to_point(collision_plane, position);
-	real_point2d projected_vertices[MAXIMUM_VERTICES_PER_CLUSTER_PORTAL];
-	real_point3d projected_position;
-	real_point2d projected_position2d;
+	struct tag_block *planes = &TAG_BLOCK_GET_ELEMENT(
+		&structure->collision_bsp,
+		0,
+		struct collision_bsp)->bsp3d.planes;
+	real_plane3d *collision_plane;
+	real plane_distance;
+	real_point2d projected_points[MAXIMUM_VERTICES_PER_CLUSTER_PORTAL];
+	real_point3d projected_centroid3d;
+	real_point2d projected_centroid2d;
 	real_vector3d const *plane_normal;
 	short projection;
 	boolean projection_sign;
 	short vertex_index;
+	long vertex_count = portal->vertices.count;
+
+	/* port: a portal (from the map) whose plane is no plane, or with more
+	vertices than projected_points holds, is not intersected */
+	if (portal->plane_index < 0 || portal->plane_index >= planes->count)
+	{
+		return FALSE;
+	}
+	if (vertex_count < 0 || vertex_count > MAXIMUM_VERTICES_PER_CLUSTER_PORTAL)
+	{
+		if (!structure_warned_about_portal_vertices)
+		{
+			error(_error_silent, "cluster portal #%d has %ld vertices (maximum %d)",
+				portal_index, vertex_count, MAXIMUM_VERTICES_PER_CLUSTER_PORTAL);
+			structure_warned_about_portal_vertices = TRUE;
+		}
+		return FALSE;
+	}
+
+	collision_plane = TAG_BLOCK_GET_ELEMENT(
+		planes,
+		portal->plane_index,
+		real_plane3d);
+	plane_distance = plane3d_distance_to_point(collision_plane, point);
 
 	if (fabs(plane_distance) < radius &&
-		distance_squared3d(position, &portal->centroid) <
+		distance_squared3d(point, &portal->centroid) <
 			(portal->bounding_radius + radius) * (portal->bounding_radius + radius))
 	{
 		plane_normal = &TAG_BLOCK_GET_ELEMENT(
@@ -362,18 +400,18 @@ boolean sphere_intersects_cluster_portal(
 		projection = projection_from_vector3d(plane_normal);
 		projection_sign = projection_sign_from_vector3d(plane_normal, projection);
 		point_from_line3d(
-			position,
+			point,
 			plane_normal,
 			-plane_distance,
-			&projected_position);
+			&projected_centroid3d);
 		project_point3d(
-			&projected_position,
+			&projected_centroid3d,
 			projection,
 			projection_sign,
-			&projected_position2d);
+			&projected_centroid2d);
 
 		for (vertex_index = 0;
-			vertex_index < portal->vertices.count;
+			vertex_index < vertex_count;
 			vertex_index++)
 		{
 			project_point3d(
@@ -383,13 +421,13 @@ boolean sphere_intersects_cluster_portal(
 					real_point3d),
 				projection,
 				projection_sign,
-				&projected_vertices[vertex_index]);
+				&projected_points[vertex_index]);
 		}
 
 		if (convex_hull2d_test_circle(
-			(short)portal->vertices.count,
-			projected_vertices,
-			&projected_position2d,
+			(short)vertex_count,
+			projected_points,
+			&projected_centroid2d,
 			square_root(radius * radius - plane_distance * plane_distance)))
 		{
 			return TRUE;
@@ -430,16 +468,26 @@ static short structure_clusters_in_sphere_recursive(
 			&cluster->portal_indices,
 			portal_list_index,
 			short);
-		struct structure_cluster_portal *portal = TAG_BLOCK_GET_ELEMENT(
+		struct structure_cluster_portal *portal;
+		short adjacent_cluster_index;
+
+		/* port: a portal (from the map) that is no portal, or leads to no
+		cluster, is skipped */
+		if (portal_index < 0 || portal_index >= structure->cluster_portals.count)
+		{
+			continue;
+		}
+		portal = TAG_BLOCK_GET_ELEMENT(
 			&structure->cluster_portals,
 			portal_index,
 			struct structure_cluster_portal);
-		short adjacent_cluster_index =
+		adjacent_cluster_index =
 			portal->cluster_indices[0] == cluster_index
 				? portal->cluster_indices[1]
 				: portal->cluster_indices[0];
 
-		if (structure_cluster_unmarked(adjacent_cluster_index) &&
+		if (adjacent_cluster_index < structure->clusters.count &&
+			structure_cluster_unmarked(adjacent_cluster_index) &&
 			sphere_intersects_cluster_portal(
 				structure,
 				portal_index,
@@ -513,11 +561,18 @@ boolean structure_render_surface_from_point_and_leaf(
 				struct structure_lightmap *lightmap;
 				struct structure_material *material;
 
-				structure_bsp_find_material_for_surface(
-					structure,
-					surface_reference->surface_index,
-					lightmap_index,
-					material_index);
+				/* port: a surface (from the map) that is no surface, or in no
+				lightmap's material, is skipped */
+				if (surface_reference->surface_index < 0 ||
+					surface_reference->surface_index >= structure->surfaces.count ||
+					!structure_bsp_find_material_for_surface(
+						structure,
+						surface_reference->surface_index,
+						lightmap_index,
+						material_index))
+				{
+					continue;
+				}
 				lightmap = TAG_BLOCK_GET_ELEMENT(
 					&structure->lightmaps,
 					*lightmap_index,
@@ -654,7 +709,11 @@ short structure_clusters_in_sphere(
 		0x89,
 		intersected_indices);
 
-	if (cluster_index != NONE)
+	/* port: a cluster index (from the map) that fits no cluster finds none,
+	as NONE does */
+	if (cluster_index >= 0 &&
+		cluster_index < global_structure_bsp_get()->clusters.count &&
+		cluster_index < MAXIMUM_CLUSTERS_PER_STRUCTURE)
 	{
 		if (radius > 0.0f)
 		{
@@ -692,8 +751,16 @@ short structure_clusters_in_cone(
 	short cluster_count = 0;
 	struct structure_bsp *structure;
 
-	structure_cluster_marker_begin();
 	structure = global_structure_bsp_get();
+	/* port: a cluster index (from the map) that fits no cluster finds none */
+	if (position_cluster_index < 0 ||
+		position_cluster_index >= structure->clusters.count ||
+		position_cluster_index >= MAXIMUM_CLUSTERS_PER_STRUCTURE)
+	{
+		return 0;
+	}
+
+	structure_cluster_marker_begin();
 	structure_cluster_mark(position_cluster_index);
 	cluster_stack[0] = position_cluster_index;
 	stack_depth = 1;
@@ -717,16 +784,27 @@ short structure_clusters_in_cone(
 				&cluster->portal_indices,
 				portal_index,
 				short);
-			struct structure_cluster_portal *portal = TAG_BLOCK_GET_ELEMENT(
+			struct structure_cluster_portal *portal;
+			short adjacent_cluster_index;
+
+			/* port: a portal (from the map) that is no portal, or leads to
+			no cluster, is skipped */
+			if (structure_portal_index < 0 ||
+				structure_portal_index >= structure->cluster_portals.count)
+			{
+				continue;
+			}
+			portal = TAG_BLOCK_GET_ELEMENT(
 				&structure->cluster_portals,
 				structure_portal_index,
 				struct structure_cluster_portal);
-			short adjacent_cluster_index =
+			adjacent_cluster_index =
 				portal->cluster_indices[0] == cluster_index
 					? portal->cluster_indices[1]
 					: portal->cluster_indices[0];
 
-			if (structure_cluster_unmarked(adjacent_cluster_index) &&
+			if (adjacent_cluster_index < structure->clusters.count &&
+				structure_cluster_unmarked(adjacent_cluster_index) &&
 				sphere_intersects_cone3d(
 					&portal->centroid,
 					portal->bounding_radius,
@@ -741,6 +819,12 @@ short structure_clusters_in_cone(
 					"c:\\halo\\SOURCE\\structures\\structures.c",
 					0xF5,
 					stack_depth<MAXIMUM_CLUSTERS_PER_STRUCTURE);
+				/* port: (each cluster is pushed at most once, so the stack
+				holds them; a full one is not written past all the same) */
+				if (stack_depth >= MAXIMUM_CLUSTERS_PER_STRUCTURE)
+				{
+					break;
+				}
 				cluster_stack[stack_depth++] = adjacent_cluster_index;
 			}
 		}

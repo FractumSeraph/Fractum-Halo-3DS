@@ -413,12 +413,19 @@ symbols in this file:
 #include "cache/cache_files.h"
 #include "ai/ai_script.h"
 #include "hs/hs.h"
+#include "hs/hs_library_internal.h"
 #include "hs/hs_library_internal_compile.h"
 #include "hs/hs_scenario_definitions.h"
+#include "interface/hud_definitions.h"
 #include "interface/interface.h"
 #include "memory/data.h"
 #include "scenario/scenario.h"
 #include "scenario/scenario_definitions.h"
+#ifdef HALO_CUSTOM_EDITION
+#include "cseries/errors.h"
+
+extern boolean cache_file_tags_are_ce(void);
+#endif
 
 /* ---------- constants */
 
@@ -446,6 +453,11 @@ enum hs_syntax_node_flag_bits
 	_hs_syntax_node_script_bit,
 	_hs_syntax_node_variable_bit,
 	_hs_syntax_node_permanent_bit,
+#ifdef HALO_CUSTOM_EDITION
+	/* port: a Halo PC map's expression that did not load
+	(hs_compile_postprocess), for a moment */
+	_hs_syntax_node_failed_bit = 15,
+#endif
 };
 
 enum hs_tokenizer_state
@@ -498,12 +510,6 @@ struct hs_tokenizer
 typedef char verify_hs_syntax_node_size[
 	sizeof(struct hs_syntax_node) == 0x14 ? 1 : -1];
 
-struct hud_globals_definition
-{
-	byte reserved000[0x160];
-	struct tag_block waypoint_arrows;
-};
-
 struct hud_message_text_definition
 {
 	byte reserved000[0x20];
@@ -519,6 +525,7 @@ typedef char verify_hs_compile_compiled_source_size_offset[
 	offsetof(struct hs_compile_globals, compiled_source_size) == 0x04 ? 1 : -1];
 typedef char verify_hs_compile_compiled_source_offset[
 	offsetof(struct hs_compile_globals, compiled_source) == 0x08 ? 1 : -1];
+#ifndef HALO_64BIT
 typedef char verify_hs_compile_string_constant_buffer_offset[
 	offsetof(struct hs_compile_globals, string_constant_buffer) == 0x0C ? 1 : -1];
 typedef char verify_hs_compile_error_since_initialize_offset[
@@ -530,6 +537,7 @@ typedef char verify_hs_compile_compiling_scenario_offset[
 typedef char verify_hs_compile_globals_size[
 	sizeof(struct hs_compile_globals) == 0x12C ? 1 : -1];
 
+#endif
 /* ---------- prototypes */
 
 static boolean hs_parse_scenario_datum(
@@ -719,11 +727,9 @@ static long hs_parse_cond_recursive(
 			long condition_expression_index = hs_syntax_get(expression_index)->data;
 			struct hs_syntax_node *condition_expression = hs_syntax_get(condition_expression_index);
 
-			/* BUG (preserved for exact matching): January tests the logical negation of the
-			 * result index against NONE, which is never true, so a clause without a result is
-			 * not rejected here.  A corrected build tests
-			 * condition_expression->next_node_index != NONE. */
-			if (!condition_expression->next_node_index != NONE)
+			/* port: a clause without a result is refused (January tested
+			!next_node_index != NONE, always true) */
+			if (condition_expression->next_node_index != NONE)
 			{
 				long if_then_expression_index = datum_new(hs_syntax_data);
 				long then_value_expression_index = datum_new(hs_syntax_data);
@@ -925,8 +931,17 @@ long hs_compile_expression(
 				"c:\\halo\\SOURCE\\hs\\hs_compile.c",
 				0xA6,
 				global_scenario_get()->hs_string_constants.size>=HS_MAXIMUM_DYNAMIC_SOURCE_DATA_BYTES);
+			/* port: none is written before the scenario's strings (hs_allocate
+			lets go of strings that aren't sound) */
+			if (global_scenario_get()->hs_string_constants.size<HS_MAXIMUM_DYNAMIC_SOURCE_DATA_BYTES)
+			{
+				*error_message = "the scenario has no room for the expression's text.";
+				*error_source = source;
+
+				return NONE;
+			}
 			source_offset = global_scenario_get()->hs_string_constants.size - HS_MAXIMUM_DYNAMIC_SOURCE_DATA_BYTES;
-			hs_compile_globals.compiled_source = global_scenario_get()->hs_string_constants.address;
+			hs_compile_globals.compiled_source = xbox_pointer(global_scenario_get()->hs_string_constants.address);
 		}
 		else
 		{
@@ -1094,7 +1109,7 @@ static void hs_compile_finish(
 
 	if (success)
 	{
-		hs_compile_globals.string_constant_buffer = scenario->hs_string_constants.address;
+		hs_compile_globals.string_constant_buffer = xbox_pointer(scenario->hs_string_constants.address);
 		hs_compile_globals.string_constant_buffer_offset = 0;
 		hs_compile_globals.string_constant_buffer_size = hs_compile_globals.compiled_source_size;
 
@@ -1405,7 +1420,12 @@ static boolean hs_parse_string(
 		0x61F,
 		expression->constant_type==expression->type);
 
+#ifdef HALO_64BIT
+	/* script values are 32 bits: strings are Xbox addresses */
+	expression->data = xbox_address(hs_compile_globals.compiled_source + expression->source_offset);
+#else
 	expression->data = (long)(hs_compile_globals.compiled_source + expression->source_offset);
+#endif
 
 	return TRUE;
 }
@@ -1462,7 +1482,7 @@ static boolean hs_parse_tag_reference(
 			reference_index,
 			struct hs_reference);
 		if (csstrcmp(
-			reference->reference.name,
+			xbox_pointer(reference->reference.name),
 			hs_compile_globals.compiled_source + expression->source_offset) == 0 &&
 			reference->reference.group_tag == group_tag)
 		{
@@ -1785,6 +1805,18 @@ static boolean hs_parse_object_name(
 			hs_compile_globals.error_offset = expression->source_offset;
 		}
 	}
+#ifdef HALO_CUSTOM_EDITION
+	/* port: Halo PC's compiler also takes none for an object name: no
+	object, as the engine's own object name variables start (coldsnap's
+	scripts start a global object_name as none, and set it later) */
+	else if (csstrcmp(
+		hs_compile_globals.compiled_source + expression->source_offset,
+		"none") == 0)
+	{
+		expression->data = NONE;
+		result = TRUE;
+	}
+#endif
 	else
 	{
 		hs_compile_globals.error = "this is not a valid object name.";
@@ -1843,7 +1875,7 @@ static boolean hs_parse_navpoint(
 		result = hs_parse_scenario_datum(
 			expression_index,
 			0,
-			&hud_globals->waypoint_arrows,
+			&hud_globals->waypoint.arrows,
 			hud_waypoint_arrow_size);
 	}
 
@@ -2428,22 +2460,294 @@ static boolean hs_parse_nonprimitive(
 	return result;
 }
 
+#ifdef HALO_CUSTOM_EDITION
+/* port: a Halo PC map's scripts that do not all load. Halo PC's tools leave
+no source to compile them from again, and dropping them all (as the map
+plays without them) loses every script for one bad expression: coldsnap's
+were all lost to one Halo PC construct. Each expression that does not load
+is logged, and only the scripts and globals whose expressions hold it are
+dropped: a script then does nothing (returning its type's nothing, as a
+static script's callers find it), and a global starts as its type's nothing */
+
+/* an expression of the syntax data, or NULL if the index is no valid one */
+static struct hs_syntax_node *hs_syntax_try_get(
+	long expression_index)
+{
+	short absolute_index = (short)expression_index;
+
+	if (expression_index == NONE ||
+		absolute_index < 0 ||
+		absolute_index >= hs_syntax_data->maximum_count ||
+		(!(expression_index >> 16) && hs_syntax_data->identifier_zero_invalid))
+	{
+		return NULL;
+	}
+
+	return (struct hs_syntax_node *)datum_try_and_get(hs_syntax_data, expression_index);
+}
+
+/* whether an expression holds one that did not load (or is not whole);
+*budget bounds the walk, against a corrupt tree's loops */
+static boolean hs_expression_holds_failed(
+	long expression_index,
+	long *budget)
+{
+	struct hs_syntax_node *expression = hs_syntax_try_get(expression_index);
+	long child_index;
+
+	if (--*budget < 0 || !expression)
+		return TRUE;
+	if (TEST_FLAG(expression->flags, _hs_syntax_node_failed_bit))
+		return TRUE;
+	if (TEST_FLAG(expression->flags, _hs_syntax_node_primitive_bit) ||
+		expression->type == _hs_function_name)
+	{
+		return FALSE;
+	}
+
+	for (child_index = expression->data; child_index != NONE; child_index = hs_syntax_get(child_index)->next_node_index)
+	{
+		if (hs_expression_holds_failed(child_index, budget))
+			return TRUE;
+	}
+
+	return FALSE;
+}
+
+/* makes an expression its type's nothing: a constant, NONE (no object, no
+trigger volume, ...), 0, FALSE, 0.0 or "" */
+static boolean hs_expression_make_nothing(
+	long expression_index,
+	short type)
+{
+	struct hs_syntax_node *expression = hs_syntax_try_get(expression_index);
+
+	if (!expression || !hs_type_valid(type))
+		return FALSE;
+
+	/* (a scenario's expressions stay permanent: hs_node_gc keeps them) */
+	expression->flags = FLAG(_hs_syntax_node_primitive_bit) |
+		(expression->flags & FLAG(_hs_syntax_node_permanent_bit));
+	expression->type = type;
+	expression->constant_type = type;
+	if (type == _hs_type_string)
+	{
+		/* (a string is its address: the end of the first string constant) */
+		char const *empty = hs_compile_globals.compiled_source + strlen(hs_compile_globals.compiled_source);
+#ifdef HALO_64BIT
+		expression->data = xbox_address(empty);
+#else
+		expression->data = (long)empty;
+#endif
+	}
+	else if (type <= _hs_type_long_integer)
+	{
+		expression->data = 0;
+	}
+	else
+	{
+		expression->data = NONE;
+	}
+
+	return TRUE;
+}
+
+/* the expression that did not load: logged, and marked */
+static void hs_compile_postprocess_failed(
+	long expression_index)
+{
+	struct hs_syntax_node *expression = hs_syntax_get(expression_index);
+
+	error(
+		_error_silent,
+		"this map's scripts: %s%s%s",
+		hs_compile_globals.error ? hs_compile_globals.error : "an expression does not load",
+		hs_compile_globals.error_offset != NONE ? ": " : "",
+		hs_compile_globals.error_offset != NONE
+			? hs_compile_globals.compiled_source + hs_compile_globals.error_offset
+			: "");
+	SET_FLAG(expression->flags, _hs_syntax_node_failed_bit, TRUE);
+
+	return;
+}
+
+/* drops the scripts and globals that hold an expression that did not load:
+FALSE if one cannot be (its expression is no valid one), and all go */
+static boolean hs_compile_postprocess_drop_failed(
+	void)
+{
+	boolean success = TRUE;
+	struct scenario *scenario = global_scenario_get();
+	long expression_index;
+	long budget;
+	short dropped_scripts = 0;
+	short dropped_globals = 0;
+	short index;
+
+	for (index = 0; index < scenario->hs_scripts.count; index++)
+	{
+		struct hs_script *script = TAG_BLOCK_GET_ELEMENT(&scenario->hs_scripts, index, struct hs_script);
+
+		budget = 2 * (long)hs_syntax_data->maximum_count;
+		if (hs_expression_holds_failed(script->root_expression_index, &budget))
+		{
+			if (!hs_expression_make_nothing(script->root_expression_index, script->return_type))
+				success = FALSE;
+			error(_error_silent, "this map's scripts: script %.32s dropped: it does nothing", script->name);
+			dropped_scripts++;
+		}
+	}
+
+	for (index = 0; index < scenario->hs_globals.count; index++)
+	{
+		struct hs_global *global = TAG_BLOCK_GET_ELEMENT(&scenario->hs_globals, index, struct hs_global);
+
+		budget = 2 * (long)hs_syntax_data->maximum_count;
+		if (hs_expression_holds_failed(global->initialization_expression_index, &budget))
+		{
+			if (!hs_expression_make_nothing(global->initialization_expression_index, global->type))
+				success = FALSE;
+			error(_error_silent, "this map's scripts: global %.32s starts as nothing (none, 0 or false)", global->name);
+			dropped_globals++;
+		}
+	}
+
+	for (expression_index = data_next_index(hs_syntax_data, NONE);
+		expression_index != NONE;
+		expression_index = data_next_index(hs_syntax_data, expression_index))
+	{
+		struct hs_syntax_node *expression = hs_syntax_get(expression_index);
+
+		SET_FLAG(expression->flags, _hs_syntax_node_failed_bit, FALSE);
+	}
+
+	error(
+		_error_silent,
+		"this map's scripts: %d of %d scripts and %d of %d globals dropped; the rest run",
+		dropped_scripts,
+		scenario->hs_scripts.count,
+		dropped_globals,
+		scenario->hs_globals.count);
+
+	return success;
+}
+#endif
+
+
+/* (hs.c's function table's count) */
+extern long const hs_function_table_count;
+
+/* port: the argument nodes of a function call node, after its name: the
+first, and the one after `node` */
+static struct hs_syntax_node *hs_postprocess_next_argument(
+	struct hs_syntax_node const *node)
+{
+	return node && node->next_node_index != NONE ? datum_try_and_get(hs_syntax_data, node->next_node_index) : NULL;
+}
+
+/* port: whether every argument a pass-through function call node (its
+function's return type _hs_passthrough) may return is of the node's type,
+as the compiler parsed them, and the others of the types it parsed them as;
+TRUE for every other node. Every node has been through the checks above:
+its type is valid, its predicate is a node naming its function. A node that
+is not so is left to those checks. */
+static boolean hs_postprocess_passthrough_arguments(
+	long expression_index)
+{
+	struct hs_syntax_node *expression = hs_syntax_get(expression_index);
+	struct hs_syntax_node *predicate;
+	struct hs_syntax_node *argument;
+	struct hs_function_definition const *function;
+
+	if (!hs_type_valid(expression->type) ||
+		TEST_FLAG(expression->flags, _hs_syntax_node_primitive_bit) ||
+		TEST_FLAG(expression->flags, _hs_syntax_node_script_bit) ||
+		expression->data == NONE ||
+		!(predicate = datum_try_and_get(hs_syntax_data, expression->data)) ||
+		expression->function_index < 0 ||
+		expression->function_index >= hs_function_table_count ||
+		(function = hs_function_get(expression->function_index))->return_type != _hs_passthrough)
+	{
+		return TRUE;
+	}
+	argument = hs_postprocess_next_argument(predicate);
+	switch (expression->function_index)
+	{
+	case _hs_function_begin:
+		/* (every argument but the last is of type void) */
+		for (; argument; argument = hs_postprocess_next_argument(argument))
+		{
+			short expected = argument->next_node_index == NONE ? expression->type : _hs_type_void;
+
+			if (argument->type != expected)
+				return FALSE;
+		}
+		return TRUE;
+	case _hs_function_begin_random:
+		for (; argument; argument = hs_postprocess_next_argument(argument))
+		{
+			if (argument->type != expression->type)
+				return FALSE;
+		}
+		return TRUE;
+	case _hs_function_if:
+		/* (a condition, then one or two values) */
+		if (!argument || argument->type != _hs_type_boolean)
+			return FALSE;
+		for (argument = hs_postprocess_next_argument(argument); argument; argument = hs_postprocess_next_argument(argument))
+		{
+			if (argument->type != expression->type)
+				return FALSE;
+		}
+		return TRUE;
+	case _hs_function_set:
+		/* (a variable, then a value of its type; the node's type is cast
+		from the variable's: hs_evaluate_set, hs_syntax_node_refusal) */
+		if (!argument ||
+			!TEST_FLAG(argument->flags, _hs_syntax_node_primitive_bit) ||
+			!TEST_FLAG(argument->flags, _hs_syntax_node_variable_bit) ||
+			!hs_type_valid(argument->type) ||
+			!hs_can_cast(argument->type, expression->type))
+		{
+			return FALSE;
+		}
+		{
+			struct hs_syntax_node *value = hs_postprocess_next_argument(argument);
+
+			return value && value->type == argument->type && value->next_node_index == NONE;
+		}
+	default:
+		/* (cond is made ifs by the compiler; nothing else passes through.
+		Whatever is returned must be of the node's type) */
+		for (; argument; argument = hs_postprocess_next_argument(argument))
+		{
+			if (argument->type != expression->type)
+				return FALSE;
+		}
+		return TRUE;
+	}
+}
+
 boolean hs_compile_postprocess(
-	char const **error_message,
-	char const **error_source)
+	char const **error_message_pointer,
+	char const **error_source_pointer)
 {
 	boolean success = TRUE;
 	long expression_index;
 	short resolved_type;
 	struct hs_script *script;
+#ifdef HALO_CUSTOM_EDITION
+	boolean drop_failed = cache_file_tags_are_ce();
+	long failed_count = 0;
+#endif
 
-	hs_compile_globals.compiled_source = global_scenario_get()->hs_string_constants.address;
+	hs_compile_globals.compiled_source = xbox_pointer(global_scenario_get()->hs_string_constants.address);
 	hs_compile_globals.compiled_source_size =
 		global_scenario_get()->hs_string_constants.size - HS_MAXIMUM_DYNAMIC_SOURCE_DATA_BYTES;
 	hs_compile_globals.error = NULL;
 	hs_compile_globals.variables_predetermined = TRUE;
-	*error_message = NULL;
-	*error_source = NULL;
+	*error_message_pointer = NULL;
+	*error_source_pointer = NULL;
 
 	for (expression_index = data_next_index(hs_syntax_data, NONE);
 		success && expression_index != NONE;
@@ -2451,6 +2755,13 @@ boolean hs_compile_postprocess(
 	{
 		struct hs_syntax_node *expression = hs_syntax_get(expression_index);
 
+#ifdef HALO_CUSTOM_EDITION
+		if (drop_failed)
+		{
+			hs_compile_globals.error = NULL;
+			hs_compile_globals.error_offset = NONE;
+		}
+#endif
 		if (hs_type_valid(expression->type))
 		{
 			if (TEST_FLAG(hs_syntax_get(expression_index)->flags, _hs_syntax_node_primitive_bit))
@@ -2464,9 +2775,24 @@ boolean hs_compile_postprocess(
 				}
 
 				if (success && TEST_FLAG(expression->flags, _hs_syntax_node_variable_bit))
+				{
 					resolved_type = hs_global_get_type((short)expression->data);
+				}
+				else if (success && expression->type < _hs_type_string &&
+					expression->constant_type != expression->type)
+				{
+					/* port: a constant that is not parsed again keeps the value
+					the map gave it, which is read as its type: the compiler
+					makes its constant type its type (hs_parse_primitive), so one
+					of another type is a map's, whose value a cast would read as
+					that type (a string's, as a pointer) */
+					hs_compile_globals.error = "constant type is inconsistent with its type (you need to recompile scripts.)";
+					success = FALSE;
+				}
 				else
+				{
 					resolved_type = expression->constant_type;
+				}
 			}
 			else if (TEST_FLAG(expression->flags, _hs_syntax_node_script_bit))
 			{
@@ -2491,8 +2817,12 @@ boolean hs_compile_postprocess(
 				long predicate_index = hs_syntax_get(expression_index)->data;
 				struct hs_syntax_node *predicate;
 
+				/* port: a predicate that isn't a node (a map's) is as corrupt
+				as one that isn't a function name, where hs_syntax_get's NULL
+				was gone through */
 				if (predicate_index == NONE ||
-					(predicate = hs_syntax_get(predicate_index))->type != _hs_function_name)
+					!(predicate = datum_try_and_get(hs_syntax_data, predicate_index)) ||
+					predicate->type != _hs_function_name)
 				{
 					hs_compile_globals.error = "corrupt syntax tree (you need to recompile scripts.)";
 					success = FALSE;
@@ -2510,6 +2840,11 @@ boolean hs_compile_postprocess(
 					else
 					{
 						hs_compile_globals.error = "missing function (you need to recompile scripts.)";
+#ifdef HALO_CUSTOM_EDITION
+						/* (a Halo PC map's: its name, logged) */
+						if (drop_failed)
+							hs_compile_globals.error_offset = predicate->source_offset;
+#endif
 						success = FALSE;
 					}
 				}
@@ -2538,13 +2873,56 @@ boolean hs_compile_postprocess(
 			hs_compile_globals.error = "missing type (you need to recompile scripts.)";
 			success = FALSE;
 		}
+
+#ifdef HALO_CUSTOM_EDITION
+		if (!success && drop_failed)
+		{
+			hs_compile_postprocess_failed(expression_index);
+			failed_count++;
+			success = TRUE;
+		}
+#endif
 	}
+
+	/* port: the special forms that return one of their arguments' values
+	(begin, begin_random, if, set) return it as the value of their own type
+	without a cast, so each such argument must be of that type, as the
+	compiler parsed it (hs_parse_begin, hs_parse_if, hs_parse_set); a map's
+	nodes are only checked above against their own functions and constants */
+	for (expression_index = data_next_index(hs_syntax_data, NONE);
+		success && expression_index != NONE;
+		expression_index = data_next_index(hs_syntax_data, expression_index))
+	{
+		if (!hs_postprocess_passthrough_arguments(expression_index))
+		{
+#ifdef HALO_CUSTOM_EDITION
+			/* (a Halo PC map's, dropped alone, as above) */
+			if (drop_failed)
+			{
+				hs_compile_postprocess_failed(expression_index);
+				failed_count++;
+				continue;
+			}
+#endif
+			hs_compile_globals.error = "a value is not of the type it is returned as (you need to recompile scripts.)";
+			success = FALSE;
+		}
+	}
+
+#ifdef HALO_CUSTOM_EDITION
+	if (failed_count && !hs_compile_postprocess_drop_failed())
+	{
+		hs_compile_globals.error = "a script that does not load cannot be dropped alone";
+		hs_compile_globals.error_offset = NONE;
+		success = FALSE;
+	}
+#endif
 
 	if (!success)
 	{
-		*error_message = hs_compile_globals.error;
+		*error_message_pointer = hs_compile_globals.error;
 		if (hs_compile_globals.error_offset != NONE)
-			*error_source = hs_compile_globals.compiled_source + hs_compile_globals.error_offset;
+			*error_source_pointer = hs_compile_globals.compiled_source + hs_compile_globals.error_offset;
 	}
 
 	hs_compile_globals.compiled_source = NULL;
@@ -2798,7 +3176,11 @@ boolean hs_macro_function_parse(
 		result && parameter_index < definition->parameter_count && argument_expression_index != NONE;
 		parameter_index++)
 	{
+#ifdef HALO_64BIT
+		if (hs_parse(argument_expression_index, HS_FUNCTION_PARAMETER_TYPE(definition, parameter_index)))
+#else
 		if (hs_parse(argument_expression_index, definition->parameter_types[parameter_index]))
+#endif
 		{
 			struct hs_syntax_node *argument = hs_syntax_get(argument_expression_index);
 
@@ -2870,13 +3252,9 @@ boolean hs_parse_begin(
 	{
 		if (argument_count < 1)
 		{
-			/* BUG (preserved for exact matching): January passes the function name
-			 * although this format has no conversion for it; the argument is ignored. */
-			sprintf(
-				hs_compile_globals.error_buffer,
-				"a statement block must contain at least one argument.",
-				hs_function_get(function_index)->name);
-			hs_compile_globals.error = hs_compile_globals.error_buffer;
+			/* port: the message as it is (January sprintf'd it with an argument
+			it has no conversion for) */
+			hs_compile_globals.error = "a statement block must contain at least one argument.";
 			hs_compile_globals.error_offset = hs_syntax_get(expression_index)->source_offset;
 			result = FALSE;
 		}

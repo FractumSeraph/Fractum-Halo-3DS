@@ -95,7 +95,8 @@ symbols in this file:
 002896BC 0004:
 	__real@3a422e45 (0000)
 00456E48 004c:
-	_damage_globals (0000)
+	?default_damage_material@?1??object_cause_damage@@9@9 (0000)
+	_global_debug_damage_object_index (0048)
 */
 
 /* ---------- headers */
@@ -103,6 +104,7 @@ symbols in this file:
 #include "cseries.h"
 #include "damage.h"
 #include "ai/ai.h"
+#include "cseries/errors.h"
 #include "effects/effects.h"
 #include "effects/player_effects.h"
 #include "game/cheats.h"
@@ -136,6 +138,26 @@ symbols in this file:
 #include "units/bipeds.h"
 #include "units/units.h"
 #include "units/vehicles.h"
+
+/* network_game_globals.c's */
+boolean network_game_distributed_client(void);
+/* port/linux/game/network_damage.c's */
+boolean network_damage_deals(struct damage_data const *damage, long object_index, short node_index,
+	short region_index, short material_index, real_vector3d const *object_normal, boolean authorized);
+boolean network_damage_replaying_kill(void);
+void network_damage_player_effect(long player_index, struct damage_data const *damage, real total_damage);
+void network_damage_aftermath(long object_index, struct damage_data const *damage, unsigned long being_damaged_flags,
+	real shield_damage, real body_damage, real body_damage_multiplier, short body_part, short node_index,
+	short region_index, short material_index, long victim_player_index);
+
+/* set while a distributed client carries out a kill it does not decide (an
+act of god: the host's word, network_distributed.c, or the world's) */
+static boolean distributed_damage_authorized;
+
+/* whether this machine runs objects' shields (their stun, recharge and
+overcharge): not a client of the distributed netcode, which has the host's
+(damage_set_network_state) */
+#define objects_update_shields() (!network_game_distributed_client())
 
 /* ---------- constants */
 
@@ -242,12 +264,6 @@ enum
 
 /* ---------- structures */
 
-struct damage_globals
-{
-	struct damage_resistance_material default_damage_material;
-	long debug_object_index;
-};
-
 struct damage_region
 {
 	char name[TAG_STRING_LENGTH+1];
@@ -327,15 +343,8 @@ typedef char object_damage_body_body_destroyed_threshold_offset_assert[
 
 /* ---------- prototypes */
 
-void render_debug_object_damage(
-	void);
-
 static long get_player_index_from_object_or_parents(
 	long object_index);
-
-boolean unit_unsuspecting(
-	long unit_index,
-	real_point3d const *point);
 
 static void object_permutation_shield_regions(
 	long object_index,
@@ -360,12 +369,19 @@ static void damage_effect_new_at_location(
 static void object_destroy_region(
 	long object_index,
 	short region_index);
+static void damage_material_type_error(
+	short material_type);
 
 /* ---------- globals */
 
-extern boolean debug_damage;
+boolean debug_damage;
 
-static struct damage_globals damage_globals = { 0 };
+/* Name and type from the 2003 PC demo PDB ONLY (file static long); HCEX has no such static, so
+   the name is singly attested. January corroborates the storage: .bss +0x48, after
+   object_cause_damage's default material. Both statics are uninitialised and VC7 orders
+   uninitialised statics by a hash of their names, so this name takes part in producing
+   January's order; no other name was tested. */
+static long global_debug_damage_object_index;
 
 /* ---------- public code */
 
@@ -381,7 +397,7 @@ void damage_dispose(void)
 
 void damage_initialize_for_new_map(void)
 {
-	damage_globals.debug_object_index = NONE;
+	global_debug_damage_object_index = NONE;
 	return;
 }
 
@@ -672,7 +688,7 @@ void render_debug_object_damage(
 		rectangle2d bounds = render.camera.window_bounds;
 
 		bounds.x0 += 320;
-		if (damage_globals.debug_object_index == NONE)
+		if (global_debug_damage_object_index == NONE)
 		{
 			_snprintf(
 				buffer,
@@ -682,7 +698,7 @@ void render_debug_object_damage(
 		else
 		{
 			struct object_datum *object =
-				object_try_and_get(damage_globals.debug_object_index);
+				object_try_and_get(global_debug_damage_object_index);
 
 			if (object)
 			{
@@ -700,7 +716,7 @@ void render_debug_object_damage(
 			}
 			else
 			{
-				damage_globals.debug_object_index = NONE;
+				global_debug_damage_object_index = NONE;
 			}
 		}
 
@@ -731,7 +747,7 @@ void render_debug_object_damage(
 					"c:\\halo\\SOURCE\\objects\\damage.c",
 					0x794,
 					collision.type==_collision_result_object);
-				damage_globals.debug_object_index = collision.object_index;
+				global_debug_damage_object_index = collision.object_index;
 			}
 		}
 	}
@@ -895,8 +911,17 @@ static void object_damage_shield(
 				damage_resistance->shield_material_type >= 0 &&
 					damage_resistance->shield_material_type < NUMBER_OF_MATERIAL_TYPES,
 				"damage_resistance->shield_material_type>=0 && damage_resistance->shield_material_type<NUMBER_OF_MATERIAL_TYPES");
-			actual_shield_damage *= damage_definition->material_modifiers[
-				damage_resistance->shield_material_type];
+			/* port: a material the modifiers have, or no modifier (a map's type;
+			retail's are 0-30) */
+			if (VALID_INDEX(damage_resistance->shield_material_type, NUMBER_OF_MATERIAL_TYPES))
+			{
+				actual_shield_damage *= damage_definition->material_modifiers[
+					damage_resistance->shield_material_type];
+			}
+			else
+			{
+				damage_material_type_error(damage_resistance->shield_material_type);
+			}
 			if (actual_shield_damage < _real_epsilon)
 				negligible_damage = TRUE;
 
@@ -987,6 +1012,17 @@ static void object_damage_shield(
 	return;
 }
 
+/* port: damage from a player who is gone (an older checkpoint's, a grenade
+still flying) keeps its object and team, but not his handle, which a new
+player in his slot would get the credit of; after the network's admission
+of the damage (network_damage_deals), which needs the handle */
+static void damage_data_validate_owner(
+	struct damage_data *damage)
+{
+	if (damage->owner_player_index != NONE && !player_try_and_get(damage->owner_player_index))
+		damage->owner_player_index = NONE;
+}
+
 static void object_damage_aftermath(
 	long object_index,
 	struct damage_data *damage,
@@ -1001,6 +1037,9 @@ static void object_damage_aftermath(
 		object_definition_get(object->definition_index);
 	struct damage_effect_definition *damage_effect =
 		damage_effect_definition_get(damage->definition_index);
+
+	/* port: (a client's replay of the host's nonlethal damage too) */
+	damage_data_validate_owner(damage);
 
 	if (object_definition->object.acceleration_scale > _real_epsilon)
 	{
@@ -1078,22 +1117,37 @@ static void object_damage_aftermath(
 				being_damaged_flags,
 				_object_being_damaged_body_depleted_bit))
 		{
+#ifdef HALO_GAME_BROWSER
+			/* (the damage of the kill about to be counted, for the game
+			list's statistics recorder: port/linux/game/game_stats.c) */
+			void game_stats_kill_damage(long definition_index);
+
+			game_stats_kill_damage(damage->definition_index);
+#endif
 			game_statistics_record_kill(
 				object_index,
 				damage->owner_player_index,
 				damage->owner_object_index,
 				damage->owner_team_index);
+#ifdef HALO_GAME_BROWSER
+			game_stats_kill_damage(NONE);
+#endif
 		}
 	}
 	else if (game_engine_can_score())
 	{
 		long player_index = player_index_from_unit_index(object_index);
 
-		game_engine_player_killed(
-			player_index,
-			object_index,
-			player_index,
-			TRUE);
+		/* port: a player's unit only (a body the host has dead, killed with
+		no statistics on a machine that joined after, is no player's) */
+		if (player_index != NONE)
+		{
+			game_engine_player_killed(
+				player_index,
+				object_index,
+				player_index,
+				TRUE);
+		}
 	}
 
 	if (TEST_FLAG(_object_mask_unit, object->object.type))
@@ -1171,7 +1225,16 @@ static void object_damage_body(
 		1295,
 		damage_material->material_type>=0 && damage_material->material_type<NUMBER_OF_MATERIAL_TYPES,
 		"damage_material->type>=0 && damage_material->type<NUMBER_OF_MATERIAL_TYPES");
-	actual_damage *= damage_definition->material_modifiers[damage_material->material_type];
+	/* port: a material the modifiers have, or no modifier (a map's type;
+	retail's are 0-32) */
+	if (VALID_INDEX(damage_material->material_type, NUMBER_OF_MATERIAL_TYPES))
+	{
+		actual_damage *= damage_definition->material_modifiers[damage_material->material_type];
+	}
+	else
+	{
+		damage_material_type_error(damage_material->material_type);
+	}
 
 	if (!TEST_FLAG(object->object.damage_flags, _object_cannot_take_damage_bit))
 	{
@@ -1199,6 +1262,26 @@ static void object_damage_body(
 		}
 
 		object->object.body_vitality -= actual_damage;
+	}
+
+	/* port: only a region the resistance has and the object holds damage for
+	(a map's collision node region, or a client's report; past them are the
+	permutations and the change colors; retail's are 0-4) */
+	if (region_index != NONE &&
+		!VALID_INDEX(region_index, MIN(damage_resistance->regions.count, MAXIMUM_REGIONS_PER_OBJECT)))
+	{
+		static boolean region_index_reported = FALSE;
+
+		if (!region_index_reported)
+		{
+			region_index_reported = TRUE;
+			error(
+				_error_silent,
+				"### ERROR %s was damaged in region #%d, which it doesn't have; the region is left alone",
+				tag_get_name(object->definition_index),
+				region_index);
+		}
+		region_index = NONE;
 	}
 
 	if (region_index != NONE &&
@@ -1277,8 +1360,10 @@ static void object_damage_body(
 			{
 				short dying_region_index;
 
+				/* port: no more regions than the object holds (a map's count;
+				retail has up to 5) */
 				for (dying_region_index = 0;
-					dying_region_index < damage_resistance->regions.count;
+					dying_region_index < MIN(damage_resistance->regions.count, MAXIMUM_REGIONS_PER_OBJECT);
 					dying_region_index++)
 				{
 					struct damage_region const *region = TAG_BLOCK_GET_ELEMENT(
@@ -1340,6 +1425,11 @@ void object_cause_damage(
 	short material_index,
 	real_vector3d const *object_normal)
 {
+	/* Name and function scope from the 2003 PC demo PDB and the HCEX PDB (static local of
+	   object_cause_damage; their type is named damage_material). Neither PDB records the block:
+	   placing it at the top of the function is unattested. January corroborates: .bss +0, and only
+	   this function takes its address. */
+	static struct damage_resistance_material default_damage_material;
 	struct damage_effect_definition *damage_effect;
 	struct damage_definition const *damage_definition;
 	boolean damage_was_modified;
@@ -1350,6 +1440,7 @@ void object_cause_damage(
 	struct object_datum *current_object;
 	struct damage_resistance_material const *damage_material;
 	long current_object_index;
+	long victim_player_index;
 	unsigned long being_damaged_flags;
 	real shield_damage;
 	real body_damage;
@@ -1357,6 +1448,20 @@ void object_cause_damage(
 	short body_part;
 	short object_number;
 	long damaged_object_indices[16];
+	/* port: the gametype's friendly fire (game_engine_friendly_damage) */
+	short friendly_damage;
+
+	/* the distributed netcode (port/linux/NETCODE.md): the host deals
+	damage; a client reports its own players' hits instead, and the host
+	deals those (port/linux/game/network_damage.c) */
+	if (!network_damage_deals(damage, object_index, node_index, region_index, material_index, object_normal,
+		distributed_damage_authorized))
+	{
+		return;
+	}
+
+	/* port: a player who is gone is credited with nothing */
+	damage_data_validate_owner(damage);
 
 	damage_effect = damage_effect_definition_get(damage->definition_index);
 	damage_definition = &damage_effect->damage;
@@ -1370,7 +1475,7 @@ void object_cause_damage(
 			(region_index>=0 && region_index<MAXIMUM_REGIONS_PER_OBJECT));
 
 	if (damage->owner_player_index != NONE)
-		damage_globals.debug_object_index = object_index;
+		global_debug_damage_object_index = object_index;
 
 	{
 		real random_damage = real_random_range(
@@ -1431,7 +1536,11 @@ void object_cause_damage(
 	{
 		long damaged_object_index = object_index;
 
-		while (damaged_object_index != NONE)
+		/* port: no more of the object and its parents than the list holds
+		(objects attached deeper, by a map's attachments or its scripts,
+		wrote past it); the outermost ones aren't damaged */
+		while (damaged_object_index != NONE &&
+			damaged_object_count<(short)NUMBEROF(damaged_object_indices))
 		{
 			match_assert(
 				"c:\\halo\\SOURCE\\objects\\damage.c",
@@ -1441,6 +1550,20 @@ void object_cause_damage(
 			damaged_object_count++;
 			damaged_object_index =
 				object_get(damaged_object_index)->object.parent_object_index;
+		}
+		if (damaged_object_index != NONE)
+		{
+			static boolean parents_reported = FALSE;
+
+			if (!parents_reported)
+			{
+				parents_reported = TRUE;
+				error(
+					_error_silent,
+					"### ERROR %s is attached more than %d deep; its outer parents aren't damaged",
+					tag_get_name(object_get(object_index)->definition_index),
+					(int)NUMBEROF(damaged_object_indices));
+			}
 		}
 	}
 
@@ -1460,7 +1583,9 @@ void object_cause_damage(
 				_damage_resistance_parent_never_takes_body_damage_for_us_bit);
 		}
 
-		if (object->object.umbrella_shield_object_index != NONE)
+		/* port: and the umbrella shield if the list has room left for it */
+		if (object->object.umbrella_shield_object_index != NONE &&
+			damaged_object_count<(short)NUMBEROF(damaged_object_indices))
 		{
 			match_assert(
 				"c:\\halo\\SOURCE\\objects\\damage.c",
@@ -1534,6 +1659,10 @@ void object_cause_damage(
 
 			if (player_index != NONE)
 			{
+				/* (the host's, for its clients; a client replaying the host's
+				killing blow has had its player effect already) */
+				network_damage_player_effect(player_index, damage, total_damage);
+				if (!network_damage_replaying_kill())
 				player_effect_start(
 					player_index,
 					damage,
@@ -1572,6 +1701,10 @@ void object_cause_damage(
 			body_damage_multiplier = 0.f;
 			being_damaged_flags = 0;
 			body_part = NONE;
+			friendly_damage = _friendly_damage_all;
+			/* port: none for an object without a collision model, which
+			Delta Stats' recorder asks about below */
+			damage_material = NULL;
 
 			if (collision_model_index != NONE)
 			{
@@ -1609,6 +1742,10 @@ void object_cause_damage(
 						being_damaged_flags,
 						_object_being_damaged_by_friendly_bit,
 						TRUE);
+					friendly_damage = game_engine_friendly_damage(damage->owner_player_index, current_object_index,
+						TEST_FLAG(damage->flags, _damage_area_of_effect_bit) ||
+						damage_definition->category == _damage_category_grenade ||
+						damage_definition->category == _damage_category_highexplosive);
 				}
 
 				if (damaged_object_count == 0 &&
@@ -1631,7 +1768,7 @@ void object_cause_damage(
 				}
 				else
 				{
-					damage_material = &damage_globals.default_damage_material;
+					damage_material = &default_damage_material;
 				}
 
 				damage->material_type = damage_material->material_type;
@@ -1649,7 +1786,12 @@ void object_cause_damage(
 					force_kill = TRUE;
 				}
 
+				/* port: nor does a teammate's hit kill outright (a melee from
+				behind, an instant kill) where the gametype's friendly fire
+				spares the body; a killing blow the host dealt (a client's
+				replay of it) is dealt as the host dealt it */
 				if (force_kill &&
+					(friendly_damage == _friendly_damage_all || distributed_damage_authorized) &&
 					!TEST_FLAG(current_object->object.damage_flags, _object_dead_bit))
 				{
 					current_object->object.body_vitality = 0.f;
@@ -1664,7 +1806,8 @@ void object_cause_damage(
 						TRUE);
 				}
 
-				if (!TEST_FLAG(damage->flags, _damage_bypasses_shields_bit) &&
+				if (friendly_damage != _friendly_damage_none &&
+					!TEST_FLAG(damage->flags, _damage_bypasses_shields_bit) &&
 					!TEST_FLAG(damage_definition->flags, _damage_skips_shields_bit) &&
 					current_object->object.maximum_shield_vitality > 0.f &&
 					(damaged_object_count == 0 ||
@@ -1683,7 +1826,8 @@ void object_cause_damage(
 						&total_damage);
 				}
 
-				if ((damaged_object_count == 0 ||
+				if (friendly_damage == _friendly_damage_all &&
+					(damaged_object_count == 0 ||
 						(parent_takes_body_damage &&
 							TEST_FLAG(
 								collision_model->resistance.flags,
@@ -1737,7 +1881,7 @@ void object_cause_damage(
 					}
 
 					if (debug_damage &&
-						current_object_index == damage_globals.debug_object_index)
+						current_object_index == global_debug_damage_object_index)
 					{
 						console_printf(
 							FALSE,
@@ -1754,6 +1898,32 @@ void object_cause_damage(
 				}
 			}
 
+			/* (the player of the unit, which a killing blow's aftermath
+			takes from it, unit_died) */
+			{
+				struct unit_datum *victim = unit_try_and_get(current_object_index);
+
+				victim_player_index = victim ? victim->unit.player_index : NONE;
+			}
+#ifdef HALO_GAME_BROWSER
+			{
+				/* port: Delta Stats' recorder, on the host (port/linux/game/
+				game_events.c): who hurt whom with what, before the aftermath
+				counts a kill */
+				void game_events_damage(long object_index, long definition_index, long owner_player_index,
+					long owner_object_index, short category, boolean area_of_effect, boolean headshot, real amount,
+					boolean killing);
+
+				game_events_damage(current_object_index, damage->definition_index, damage->owner_player_index,
+					damage->owner_object_index, damage_definition->category,
+					TEST_FLAG(damage->flags, _damage_area_of_effect_bit),
+					damage_material && TEST_FLAG(damage_material->flags, _damage_material_head_bit) &&
+						(TEST_FLAG(damage_definition->flags, _damage_can_cause_headshots_bit) ||
+							TEST_FLAG(damage_definition->flags, _damage_can_cause_multiplayer_headshots_bit)),
+					shield_damage + body_damage,
+					TEST_FLAG(being_damaged_flags, _object_being_damaged_body_depleted_bit));
+			}
+#endif
 			object_damage_aftermath(
 				current_object_index,
 				damage,
@@ -1762,6 +1932,19 @@ void object_cause_damage(
 				body_damage,
 				body_damage_multiplier,
 				body_part);
+			/* (the host's, for its clients) */
+			network_damage_aftermath(
+				current_object_index,
+				damage,
+				being_damaged_flags,
+				shield_damage,
+				body_damage,
+				body_damage_multiplier,
+				body_part,
+				current_object_index == object_index ? node_index : NONE,
+				current_object_index == object_index ? region_index : NONE,
+				current_object_index == object_index ? material_index : NONE,
+				victim_player_index);
 			if (TEST_FLAG(
 				being_damaged_flags,
 				_object_being_damaged_body_destroyed_bit))
@@ -1781,7 +1964,9 @@ void area_of_effect_cause_damage(
 {
 	struct damage_effect_definition *definition =
 		damage_effect_definition_get(damage->definition_index);
-	long object_indices[64];
+	/* the native builds damage more objects per explosion
+	(halo_port_capacity.h): 64 runs out in a crowd of 128 players */
+	long object_indices[HALO_PORT_MAXIMUM_AREA_OF_EFFECT_OBJECTS];
 	short object_count;
 
 	object_count = objects_in_sphere(
@@ -1862,6 +2047,7 @@ void object_damage_update(
 					SET_FLAG(damage.flags, _damage_no_statistics_bit, TRUE);
 				}
 
+				distributed_damage_authorized = TRUE;
 				object_cause_damage(
 					&damage,
 					object_index,
@@ -1869,6 +2055,7 @@ void object_damage_update(
 					NONE,
 					NONE,
 					NULL);
+				distributed_damage_authorized = FALSE;
 			}
 		}
 
@@ -1878,9 +2065,11 @@ void object_damage_update(
 				FLAG(_object_die_act_of_god_no_statistics_bit));
 	}
 
-	SET_FLAG(object->object.damage_flags, _object_shield_charging_bit, FALSE);
+	if (objects_update_shields())
+		SET_FLAG(object->object.damage_flags, _object_shield_charging_bit, FALSE);
 	damage_flags = object->object.damage_flags;
-	if (object->object.maximum_shield_vitality > 0.f &&
+	if (objects_update_shields() &&
+		object->object.maximum_shield_vitality > 0.f &&
 		!TEST_FLAG(damage_flags, _object_dead_bit))
 	{
 		if (TEST_FLAG(damage_flags, _object_shield_over_charging_bit))
@@ -2013,6 +2202,25 @@ void object_damage_update(
 }
 
 /* ---------- private code */
+
+/* port: a map's collision model with a material type past the damage
+modifiers, reported once */
+static void damage_material_type_error(
+	short material_type)
+{
+	static boolean material_type_reported = FALSE;
+
+	if (!material_type_reported)
+	{
+		material_type_reported = TRUE;
+		error(
+			_error_silent,
+			"### ERROR a collision model has material type #%d; its damage isn't modified",
+			material_type);
+	}
+
+	return;
+}
 
 static long get_player_index_from_object_or_parents(
 	long object_index)
@@ -2208,7 +2416,7 @@ static void area_of_effect_cause_damage_to_object(
 	real_vector3d collision_vector;
 	real_vector3d offset_vector;
 	real_vector3d direct_vector;
-	real_point3d collision_point;
+	real_point3d offset_point;
 	struct collision_result spread_collision;
 	struct collision_result direct_collision;
 	boolean can_damage;
@@ -2286,13 +2494,13 @@ static void area_of_effect_cause_damage_to_object(
 				&collision_vector,
 				object_get_ultimate_parent(object_index),
 				&spread_collision);
-			collision_point = spread_collision.point;
+			offset_point = spread_collision.point;
 			ultimate_parent_index = object_get_ultimate_parent(object_index);
 			if (!collision_test_vector(
 				_damage_area_of_effect_collision_flags,
-				&collision_point,
+				&offset_point,
 				vector_from_points3d(
-					&collision_point,
+					&offset_point,
 					&object->object.bounding_sphere_center,
 					&offset_vector),
 				ultimate_parent_index,
@@ -2475,8 +2683,11 @@ static void object_permutation_shield_regions(
 		collision_model_definition_get(definition->object.collision_model.index);
 	short region_index;
 
+	/* port: no more regions than the object's region_permutations holds (a
+	map's count; past them are the change colors and the node blocks; retail
+	has up to 5) */
 	for (region_index = 0;
-		region_index < collision_model->resistance.regions.count;
+		region_index < MIN(collision_model->resistance.regions.count, MAXIMUM_REGIONS_PER_OBJECT);
 		region_index++)
 	{
 		struct damage_region *region = TAG_BLOCK_GET_ELEMENT(
@@ -2492,4 +2703,165 @@ static void object_permutation_shield_regions(
 	}
 
 	return;
+}
+
+/* the distributed netcode (port/linux/game/network_distributed.c): a
+client's copy of an object takes the host's vitality and recent damage
+(what the shields' and the HUD's effects show), with the effects of its
+shields going down and coming back up as the host's do */
+void damage_set_network_state(
+	long object_index,
+	struct damage_network_state const *state)
+{
+	struct object_datum *object = object_get(object_index);
+	struct object_definition *object_definition =
+		object_definition_get(object->definition_index);
+	long collision_model_index = object_definition->object.collision_model.index;
+
+	if (state->shield_depleted && !TEST_FLAG(object->object.damage_flags, _object_shield_depleted_bit))
+	{
+		object_deplete_shield(object_index);
+	}
+	else if (!state->shield_depleted && TEST_FLAG(object->object.damage_flags, _object_shield_depleted_bit))
+	{
+		/* (as object_damage_update's recharge begins) */
+		if (collision_model_index != NONE)
+		{
+			damage_effect_new_on_object(
+				collision_model_definition_get(collision_model_index)->resistance.shield_recharging_effect.index,
+				object_index);
+		}
+		SET_FLAG(object->object.damage_flags, _object_shield_depleted_bit, FALSE);
+		object_permutation_shield_regions(object_index, TRUE);
+	}
+	SET_FLAG(object->object.damage_flags, _object_shield_charging_bit, state->shield_charging);
+	SET_FLAG(object->object.damage_flags, _object_shield_over_charging_bit, state->shield_over_charging);
+	object->object.body_vitality = state->body_vitality;
+	object->object.shield_vitality = state->shield_vitality;
+	object->object.current_body_damage = state->current_body_damage;
+	object->object.recent_body_damage = state->recent_body_damage;
+	object->object.current_shield_damage = state->current_shield_damage;
+	object->object.recent_shield_damage = state->recent_shield_damage;
+}
+
+/* the distributed netcode's client, replaying the damage its host dealt
+(port/linux/game/network_damage.c): a player's screen shaken and flashed */
+void damage_replay_player_effect(
+	long player_index,
+	struct damage_data *damage,
+	real total_damage)
+{
+	player_effect_start(player_index, damage, &damage->direction, damage->scale, total_damage);
+}
+
+/* ... what the damage did to the object, but for the harm (the host's
+vitality comes with its state): knockback, a unit's flinch, pain sound,
+stun and unzooming, and whom it was hit by */
+void damage_replay_aftermath(
+	long object_index,
+	struct damage_data *damage,
+	unsigned long being_damaged_flags,
+	real shield_damage,
+	real body_damage,
+	real body_damage_multiplier,
+	short body_part)
+{
+	/* (not the no-statistics bit, with which object_damage_aftermath counts
+	the player's suicide: the damage it records the host's statistics
+	overwrite, and no kill, without the body depleted) */
+	SET_FLAG(damage->flags, _damage_no_statistics_bit, FALSE);
+	object_damage_aftermath(object_index, damage, being_damaged_flags & ~FLAG(_object_being_damaged_body_depleted_bit),
+		shield_damage, body_damage, body_damage_multiplier, body_part);
+}
+
+/* ... a player's killing blow, dealt as the host dealt it */
+void damage_replay_kill(
+	long object_index,
+	struct damage_data *damage,
+	short node_index,
+	short region_index,
+	short material_index)
+{
+	SET_FLAG(damage->flags, _damage_kill_instantly_bit, TRUE);
+	distributed_damage_authorized = TRUE;
+	object_cause_damage(damage, object_index, node_index, region_index, material_index, NULL);
+	distributed_damage_authorized = FALSE;
+}
+
+/* ... damage to scenery or a device, dealt as the host dealt it: the copy
+breaks, plays its effects and is destroyed as the host's was */
+void damage_replay_static(
+	long object_index,
+	struct damage_data *damage,
+	short node_index,
+	short region_index,
+	short material_index)
+{
+	distributed_damage_authorized = TRUE;
+	object_cause_damage(damage, object_index, node_index, region_index, material_index, NULL);
+	distributed_damage_authorized = FALSE;
+}
+
+/* the host's: what damage_set_network_state takes */
+void damage_get_network_state(
+	long object_index,
+	struct damage_network_state *state)
+{
+	struct object_datum *object = object_get(object_index);
+
+	state->shield_depleted = TEST_FLAG(object->object.damage_flags, _object_shield_depleted_bit);
+	state->shield_charging = TEST_FLAG(object->object.damage_flags, _object_shield_charging_bit);
+	state->shield_over_charging = TEST_FLAG(object->object.damage_flags, _object_shield_over_charging_bit);
+	state->body_vitality = object->object.body_vitality;
+	state->shield_vitality = object->object.shield_vitality;
+	state->current_body_damage = object->object.current_body_damage;
+	state->recent_body_damage = object->object.recent_body_damage;
+	state->current_shield_damage = object->object.current_shield_damage;
+	state->recent_shield_damage = object->object.recent_shield_damage;
+}
+
+/* the automated network tests (port/linux/game/network_test.c): kills the
+object as falling damage does (an act of god), but credited to a player, so
+that the kill counts in the game's scores */
+void damage_kill_object_for_player(
+	long object_index,
+	long player_index)
+{
+	struct game_globals_falling_damage *falling_damage = TAG_BLOCK_GET_ELEMENT(
+		&scenario_get_game_globals()->falling_damage,
+		0,
+		struct game_globals_falling_damage);
+	struct player_datum *player = player_get(player_index);
+	struct damage_data damage;
+
+	if (falling_damage->falling_damage.index == NONE)
+		return;
+	damage_data_new(&damage, falling_damage->falling_damage.index);
+	damage.scale = 1.f;
+	SET_FLAG(damage.flags, _damage_kill_instantly_bit, TRUE);
+	damage.owner_player_index = player_index;
+	damage.owner_object_index = player->unit_index;
+	damage.owner_team_index = (short)player->team_index;
+	object_cause_damage(&damage, object_index, NONE, NONE, NONE, NULL);
+}
+
+/* port: the object killed now, counting nothing (no death, no kill, no
+statistics), as unit_kill_no_statistics has it at its next update: Bomb's
+blast (game_engine_bomb.c) */
+void damage_kill_object_no_statistics(
+	long object_index)
+{
+	struct game_globals_falling_damage *falling_damage = TAG_BLOCK_GET_ELEMENT(
+		&scenario_get_game_globals()->falling_damage,
+		0,
+		struct game_globals_falling_damage);
+	struct damage_data damage;
+
+	if (falling_damage->falling_damage.index == NONE)
+		return;
+	damage_data_new(&damage, falling_damage->falling_damage.index);
+	damage.scale = 1.f;
+	SET_FLAG(damage.flags, _damage_kill_instantly_bit, TRUE);
+	SET_FLAG(damage.flags, _damage_no_statistics_bit, TRUE);
+	object_cause_damage(&damage, object_index, NONE, NONE, NONE, NULL);
 }

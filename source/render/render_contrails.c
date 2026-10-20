@@ -25,6 +25,7 @@ symbols in this file:
 /* ---------- headers */
 
 #include "cseries.h"
+#include "cache/texture_cache.h"
 #include "effects/contrail_definitions.h"
 #include "effects/contrails.h"
 #include "bitmaps/bitmap_group.h"
@@ -68,21 +69,12 @@ typedef char verify_contrail_vertex_size[
 
 /* ---------- prototypes */
 
-void render_contrails(
+static void render_contrails(
 	unsigned long render_mode_flags);
-void render_contrail(
+static void render_contrail(
 	struct contrail_datum *contrail,
 	struct contrail_definition *definition,
 	short instance_index);
-
-struct bitmap_data *bitmap_group_get_bitmap_from_sequence(
-	long bitmap_group_index,
-	short sequence_index,
-	short frame_index);
-void *_texture_cache_bitmap_get_hardware_format(
-	struct bitmap_data *bitmap,
-	boolean block,
-	boolean load);
 
 real contrail_fade(
 	struct contrail_definition *definition,
@@ -93,6 +85,9 @@ real contrail_fade(
 /* ---------- globals */
 
 extern boolean render_contrails_enabled;
+
+/* port: said once */
+static boolean reported_bad_change_color = FALSE;
 
 /* ---------- public code */
 
@@ -120,7 +115,7 @@ real contrail_fade(
 	return result;
 }
 
-void render_contrail(
+static void render_contrail(
 	struct contrail_datum *contrail,
 	struct contrail_definition *definition,
 	short instance_index)
@@ -250,12 +245,19 @@ void render_contrail(
 						struct object_attachment_definition);
 					short change_color_index = attachment->change_color_reference - 1;
 
-					if (change_color_index != NONE)
+					/* port: and one the object has (a map's index); said once */
+					if (change_color_index != NONE &&
+						VALID_INDEX(change_color_index, NUMBER_OF_OBJECT_CHANGE_COLORS))
 					{
 						real_rgb_color const *change_color = &object->object.outgoing_change_colors[change_color_index];
 						color.red *= change_color->red;
 						color.green *= change_color->green;
 						color.blue *= change_color->blue;
+					}
+					else if (change_color_index != NONE && !reported_bad_change_color)
+					{
+						error(_error_silent, "### ERROR a contrail attachment has a bad change color index; it is left out");
+						reported_bad_change_color = TRUE;
 					}
 				}
 
@@ -376,12 +378,11 @@ void render_contrail(
 						_error_silent,
 						"contrail %s uses an unsupported render type.",
 						tag_get_name(contrail->definition_index));
-					/*
-					 * Original bug preserved: this return bypasses the buffer
-					 * unlock/delete calls and leaves current_lock_operation set.
-					 * A non-matching safety fix would route this arm through the
-					 * common cleanup at the end of the function.
-					 */
+					rasterizer_dynamic_triangles_unlock(triangle_buffer_index);
+					rasterizer_dynamic_vertices_unlock(vertex_buffer_index);
+					rasterizer_dynamic_triangles_delete(triangle_buffer_index);
+					rasterizer_dynamic_vertices_delete(vertex_buffer_index);
+					rasterizer_globals.current_lock_operation = _rasterizer_lock_none;
 					return;
 				}
 
@@ -451,7 +452,7 @@ void render_contrail(
 	return;
 }
 
-void render_contrails(
+static void render_contrails(
 	unsigned long render_mode_flags)
 {
 	if (render_contrails_enabled)

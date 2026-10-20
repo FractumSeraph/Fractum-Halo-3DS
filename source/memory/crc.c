@@ -45,14 +45,17 @@ struct crc_globals
 
 /* ---------- globals */
 
-#ifndef HALO_ANDROID /* Mach-O section names differ; the default is .bss anyway */
+#if !defined(HALO_ANDROID) && !defined(__APPLE__) /* Mach-O section names differ; the default is .bss anyway */
 #pragma bss_seg(".bss")
 #endif
-struct crc_globals crc_globals;
 #ifdef HALO_N3DS
+/* port: (Halo3DS) the table read by the 3DS's cache reader, and its slices */
+struct crc_globals crc_globals;
 static unsigned long native_crc_slices[3][256];
+#else
+static struct crc_globals crc_globals;
 #endif
-#ifndef HALO_ANDROID
+#if !defined(HALO_ANDROID) && !defined(__APPLE__)
 #pragma bss_seg()
 #endif
 

@@ -273,8 +273,16 @@ symbols in this file:
 #include "math/real_math.h"
 #include "rasterizer/rasterizer.h"
 #include "render/render.h"
-#include "main/main_internal.h"
+#include "main/main.h"
 #include "game/players.h"
+
+#include <stdarg.h>
+#include <xtl.h>
+
+#ifdef HALO_PROFILE
+#include "profile_console.h"
+#include "profile_trace.h"
+#endif
 
 /* ---------- constants */
 
@@ -323,27 +331,18 @@ enum profile_frame_value
 /* ---------- macros */
 
 #if defined(HALO_N3DS)
+/* port: the 3DS's tick counter (Halo3DS: port/n3ds) */
 extern long long n3ds_engine_ticks(void);
 extern long long n3ds_engine_tick_frequency(void);
 #define QUERY_TIMEBASE(timebase) ((timebase) = n3ds_engine_ticks())
-#elif defined(HALO_ANDROID)
-/* the AArch64 virtual counter stands in for the time stamp counter */
-#define QUERY_TIMEBASE(timebase) \
-{ \
-	unsigned long long halo_android_counter; \
-	__asm__ __volatile__("mrs %0, cntvct_el0" : "=r"(halo_android_counter)); \
-	*(unsigned long long *)&(timebase) = halo_android_counter; \
-}
 #else
+/* the native ports: the platform's performance counter stands in for the
+time stamp counter, at its own rate (profile_initialize) */
 #define QUERY_TIMEBASE(timebase) \
 { \
-	__asm push eax \
-	__asm push edx \
-	__asm rdtsc \
-	__asm mov dword ptr timebase, eax \
-	__asm mov dword ptr timebase+4, edx \
-	__asm pop edx \
-	__asm pop eax \
+	LARGE_INTEGER halo_counter; \
+	QueryPerformanceCounter(&halo_counter); \
+	*(__int64 *)&(timebase) = halo_counter.QuadPart; \
 }
 #endif
 
@@ -461,6 +460,24 @@ boolean profile_timebase_ticks = FALSE;
 boolean profile_global_enable = FALSE;
 boolean profile_dump_frames = FALSE;
 boolean profile_dump_lost_frames = FALSE;
+
+#ifdef HALO_PROFILE
+/* port: the profiling build: each section's name in the trace
+(port/linux/src/profile_trace.c) by section_index, as struct
+profile_section's size is fixed (profile.h's assertions); the frame
+timers' names; and whether the first frame has set the recording up */
+static short profile_trace_section_names[MAXIMUM_PROFILE_SECTIONS];
+static struct
+{
+	int frame;
+	int game_tick;
+	int render;
+	int render_window;
+	int idle;
+	int texture;
+} profile_trace_timer_names;
+static boolean profile_trace_launched;
+#endif
 
 /* ---------- public code */
 
@@ -1070,7 +1087,12 @@ void profile_initialize(
 #ifdef HALO_N3DS
 	profile_globals.timebase_frequency = n3ds_engine_tick_frequency();
 #else
-	profile_globals.timebase_frequency = 733333333;
+	{
+		LARGE_INTEGER frequency;
+
+		QueryPerformanceFrequency(&frequency);
+		profile_globals.timebase_frequency = frequency.QuadPart;
+	}
 #endif
 
 	while (section_index<profile_globals.section_count)
@@ -1088,16 +1110,60 @@ void profile_initialize(
 	profile_globals.lost_frame_count = 999;
 	profile_globals.framedump_file = NULL;
 
+#ifdef HALO_PROFILE
+	profile_trace_timer_names.frame = profile_trace_name("frame");
+	profile_trace_timer_names.game_tick = profile_trace_name("game_tick");
+	profile_trace_timer_names.render = profile_trace_name("render");
+	profile_trace_timer_names.render_window = profile_trace_name("render_window");
+	profile_trace_timer_names.idle = profile_trace_name("idle");
+	profile_trace_timer_names.texture = profile_trace_name("texture");
+	/* (many times a frame: a record each would cost more than the work it
+	times, so a count and a total a frame) */
+	profile_trace_name_aggregate("texture");
+	profile_trace_name_aggregate("render_model");
+	profile_trace_name_aggregate("memory_dynamic_array_resize");
+	profile_trace_name_aggregate("memory_dynamic_array_add_element");
+	profile_trace_name_aggregate("memory_dynamic_array_delete_element");
+	profile_trace_name_aggregate("item_update");
+	profile_trace_name_aggregate("weapon_update");
+	profile_trace_name_aggregate("unit_update");
+	profile_trace_name_aggregate("biped_update");
+	profile_trace_name_aggregate("vehicle_update");
+	profile_trace_name_aggregate("projectile_update");
+	profile_trace_name_aggregate("render_structure_shadows");
+	profile_trace_name_aggregate("render_structure_shadows_draw");
+	profile_trace_name_aggregate("render_structure_diffuse_lights");
+	profile_trace_name_aggregate("render_structure_diffuse_lights_draw");
+	profile_trace_name_aggregate("render_structure_specular_lights");
+	profile_trace_name_aggregate("render_structure_specular_lights_draw");
+#endif
+
 	return;
 }
 
 void profile_frame_start(
 	void)
 {
+#ifdef HALO_PROFILE
+	if (!profile_trace_launched)
+	{
+		profile_trace_launched = TRUE;
+		profile_console_launch();
+	}
+	/* (no section is open here: where a recording starts, is cut and
+	stops) */
+	profile_trace_frame_boundary();
+	profile_console_frame();
+#endif
 	if (!profile_timebase_ticks)
 	{
 		profile_internal_step();
 	}
+#ifdef HALO_PROFILE
+	/* (after the step, which rolls up what the sections timed last frame:
+	the console no longer turns it off mid-frame, console.c) */
+	profile_global_enable = profile_trace_recording();
+#endif
 
 	csmemset(&profile_globals.current_frame, 0, sizeof(profile_globals.current_frame));
 
@@ -1105,6 +1171,9 @@ void profile_frame_start(
 	profile_globals.current_frame.vertical_blank_index = rasterizer_globals.vertical_blank_index;
 	profile_globals.current_frame.game_tick_count = 0;
 	profile_timesection_begin_now(&profile_globals.current_frame.frame);
+#ifdef HALO_PROFILE
+	profile_trace_begin(profile_trace_timer_names.frame);
+#endif
 
 	return;
 }
@@ -1131,6 +1200,10 @@ void profile_tick_start(
 
 	timer = &profile_globals.current_frame.game_ticks[profile_globals.current_frame.game_tick_count-1];
 	profile_timesection_begin_now(timer);
+#ifdef HALO_PROFILE
+	profile_trace_tick();
+	profile_trace_begin(profile_trace_timer_names.game_tick);
+#endif
 
 	return;
 }
@@ -1145,6 +1218,9 @@ void profile_tick_end(
 
 	timer = &profile_globals.current_frame.game_ticks[profile_globals.current_frame.game_tick_count-1];
 	profile_timesection_end_now(timer);
+#ifdef HALO_PROFILE
+	profile_trace_end(profile_trace_timer_names.game_tick);
+#endif
 
 	return;
 }
@@ -1167,6 +1243,9 @@ void profile_render_window_start(
 
 	timer = &profile_globals.current_frame.windows[profile_globals.current_frame.window_count-1];
 	profile_timesection_begin_now(timer);
+#ifdef HALO_PROFILE
+	profile_trace_begin(profile_trace_timer_names.render_window);
+#endif
 
 	return;
 }
@@ -1181,6 +1260,9 @@ void profile_render_window_end(
 
 	timer = &profile_globals.current_frame.windows[profile_globals.current_frame.window_count-1];
 	profile_timesection_end_now(timer);
+#ifdef HALO_PROFILE
+	profile_trace_end(profile_trace_timer_names.render_window);
+#endif
 
 	return;
 }
@@ -1190,6 +1272,9 @@ void profile_render_start(
 {
 	profile_globals.current_frame.window_count = 0;
 	profile_timesection_begin_now(&profile_globals.current_frame.render);
+#ifdef HALO_PROFILE
+	profile_trace_begin(profile_trace_timer_names.render);
+#endif
 
 	return;
 }
@@ -1198,14 +1283,28 @@ void profile_render_end(
 	void)
 {
 	profile_timesection_end_now(&profile_globals.current_frame.render);
+#ifdef HALO_PROFILE
+	profile_trace_end(profile_trace_timer_names.render);
+#endif
 
 	return;
 }
 
+/* port: the texture timer is read only by the profile graph and the frame
+dumps; a texture set per draw, it is not timed while nothing reads it */
+#define PROFILE_TEXTURE_TIMED() \
+	(profile_global_enable || profile_graph || profile_dump_frames || profile_dump_lost_frames)
+
 void profile_texture_start(
 	void)
 {
-	profile_timesection_begin_now(&profile_globals.current_frame.texture);
+	if (PROFILE_TEXTURE_TIMED())
+	{
+		profile_timesection_begin_now(&profile_globals.current_frame.texture);
+#ifdef HALO_PROFILE
+		profile_trace_begin(profile_trace_timer_names.texture);
+#endif
+	}
 
 	return;
 }
@@ -1213,7 +1312,13 @@ void profile_texture_start(
 void profile_texture_end(
 	void)
 {
-	profile_timesection_end_now(&profile_globals.current_frame.texture);
+	if (PROFILE_TEXTURE_TIMED())
+	{
+		profile_timesection_end_now(&profile_globals.current_frame.texture);
+#ifdef HALO_PROFILE
+		profile_trace_end(profile_trace_timer_names.texture);
+#endif
+	}
 
 	return;
 }
@@ -1222,6 +1327,9 @@ void profile_idle_start(
 	void)
 {
 	profile_timesection_begin_now(&profile_globals.current_frame.idle);
+#ifdef HALO_PROFILE
+	profile_trace_begin(profile_trace_timer_names.idle);
+#endif
 
 	return;
 }
@@ -1230,6 +1338,9 @@ void profile_idle_end(
 	void)
 {
 	profile_timesection_end_now(&profile_globals.current_frame.idle);
+#ifdef HALO_PROFILE
+	profile_trace_end(profile_trace_timer_names.idle);
+#endif
 
 	return;
 }
@@ -1251,6 +1362,9 @@ void profile_enter_private(
 	QUERY_TIMEBASE(timebase);
 	section->entry_timebase = timebase;
 	section->frame_call_count++;
+#ifdef HALO_PROFILE
+	profile_trace_begin(profile_trace_section_names[section->section_index]);
+#endif
 
 	return;
 }
@@ -1273,6 +1387,9 @@ void profile_exit_private(
 		QUERY_TIMEBASE(timebase);
 		section->frame_elapsed_timebase += timebase-section->entry_timebase;
 		section->stack_depth = NONE;
+#ifdef HALO_PROFILE
+		profile_trace_end(profile_trace_section_names[section->section_index]);
+#endif
 	}
 	else
 	{
@@ -1286,11 +1403,43 @@ static void profile_timesection_inherit(
 	struct profile_timer *parent_timesection,
 	struct profile_timer *child_timesection)
 {
+	/* port: a machine joining a game in progress loads it mid-frame (the
+	host's start, handled in the frame's network update), and the loading
+	screen draws its windows outside the frame's render: the frame's times
+	do not add up, and are only for the profiler */
+	if (parent_timesection->frame_total < child_timesection->total)
+	{
+		parent_timesection->frame_total = 0.0f;
+		return;
+	}
 	match_vassert("c:\\halo\\SOURCE\\cseries\\profile.c", 434,
 		parent_timesection->frame_total>=child_timesection->total,
 		"parent_timesection->self_msec >= child_timesection->elapsed_msec");
 
 	parent_timesection->frame_total -= child_timesection->total;
+
+	return;
+}
+
+/* port: January appended each piece with maximum_length-strlen and no check
+for truncation, and a legal 150-tick frame could run past the 512-byte dump
+buffer. Appends go through here: never past maximum_length, always
+terminated. */
+static void profile_append(
+	char *string,
+	short maximum_length,
+	char const *format,
+	...)
+{
+	long length = csstrlen(string);
+	va_list arguments;
+
+	if (length >= maximum_length - 1)
+		return;
+	va_start(arguments, format);
+	_vsnprintf(string + length, maximum_length - length - 1, format, arguments);
+	va_end(arguments);
+	string[maximum_length - 1] = 0;
 
 	return;
 }
@@ -1305,14 +1454,9 @@ static void profile_describe_frame(
 	short game_tick_index;
 	short window_index;
 
-	/* BUG (preserved for exact matching): January repeatedly appends with
-	 * maximum_length-strlen without handling CRT truncation or exhaustion.
-	 * A 512-byte dump buffer can be exhausted by the legal 150-tick record.
-	 * A corrected build should bound appends and guarantee NUL termination.
-	 */
 	csstrcpy(string, "");
 
-	_snprintf(string+csstrlen(string), maximum_length-csstrlen(string),
+	profile_append(string, maximum_length,
 		"frame %5d vbl %5I64d tot%6.2f",
 		frame->frame_index,
 		frame->vertical_blank_index,
@@ -1322,113 +1466,113 @@ static void profile_describe_frame(
 	{
 		if (global_frame_rate_throttle)
 		{
-			_snprintf(string+csstrlen(string), maximum_length-csstrlen(string), "(lost%3d)", frame->lapsed_frames);
+			profile_append(string, maximum_length, "(lost%3d)", frame->lapsed_frames);
 		}
 		else
 		{
-			_snprintf(string+csstrlen(string), maximum_length-csstrlen(string), "(free%3d)", frame->lapsed_frames);
+			profile_append(string, maximum_length, "(free%3d)", frame->lapsed_frames);
 		}
 	}
 	else if (frame->lapsed_msec>0)
 	{
 		if (global_frame_rate_throttle)
 		{
-			_snprintf(string+csstrlen(string), maximum_length-csstrlen(string), "(l.%3dms)", frame->lapsed_msec);
+			profile_append(string, maximum_length, "(l.%3dms)", frame->lapsed_msec);
 		}
 		else
 		{
-			_snprintf(string+csstrlen(string), maximum_length-csstrlen(string), "(f.%3dms)", frame->lapsed_msec);
+			profile_append(string, maximum_length, "(f.%3dms)", frame->lapsed_msec);
 		}
 	}
 	else
 	{
 		if (frame->lapsed_msec_valid)
 		{
-			_snprintf(string+csstrlen(string), maximum_length-csstrlen(string), "(slowed) ");
+			profile_append(string, maximum_length, "(slowed) ");
 		}
 		else
 		{
-			_snprintf(string+csstrlen(string), maximum_length-csstrlen(string), "(synced) ");
+			profile_append(string, maximum_length, "(synced) ");
 		}
 	}
 
 	if (frame->idle.frame_total>0.0f)
 	{
-		_snprintf(string+csstrlen(string), maximum_length-csstrlen(string), "idle%6.2f ", frame->idle.frame_total);
+		profile_append(string, maximum_length, "idle%6.2f ", frame->idle.frame_total);
 	}
 	else
 	{
-		_snprintf(string+csstrlen(string), maximum_length-csstrlen(string), "           ", frame->idle.frame_total);
+		profile_append(string, maximum_length, "           ");
 	}
 
 	game_tick_display_count = MAX(frame->game_tick_count, 8);
 
-	_snprintf(string+csstrlen(string), maximum_length-csstrlen(string), "game%2d ", frame->game_tick_count);
+	profile_append(string, maximum_length, "game%2d ", frame->game_tick_count);
 
-	_snprintf(string+csstrlen(string), maximum_length-csstrlen(string), " (");
+	profile_append(string, maximum_length, " (");
 
 	for (game_tick_index = 0; game_tick_index<game_tick_display_count; game_tick_index++)
 	{
 		if (game_tick_index<frame->game_tick_count)
 		{
-			_snprintf(string+csstrlen(string), maximum_length-csstrlen(string), "%6.2f%s",
+			profile_append(string, maximum_length, "%6.2f%s",
 				frame->game_ticks[game_tick_index].frame_total,
 				game_tick_index<game_tick_display_count-1 ? " " : "");
 		}
 		else
 		{
-			_snprintf(string+csstrlen(string), maximum_length-csstrlen(string), "      %s",
+			profile_append(string, maximum_length, "      %s",
 				game_tick_index<game_tick_display_count-1 ? " " : "");
 		}
 	}
 
-	_snprintf(string+csstrlen(string), maximum_length-csstrlen(string), ")");
+	profile_append(string, maximum_length, ")");
 
 	window_display_count = MAX(frame->window_count, local_player_count()+1);
 
-	_snprintf(string+csstrlen(string), maximum_length-csstrlen(string), " render%6.2f", frame->render.total);
+	profile_append(string, maximum_length, " render%6.2f", frame->render.total);
 
-	_snprintf(string+csstrlen(string), maximum_length-csstrlen(string), " (");
+	profile_append(string, maximum_length, " (");
 
 	for (window_index = 0; window_index<window_display_count; window_index++)
 	{
 		if (window_index<frame->window_count)
 		{
-			_snprintf(string+csstrlen(string), maximum_length-csstrlen(string), "%s%6.2f%s",
+			profile_append(string, maximum_length, "%s%6.2f%s",
 				frame->window_ids[window_index] ? "p" : "n",
 				frame->windows[window_index].frame_total,
 				window_index<window_display_count-1 ? " " : "");
 		}
 		else
 		{
-			_snprintf(string+csstrlen(string), maximum_length-csstrlen(string), "       %s",
+			profile_append(string, maximum_length, "       %s",
 				window_index<window_display_count-1 ? " " : "");
 		}
 	}
 
-	_snprintf(string+csstrlen(string), maximum_length-csstrlen(string), ")");
+	profile_append(string, maximum_length, ")");
 
 	if (frame->stall.frame_total>0.0f)
 	{
-		_snprintf(string+csstrlen(string), maximum_length-csstrlen(string), "stall%6.2f ", frame->stall.frame_total);
+		profile_append(string, maximum_length, "stall%6.2f ", frame->stall.frame_total);
 	}
 	else
 	{
-		_snprintf(string+csstrlen(string), maximum_length-csstrlen(string), "            ", frame->stall.frame_total);
+		profile_append(string, maximum_length, "            ");
 	}
 
 	if (frame->texture.frame_total>0.0f)
 	{
-		_snprintf(string+csstrlen(string), maximum_length-csstrlen(string), "tex%6.2f ", frame->texture.frame_total);
+		profile_append(string, maximum_length, "tex%6.2f ", frame->texture.frame_total);
 	}
 	else
 	{
-		_snprintf(string+csstrlen(string), maximum_length-csstrlen(string), "          ", frame->texture.frame_total);
+		profile_append(string, maximum_length, "          ");
 	}
 
-	_snprintf(string+csstrlen(string), maximum_length-csstrlen(string), "r-misc %6.2f ", frame->render.frame_total);
+	profile_append(string, maximum_length, "r-misc %6.2f ", frame->render.frame_total);
 
-	_snprintf(string+csstrlen(string), maximum_length-csstrlen(string), "f-misc %6.2f ", frame->frame.frame_total);
+	profile_append(string, maximum_length, "f-misc %6.2f ", frame->frame.frame_total);
 
 	csstrncat(string+csstrlen(string), frame->lapsed_reason, maximum_length-csstrlen(string));
 
@@ -1469,6 +1613,9 @@ void profile_frame_end(
 	short frame_index;
 
 	profile_timesection_end_now(&profile_globals.current_frame.frame);
+#ifdef HALO_PROFILE
+	profile_trace_end(profile_trace_timer_names.frame);
+#endif
 
 	match_assert("c:\\halo\\SOURCE\\cseries\\profile.c", 448,
 		(profile_globals.current_frame.game_tick_count >= 0) && (profile_globals.current_frame.game_tick_count <= MAXIMUM_GAME_TICKS_PER_FRAME));
@@ -1607,7 +1754,7 @@ int compare_profile_sections(
 {
 	struct profile_section *const *first = (struct profile_section *const *)section0;
 	struct profile_section *const *second = (struct profile_section *const *)section1;
-	int result = 0;
+	int result;
 
 	if ((*first)->active && !(*second)->active)
 	{
@@ -1638,6 +1785,8 @@ int compare_profile_sections(
 					result = -1;
 				else if (first_average<second_average)
 					result = 1;
+				else
+					result = 0;
 				break;
 			}
 
@@ -1646,10 +1795,14 @@ int compare_profile_sections(
 					result = -1;
 				else if ((*first)->recent_elapsed_timebase<(*second)->recent_elapsed_timebase)
 					result = 1;
+				else
+					result = 0;
 				break;
 
 			default:
 				match_assert("c:\\halo\\SOURCE\\cseries\\profile.c", 844, !"unreachable");
+				/* port: January left result unassigned in this unreachable arm */
+				result = 0;
 				break;
 		}
 	}
@@ -1718,6 +1871,9 @@ void find_profile_section(
 		section->section_index = profile_globals.section_count;
 		profile_globals.section_count++;
 		profile_globals.sections[section->section_index] = section;
+#ifdef HALO_PROFILE
+		profile_trace_section_names[section->section_index] = (short)profile_trace_name(section->name);
+#endif
 
 		csmemset(section->frame_elapsed_timebase_history, 0, sizeof(section->frame_elapsed_timebase_history));
 		csmemset(section->frame_call_count_history, 0, sizeof(section->frame_call_count_history));

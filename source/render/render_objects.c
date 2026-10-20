@@ -90,7 +90,9 @@ symbols in this file:
 #include "math/real_math.h"
 #include "bitmaps/bitmaps.h"
 #include "render/render.h"
-#include "render/render_objects.h"
+#include "camera/camera_scripting.h"
+#include "editor/editor_stubs.h"
+#include "rasterizer/rasterizer.h"
 #include "render/render_cameras_internal.h"
 #include "render/render_debug.h"
 #include "objects/objects.h"
@@ -104,10 +106,14 @@ symbols in this file:
 #include "shaders/shaders.h"
 #include "game/players.h"
 #include "interface/first_person_weapons.h"
+#include "sightjack.h" /* port (this fork): port/linux/game/sightjack.c */
 #include "camera/director.h"
 #include "cutscene/cinematics.h"
 #include "tag_files/tag_files.h"
 #include "saved games/game_state.h"
+#include "rasterizer/rasterizer_console_vars.h"
+#include "rasterizer/rasterizer_model_types.h"
+#include "game/game_engine.h"
 #include "scenario/scenario.h"
 #include "structures/structure_bsp_definitions.h"
 
@@ -115,7 +121,8 @@ symbols in this file:
 
 enum
 {
-	MAXIMUM_CACHED_OBJECT_RENDER_STATES = 256,
+	/* the native builds' larger render state cache (halo_port_capacity.h) */
+	MAXIMUM_CACHED_OBJECT_RENDER_STATES = HALO_PORT_MAXIMUM_CACHED_OBJECT_RENDER_STATES,
 	NUMBER_OF_SHADOW_VOLUME_PLANES = 6,
 	MAXIMUM_OBJECT_RENDER_STATE_AGE = 1000,
 	OBJECT_RENDER_STATE_LARGE_INTERVAL = 3,
@@ -159,18 +166,6 @@ enum
 
 /* ---------- structures */
 
-struct render_model_effect
-{
-	short type;
-	word pad;
-	real intensity;
-	real parameter;
-	long source_object_index;
-	real_point3d source_object_centroid;
-	struct shader const *modifier_shader;
-	struct render_animation modifier_animation;
-};
-
 struct object_render_data
 {
 	long object_index;
@@ -202,20 +197,17 @@ struct render_object_globals
 	long rendered_object_indices[MAXIMUM_RENDERED_OBJECTS];
 };
 
-struct rasterizer_debug_options
-{
-	byte unused00[0xE];
-	boolean draw_first_person_weapon_first;
-};
-
+#ifndef HALO_64BIT
 typedef char render_model_effect_size_assert[
 	sizeof(struct render_model_effect) == 0x28 ? 1 : -1];
 typedef char object_render_data_size_assert[
 	sizeof(struct object_render_data) == 0x48 ? 1 : -1];
+#endif
 typedef char object_render_state_size_assert[
 	sizeof(struct object_render_state) == 0x100 ? 1 : -1];
+/* the native builds render up to MAXIMUM_RENDERED_OBJECTS (objects.h) */
 typedef char render_object_globals_size_assert[
-	sizeof(struct render_object_globals) == 0x404 ? 1 : -1];
+	sizeof(struct render_object_globals) == 4 + MAXIMUM_RENDERED_OBJECTS * sizeof(long) ? 1 : -1];
 
 /* ---------- prototypes */
 
@@ -264,8 +256,6 @@ static void render_object(
 static void process_rendered_objects(
 	struct object_render_data *data);
 
-boolean scripted_camera_object_is_first_person_camera(
-	long object_index);
 short structure_visibility_find_objects(
 	long *object_indices,
 	short maximum_object_count,
@@ -274,27 +264,7 @@ short structure_visibility_find_objects(
 	void (*get_bounding_sphere_function)(long object_index, real_point3d *center, real *radius),
 	boolean (*unmarked_function)(long object_index),
 	boolean (*mark_function)(long object_index));
-void rasterizer_models_begin(
-	boolean sky);
-void rasterizer_models_end(
-	void);
-void rasterizer_environment_shadows_begin(
-	void);
-void rasterizer_environment_shadows_end(
-	void);
-boolean rasterizer_environment_shadow_begin(
-	long object_index,
-	real_matrix4x3 const *shadow_matrix,
-	union real_rgb_color const *shadow_color,
-	real object_bounding_radius,
-	real *shadow_bounding_radius);
-void rasterizer_environment_shadow_end(
-	void);
-boolean editor_preprocess_rendered_object(
-	long object_index,
-	struct render_lighting const *lighting);
 
-extern struct rasterizer_debug_options rasterizer_debug_options;
 extern boolean debug_objects;
 extern short debug_rasterizer_light_count;
 
@@ -455,6 +425,11 @@ void n3ds_render_objects_with_environment(void (*environment)(const void *),cons
 	return;
 }
 
+/* port: port/linux/game/first_person_legs.c */
+boolean first_person_legs_wanted(long object_index);
+real_matrix4x3 const *first_person_legs_node_matrices(long object_index, real_matrix4x3 const *nodes);
+/* port: port/linux/game/shield_color.c */
+real_rgb_color const *shield_color_colors(long unit_index, real_rgb_color const *colors);
 void render_objects(void) {n3ds_render_objects_with_environment(NULL,NULL);}
 
 void render_object_shadows(
@@ -491,7 +466,10 @@ static boolean object_is_first_person_camera(
 	return (unit_index == object_index &&
 		director_get_perspective(render.local_player_index) ==
 			_director_perspective_first_person) ||
-		scripted_camera_object_is_first_person_camera(object_index);
+		scripted_camera_object_is_first_person_camera(object_index) ||
+		/* port (this fork): the player a moderator watches, from inside
+		their head (port/linux/game/sightjack.c) */
+		sightjack_object_hidden(object_index);
 }
 
 static void find_rendered_objects(
@@ -581,8 +559,16 @@ static void render_object_list(
 	while (object_index != NONE)
 	{
 		struct object_datum *object = object_get(object_index);
+		/* port: the player's own legs, seen looking down in first person
+		(port/linux/game/first_person_legs.c): its body drawn from the waist
+		down, nothing it carries */
+		boolean legs = !data->shadow && !render.camera.mirrored &&
+			object_is_first_person_camera(object_index) && first_person_legs_wanted(object_index);
+		real_matrix4x3 const *node_matrices = legs ?
+			first_person_legs_node_matrices(object_index, object_get_node_matrices(object_index)) :
+			object_get_node_matrices(object_index);
 
-		if (!object_is_first_person_camera(object_index) || render.camera.mirrored)
+		if (!object_is_first_person_camera(object_index) || render.camera.mirrored || (legs && node_matrices))
 		{
 			struct render_model_effect model_effect;
 
@@ -611,7 +597,13 @@ static void render_object_list(
 				}
 			}
 
-			if (!TEST_FLAG(object->object.flags, _object_invisible_bit))
+			/* (port: nor a melee-only Bomb game's unseen fists,
+			game_engine_bomb.c) */
+			if (!TEST_FLAG(object->object.flags, _object_invisible_bit)
+#ifdef HALO_GAME_BROWSER
+				&& !game_engine_bomb_hides_weapon(object->definition_index)
+#endif
+				)
 			{
 				struct object_definition *definition =
 					object_definition_get(object->definition_index);
@@ -632,8 +624,12 @@ static void render_object_list(
 						if (shader_type_is_valid_for_modifier(
 							model_effect.modifier_shader->base.type))
 						{
+							/* port: a local player's shield in the color
+							chosen for it (port/linux/game/shield_color.c) */
 							model_effect.modifier_animation.colors =
-								object->object.outgoing_change_colors;
+								TEST_FLAG(_object_mask_unit, object->object.type) ?
+									shield_color_colors(object_index, object->object.outgoing_change_colors) :
+									object->object.outgoing_change_colors;
 							model_effect.modifier_animation.values =
 								object->object.outgoing_function_values;
 						}
@@ -714,7 +710,7 @@ static void render_object_list(
 					render_model(
 						definition->object.model.index,
 						level_of_detail_pixels,
-						object_get_node_matrices(object_index),
+						node_matrices,
 						object->object.region_permutations,
 						object->object.outgoing_change_colors,
 						object->object.outgoing_function_values,
@@ -740,7 +736,7 @@ static void render_object_list(
 					render_model(
 						definition->object.model.index,
 						level_of_detail_pixels * 0.3f,
-						object_get_node_matrices(object_index),
+						node_matrices,
 						object->object.region_permutations,
 						object->object.outgoing_change_colors,
 						object->object.outgoing_function_values,
@@ -754,7 +750,7 @@ static void render_object_list(
 				}
 			}
 
-			if (!data->shadow && object->object.first_widget_index != NONE)
+			if (!data->shadow && !legs && object->object.first_widget_index != NONE)
 			{
 				struct render_animation animation;
 
@@ -763,7 +759,7 @@ static void render_object_list(
 				widgets_render(object_index, data->lighting, &animation);
 			}
 
-			if (object->object.first_child_object_index != NONE)
+			if (object->object.first_child_object_index != NONE && !legs)
 			{
 				render_object_list(
 					data,
@@ -1003,7 +999,11 @@ static void object_render_state_refresh(
 	struct object_render_state *state = object_render_state_get(render_state_index);
 	long scene_age = render.scene_index - state->render_scene_index;
 	long render_age = render.frame_index - state->render_frame_index;
-	long refresh_age = render.frame_index - state->refresh_frame_index;
+	/* The native builds draw several frames per tick
+	(port/linux/game/render_interpolation.c), and a refresh moves the lighting
+	a fixed step toward its target: refresh at the intervals in ticks the
+	Xbox refreshed at in frames, so lighting changes as fast as it did. */
+	long refresh_age = game_time_get() - state->refresh_frame_index;
 	boolean refresh = FALSE;
 
 	if (refresh_age < 0 || scene_age < 0)
@@ -1042,7 +1042,7 @@ static void object_render_state_refresh(
 		state->object_index = object_index;
 		lights_prepare_for_object_static(object_index, &state->desired_lighting);
 		state->level_of_detail_pixels = level_of_detail_pixels;
-		state->refresh_frame_index = render.frame_index;
+		state->refresh_frame_index = game_time_get();
 	}
 
 	if (rebuild || scene_age > 0)

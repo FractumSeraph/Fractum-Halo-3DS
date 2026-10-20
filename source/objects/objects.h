@@ -23,13 +23,20 @@ enum
 {
 	OBJECT_ITERATOR_SIGNATURE = 0x86868686,
 	MAXIMUM_CLUSTERS_PER_OBJECT = 32,
-	OBJECT_MEMORY_POOL_SIZE = 0x100000,
-	GARBAGE_LIMIT_FREE_MEMORY_CRITICAL = 52428,
-	GARBAGE_LIMIT_FREE_MEMORY_TRIGGER = 104857,
-	GARBAGE_LIMIT_FREE_MEMORY_TARGET = 209715,
-	GARBAGE_LIMIT_FREE_OBJECTS_CRITICAL = 51,
-	GARBAGE_LIMIT_FREE_OBJECTS_TRIGGER = 102,
-	GARBAGE_LIMIT_FREE_OBJECTS_TARGET = 204,
+	/* the native builds' larger object pool (halo_port_capacity.h). The
+	garbage limits keep January's proportions: 5/10/20 % of the pool (the pool
+	only allocates at its end, so these are also the bytes one tick may
+	allocate before a compaction), 2.5/5/10 % of the object headers, and
+	75/50/30 active garbage objects per 16 players in the game
+	(objects.c: active_garbage_limit), so campaign and games of up to 16
+	players keep the Xbox's */
+	OBJECT_MEMORY_POOL_SIZE = HALO_PORT_OBJECT_MEMORY_POOL_SIZE,
+	GARBAGE_LIMIT_FREE_MEMORY_CRITICAL = HALO_PORT_OBJECT_MEMORY_POOL_SIZE/20,
+	GARBAGE_LIMIT_FREE_MEMORY_TRIGGER = HALO_PORT_OBJECT_MEMORY_POOL_SIZE/10,
+	GARBAGE_LIMIT_FREE_MEMORY_TARGET = HALO_PORT_OBJECT_MEMORY_POOL_SIZE/5,
+	GARBAGE_LIMIT_FREE_OBJECTS_CRITICAL = HALO_PORT_MAXIMUM_OBJECTS_PER_MAP/40,
+	GARBAGE_LIMIT_FREE_OBJECTS_TRIGGER = HALO_PORT_MAXIMUM_OBJECTS_PER_MAP/20,
+	GARBAGE_LIMIT_FREE_OBJECTS_TARGET = HALO_PORT_MAXIMUM_OBJECTS_PER_MAP/10,
 	GARBAGE_LIMIT_ACTIVE_GARBAGE_CRITICAL = 75,
 	GARBAGE_LIMIT_ACTIVE_GARBAGE_TRIGGER = 50,
 	GARBAGE_LIMIT_ACTIVE_GARBAGE_TARGET = 30,
@@ -38,8 +45,9 @@ enum
 enum
 {
 	MAXIMUM_MARKERS_PER_OBJECT = 64,
-	MAXIMUM_OBJECTS_PER_MAP = 2048,
-	MAXIMUM_RENDERED_OBJECTS = 256,
+	/* the native builds' larger object limits (halo_port_capacity.h) */
+	MAXIMUM_OBJECTS_PER_MAP = HALO_PORT_MAXIMUM_OBJECTS_PER_MAP,
+	MAXIMUM_RENDERED_OBJECTS = HALO_PORT_MAXIMUM_RENDERED_OBJECTS,
 };
 
 enum
@@ -378,6 +386,10 @@ void object_pvs_set_object(long object_index);
 void object_pvs_set_camera_point(short camera_point_index);
 void object_pvs_clear(void);
 short objects_get_activating_cluster_index(void);
+/* port: makes a cluster active as object_pvs_activate would (NONE: back to
+the players' own), for a network co-op client following the host's
+cutscene (port/linux/game/network_coop.c) */
+void objects_port_set_activating_cluster(short cluster_index);
 void object_definition_predict(long definition_index);
 void object_predict(long object_index);
 void object_beautify(long object_index, boolean beautiful);
@@ -420,6 +432,10 @@ void object_permute_region(long object_index, char *permutation_name, short desi
 boolean object_get_function_value(long object_index, short function_index, real *value_reference);
 short objects_in_clusters_by_indices(unsigned long class_flags, short cluster_count, short const *cluster_indices, short maximum_object_count, long *object_indices);
 long object_index_from_name_index(short name_index);
+/* port: this object takes a scenario name nobody holds, the way a placed
+vehicle does. A respawned vehicle keeps the name of the one it replaces, so
+a script that teleports that name still finds it. */
+void object_claim_scenario_name(long object_index, short name_index);
 void objects_disconnect_from_structure_bsp(void);
 boolean object_visible_to_any_player(long object_index);
 void object_pvs_activate(long object_index);
@@ -517,6 +533,10 @@ __inline void object_get_render_bounding_sphere(
 
 	*center = object->object.bounding_sphere_center;
 	*radius = object_definition_get(object->definition_index)->object.render_bounding_radius;
+	/* Growing an object must grow its culling sphere. Preserve the existing
+	 * conservative sphere for scales at or below one. */
+	if (object->object.scale > 1.0f)
+		*radius *= object->object.scale;
 
 	return;
 }

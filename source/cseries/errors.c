@@ -68,6 +68,10 @@ symbols in this file:
 
 /* ---------- constants */
 
+/* port: how big debug.txt grows before it is rolled to debug.old.txt and
+begun again (write_to_debug_file) */
+#define DEBUG_FILE_PORT_MAXIMUM_SIZE (64L * 1024 * 1024)
+
 /* ---------- macros */
 
 /* ---------- structures */
@@ -80,8 +84,8 @@ struct error_suppression_globals
 
 /* ---------- globals */
 
-boolean data_002dcd2c = TRUE;
-struct error_suppression_globals bss_0031df2c = { 0, 0 };
+static boolean data_002dcd2c = TRUE;
+static struct error_suppression_globals bss_0031df2c = { 0, 0 };
 boolean find_all_fucked_up_shit = FALSE;
 long fucked_up_shit_count = 0;
 
@@ -119,6 +123,162 @@ char *error_get(
 	return error_globals.message_buffer;
 }
 
+/* The native builds keep the log open and flush each line: opening and
+closing it per line takes milliseconds on Windows, and a host logs
+thousands of lines when a hundred machines join, load or leave. Each line is
+one write, under a lock, so lines from several threads do not interleave.
+
+port: A line written again as it was (the same warning each tick) is
+counted, not written, until a different one comes ("last line repeated N
+times"). Past DEBUG_FILE_PORT_MAXIMUM_SIZE the file is rolled to
+debug.old.txt (the one before that let go) and begun again: a dedicated
+server runs for days and wrote gigabytes. */
+static void debug_file_port_write(
+	FILE *file,
+	char const *prefix,
+	char const *string);
+
+static FILE *debug_file_port = NULL;
+static long debug_file_port_size = 0;
+static char debug_file_port_last_line[1024];
+static unsigned long debug_file_port_repeat_count = 0;
+static volatile long debug_file_port_lock = 0;
+/* (write_to_error_file's header again, atop the file begun again) */
+static boolean debug_file_port_rolled = FALSE;
+
+static void write_to_debug_file(
+	char const *string,
+	boolean date)
+{
+	FILE *file;
+	char prefix[32];
+	long spin;
+
+	/* (a moment's wait for another thread's line; a crash report written
+	while this thread held the lock goes on without it) */
+	for (spin = 0; spin < 50000000 && __sync_lock_test_and_set(&debug_file_port_lock, 1); spin++)
+	{
+	}
+
+	file = debug_file_port;
+	if (!file)
+	{
+		file = fopen("d:\\debug.txt", "a+b");
+		if (!file)
+		{
+			__sync_lock_release(&debug_file_port_lock);
+			return;
+		}
+		fseek(file, 0, SEEK_END);
+		debug_file_port_size = ftell(file);
+		if (debug_file_port_size < 0)
+		{
+			/* (too big to say, as the 32-bit builds find one past 2 GB:
+			full) */
+			debug_file_port_size = DEBUG_FILE_PORT_MAXIMUM_SIZE;
+		}
+		debug_file_port = file;
+	}
+
+	if (!csstrcmp(string, debug_file_port_last_line))
+	{
+		debug_file_port_repeat_count++;
+		__sync_lock_release(&debug_file_port_lock);
+		return;
+	}
+
+	prefix[0] = 0;
+	if (date || debug_file_port_repeat_count)
+	{
+#ifdef HALO_64BIT
+		/* (the host's time_t: 64 bits, which time() writes whole) */
+		time_t timeptr;
+#else
+		long timeptr;
+#endif
+		struct tm *_time;
+
+		time(&timeptr);
+		_time = localtime(&timeptr);
+		if (_time)
+		{
+			sprintf(
+				prefix,
+				"%02d.%02d.%02d %02d:%02d:%02d  ",
+				_time->tm_mon + 1,
+				_time->tm_mday,
+				_time->tm_year % 100,
+				_time->tm_hour,
+				_time->tm_min,
+				_time->tm_sec);
+		}
+		else
+		{
+			csstrcpy(prefix, "<TIME UNAVAILABLE>  ");
+		}
+	}
+
+	if (debug_file_port_repeat_count)
+	{
+		char repeated[64];
+
+		sprintf(repeated, "last line repeated %lu times\r\n", debug_file_port_repeat_count);
+		debug_file_port_write(file, prefix, repeated);
+		debug_file_port_repeat_count = 0;
+		file = debug_file_port;
+	}
+	if (file)
+	{
+		long index;
+
+		for (index = 0; index < (long)sizeof(debug_file_port_last_line) - 1 && string[index]; index++)
+		{
+			debug_file_port_last_line[index] = string[index];
+		}
+		debug_file_port_last_line[index] = 0;
+		debug_file_port_write(file, date ? prefix : "", string);
+	}
+
+	__sync_lock_release(&debug_file_port_lock);
+}
+
+/* port: a line to debug.txt (under write_to_debug_file's lock), rolling the
+file to debug.old.txt first when it is full */
+static void debug_file_port_write(
+	FILE *file,
+	char const *prefix,
+	char const *string)
+{
+	static char const rolled[] = "debug.txt was full: its earlier lines are in debug.old.txt\r\n";
+
+	if (debug_file_port_size >= DEBUG_FILE_PORT_MAXIMUM_SIZE)
+	{
+		fclose(file);
+		debug_file_port = NULL;
+		remove("d:\\debug.old.txt");
+		/* (or, where it cannot be renamed, begun again in place) */
+		file = rename("d:\\debug.txt", "d:\\debug.old.txt") ?
+			fopen("d:\\debug.txt", "w+b") :
+			fopen("d:\\debug.txt", "a+b");
+		if (!file)
+		{
+			return;
+		}
+		debug_file_port = file;
+		debug_file_port_size = 0;
+		debug_file_port_rolled = TRUE;
+		fprintf(file, "%s%s", prefix, rolled);
+		debug_file_port_size += (long)(csstrlen(prefix) + csstrlen(rolled));
+	}
+	fprintf(file, "%s%s", prefix, string);
+	fflush(file);
+	debug_file_port_size += (long)(csstrlen(prefix) + csstrlen(string));
+#ifdef HALO_WEB
+	/* port: and to the page's log (port/web/README.md) */
+	fputs(string, stderr);
+#endif
+}
+
 void write_to_error_file(
 	char *string,
 	boolean date)
@@ -126,6 +286,15 @@ void write_to_error_file(
 	char line[1024];
 	long time_value;
 
+	/* port: the header again in a debug.txt begun again (its reference
+	address places a crash report's addresses) */
+#ifndef HALO_XBOX_CONSOLE
+	if (debug_file_port_rolled)
+	{
+		debug_file_port_rolled = FALSE;
+		data_002dcd2c = TRUE;
+	}
+#endif
 	if (data_002dcd2c)
 	{
 		data_002dcd2c = FALSE;
@@ -139,42 +308,22 @@ void write_to_error_file(
 
 	if (error_globals.output_to_debug_file)
 	{
-		FILE *handle = fopen("d:\\debug.txt", "a+b");
-		if (handle)
-		{
-			if (date)
-			{
-				time_t timeptr;
-				struct tm *_time;
-
-				time(&timeptr);
-				_time = localtime(&timeptr);
-				if (_time)
-				{
-					fprintf(
-						handle,
-						"%02d.%02d.%02d %02d:%02d:%02d  ",
-						_time->tm_mon + 1,
-						_time->tm_mday,
-						_time->tm_year % 100,
-						_time->tm_hour,
-						_time->tm_min,
-						_time->tm_sec);
-				}
-				else
-				{
-					fprintf(handle, "<TIME UNAVAILABLE>  ");
-				}
-			}
-			fprintf(handle, "%s", string);
-			fclose(handle);
-		}
+		write_to_debug_file(string, date);
 	}
+#ifdef HALO_SERVER
+	{
+		/* port: the dedicated server's recent log, for its control API
+		(server/platform/server_control.c) */
+		void server_control_log(char const *text);
+
+		server_control_log(string);
+	}
+#endif
 
 	return;
 }
 
-void reset_error_state(
+static void reset_error_state(
 	void)
 {
 	error_globals.delayed = FALSE;
@@ -188,8 +337,7 @@ void errors_initialize(
 {
 	error_globals.output_to_debug_file = TRUE;
 	error_globals.overflow_suppression = TRUE;
-	error_globals.delayed = FALSE;
-	error_globals.message_buffer_size = 0;
+	reset_error_state();
 #ifndef HALO_N3DS /* Xbox stack walker; native assertions report file/line. */
 	stack_walk_initialize();
 #endif
@@ -215,12 +363,12 @@ void error(
 	{
 		long time = system_milliseconds();
 
-		if (time > bss_0031df2c.last_error_time+900)
+		if ((unsigned long)(time - bss_0031df2c.last_error_time) > 900)
 		{
 			bss_0031df2c.error_count = 0;
 		}
 		bss_0031df2c.last_error_time = time;
-		if (bss_0031df2c.error_count == 10)
+		if (bss_0031df2c.error_count == 10 && terminal_shows(_terminal_message_chatter))
 		{
 			terminal_printf(
 				global_real_argb_white,
@@ -246,19 +394,26 @@ void error(
 			va_list argument_list;
 
 			va_start(argument_list, format);
-#ifdef HALO_N3DS
-			vsnprintf(string, sizeof(string)-3, format, argument_list);
-#else
-			vsprintf(string, format, argument_list);
-#endif
+			/* port: no longer than the buffer, with room for the "\r\n" */
+			vsnprintf(string, NUMBEROF(string)-2, format, argument_list);
 			va_end(argument_list);
 			csstrcat(string, "\r\n");
 
-			if (priority != _error_log)
+			/* (port: the file first: printing used to halt on a long line
+			while this call still held the lock, and the reason never reached
+			debug.txt) */
+			write_to_error_file(string, TRUE);
+
+			/* (port: on screen as config.toml's game.console_log says: an
+			assert that stops the game, and what a command someone typed
+			logs (its answer), always; the rest, the game's chatter.
+			debug.txt has it whatever that is) */
+			if (priority != _error_log &&
+				terminal_shows(terminal_command_running || !strncmp(string, "EXCEPTION halt", 14) ||
+					!strncmp(string, "EXCEPTION assert", 16) ? _terminal_message_serious : _terminal_message_chatter))
 			{
 				terminal_printf(global_real_argb_white, "%s", string);
 			}
-			write_to_error_file(string, TRUE);
 
 			new_size = csstrlen(string);
 			if (error_globals.message_buffer_size+new_size >= ERROR_MESSAGE_BUFFER_MAXIMUM_SIZE)
@@ -331,8 +486,7 @@ boolean errors_handle(
 {
 	boolean delayed = error_globals.delayed;
 
-	error_globals.delayed = FALSE;
-	error_globals.message_buffer_size = 0;
+	reset_error_state();
 
 	return delayed;
 }
@@ -340,8 +494,7 @@ boolean errors_handle(
 void errors_clear(
 	void)
 {
-	error_globals.delayed = FALSE;
-	error_globals.message_buffer_size = 0;
+	reset_error_state();
 
 	return;
 }

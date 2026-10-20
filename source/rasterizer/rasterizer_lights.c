@@ -80,7 +80,6 @@ symbols in this file:
 
 /* ---------- headers */
 
-#include "rasterizer/rasterizer_frame_statistics.h"
 #include "cseries.h"
 #include "errors.h"
 #include "bitmaps/bitmaps.h"
@@ -89,6 +88,7 @@ symbols in this file:
 #include "math/periodic_functions.h"
 #include "objects/widgets/widget_types.h"
 #include "render.h"
+#include "render/render_cameras_internal.h" /* port: render_frustum_sphere_visible */
 #include "scenario/scenario.h"
 #include "tag_files/tag_groups.h"
 #include "rasterizer_widgets.h"
@@ -96,10 +96,13 @@ symbols in this file:
 #include "rasterizer_lights.h"
 #include "rasterizer_geometry.h"
 #include "rasterizer_geometry_compression.h"
-#include "rasterizer_debug_options.h"
+#include "rasterizer_console_vars.h"
 #include "objects/widgets/widget_types.h"
+#include "main/main.h"
 #include <xtl.h>
 #include "rasterizer/xbox/rasterizer_xbox.h"
+#include "main/main.h"
+#include "view_fov.h" /* port: port/linux/game/view_fov.c */
 
 /* ---------- constants */
 
@@ -291,17 +294,6 @@ struct structure_lens_flare_marker
 	byte lens_flare_index;
 };
 
-struct rasterizer_lights_window_parameters
-{
-	short rasterizer_target;
-	short window_index;
-	byte reserved04[4];
-	real_point3d camera_position;
-	real_vector3d camera_forward;
-	byte reserved20[0x80];
-	real_matrix4x3 view_to_world;
-};
-
 struct lens_flare_occlusion_test_results
 {
 	short light_identifier;
@@ -323,23 +315,6 @@ struct rasterizer_lens_flare_submit_parameters
 	long internal__occlusion_pixels;
 };
 
-struct rasterizer_light_submit_parameters
-{
-	struct point_light_definition *definition;
-	real_point3d position;
-	real_vector3d forward;
-	real_vector3d up;
-	real_rgb_color color;
-	real radius;
-};
-
-struct rasterizer_lights_globals
-{
-	long light_count;
-	struct rasterizer_light_submit_parameters lights[MAXIMUM_LIGHTS_PER_WINDOW];
-	long fixed_function_light_count;
-};
-
 typedef char verify_structure_cluster_size[
 	sizeof(struct structure_cluster) == 0x68 ? 1 : -1];
 typedef char verify_structure_cluster_lens_flare_marker_count_offset[
@@ -352,12 +327,10 @@ typedef char verify_lens_flare_definition_far_fade_distance_offset[
 	offsetof(
 		struct lens_flare_definition,
 		far_fade_distance) == 0x1C ? 1 : -1];
-typedef char verify_rasterizer_lights_window_parameters_camera_forward_offset[
-	offsetof(
-		struct rasterizer_lights_window_parameters,
-		camera_forward) == 0x14 ? 1 : -1];
+#ifndef HALO_64BIT
 typedef char verify_rasterizer_light_submit_parameters_size[
 	sizeof(struct rasterizer_light_submit_parameters) == 0x38 ? 1 : -1];
+#endif
 typedef char verify_rasterizer_lights_frame_statistics_dynamic_light_count_offset[
 	offsetof(
 		struct rasterizer_frame_statistics_globals,
@@ -378,6 +351,8 @@ static byte *lens_flare_occlusion_test_results_get(
 static real lens_flare_evaluate_corona_rotation_function(
 	short corona_rotation_function,
 	struct rasterizer_lens_flare_submit_parameters const *lens_flare_parameters);
+static void lens_flare_data_error(
+	char const *problem);
 
 /* ---------- globals */
 
@@ -385,12 +360,24 @@ static struct lens_flare_occlusion_test_results local_lens_flare_occlusion_test_
 static byte local_lens_flare_occlusion_test_results2[MAXIMUM_LENS_FLARE_MARKERS_PER_STRUCTURE+MAXIMUM_QUEUED_LENS_FLARES][MAXIMUM_WINDOWS];
 static struct rasterizer_lens_flare_submit_parameters local_lens_flare_parameters[MAXIMUM_LENS_FLARES_PER_FRAME] = {0};
 static long local_lens_flare_count = 0;
-extern struct rasterizer_lights_globals rasterizer_lights;
-extern struct rasterizer_lights_window_parameters global_window_parameters;
 extern short global_screenshot_count;
-extern short global_screenshot_size;
 
 /* ---------- private code */
+
+/* port: a map's BSP lens flare marker past what the BSP has; said once */
+static void lens_flare_data_error(
+	char const *problem)
+{
+	static boolean reported= FALSE;
+
+	if (!reported)
+	{
+		error(_error_silent, "### ERROR a BSP lens flare marker has a bad %s index; it is skipped", problem);
+		reported= TRUE;
+	}
+
+	return;
+}
 
 static boolean screenshot_in_progress(
 	void)
@@ -473,11 +460,11 @@ static real lens_flare_evaluate_corona_rotation_function(
 		{
 			real_vector3d plane;
 
-			cross_product3d(&direction, &global_window_parameters.view_to_world.forward, &plane);
+			cross_product3d(&direction, &global_window_parameters.frustum.view_to_world.forward, &plane);
 			cross_product3d(&plane, &direction, &plane);
-			offset.i = global_window_parameters.camera_forward.i;
-			offset.j = global_window_parameters.camera_forward.j;
-			offset.k = global_window_parameters.camera_forward.k;
+			offset.i = global_window_parameters.camera.forward.i;
+			offset.j = global_window_parameters.camera.forward.j;
+			offset.k = global_window_parameters.camera.forward.k;
 			sine = dot_product3d(&plane, &offset);
 			cosine = -dot_product3d(&direction, &offset);
 			break;
@@ -487,18 +474,18 @@ static real lens_flare_evaluate_corona_rotation_function(
 			offset.i = -direction.i;
 			offset.j = -direction.j;
 			offset.k = -direction.k;
-			sine = dot_product3d(&global_window_parameters.view_to_world.forward, &offset);
-			cosine = -dot_product3d(&global_window_parameters.view_to_world.up, &offset);
+			sine = dot_product3d(&global_window_parameters.frustum.view_to_world.forward, &offset);
+			cosine = -dot_product3d(&global_window_parameters.frustum.view_to_world.up, &offset);
 			break;
 
 		case _lens_flare_corona_rotation_function_eye_to_light_in_light_space:
 		{
 			real_vector3d plane;
 
-			cross_product3d(&direction, &global_window_parameters.view_to_world.forward, &plane);
+			cross_product3d(&direction, &global_window_parameters.frustum.view_to_world.forward, &plane);
 			cross_product3d(&plane, &direction, &plane);
 			vector_from_points3d(
-				&global_window_parameters.camera_position,
+				&global_window_parameters.camera.position,
 				&lens_flare_parameters->position,
 				&offset);
 			sine = dot_product3d(&plane, &offset);
@@ -508,11 +495,11 @@ static real lens_flare_evaluate_corona_rotation_function(
 
 		case _lens_flare_corona_rotation_function_eye_to_light_in_eye_space:
 			vector_from_points3d(
-				&global_window_parameters.camera_position,
+				&global_window_parameters.camera.position,
 				&lens_flare_parameters->position,
 				&offset);
-			sine = dot_product3d(&global_window_parameters.view_to_world.forward, &offset);
-			cosine = -dot_product3d(&global_window_parameters.view_to_world.up, &offset);
+			sine = dot_product3d(&global_window_parameters.frustum.view_to_world.forward, &offset);
+			cosine = -dot_product3d(&global_window_parameters.frustum.view_to_world.up, &offset);
 			break;
 
 		default:
@@ -562,7 +549,10 @@ void rasterizer_lens_flare_submit(
 		268,
 		(parameters->compressed_window_index&_lens_flare_window_index_mask)==global_window_parameters.window_index);
 
-	if (rasterizer_debug_options.lens_flares && !screenshot_in_progress() &&
+	/* port: not the first-person weapon's with it hidden (view_fov.c) */
+	if (!viewmodel_draws_geometry((parameters->compressed_window_index & _lens_flare_first_person_weapon_flag) != 0))
+		return;
+	if (rasterizer_debug_options.draw_lens_flares && !screenshot_in_progress() &&
 		global_window_parameters.rasterizer_target==_rasterizer_target_render_primary)
 	{
 		if (local_lens_flare_count<MAXIMUM_LENS_FLARES_PER_FRAME)
@@ -571,14 +561,24 @@ void rasterizer_lens_flare_submit(
 			real camera_distance;
 
 			vector_from_points3d(
-				&global_window_parameters.camera_position,
+				&global_window_parameters.camera.position,
 				&parameters->position,
 				&camera_offset);
-			camera_distance= dot_product3d(&global_window_parameters.camera_forward, &camera_offset);
+			camera_distance= dot_product3d(&global_window_parameters.camera.forward, &camera_offset);
 
+			/* port: none out of view either (behind the camera, off the
+			screen): its occlusion test would count no pixels, so it would not
+			be drawn, and a level of many lights (Halo PC's maps) tested
+			hundreds a frame, each a draw of its own (the sphere takes in the
+			test's offset point and size, rasterizer_lens_flares_submit_occlusion_tests).
+			Not the first-person weapon's: it is drawn at the weapon's own
+			projection (display.viewmodel_fov, view_fov.c), not this frustum's */
 			if ((parameters->definition->far_fade_distance==0.0f ||
 				camera_distance<parameters->definition->far_fade_distance) &&
-				(parameters->compressed_light_color&LENS_FLARE_LIGHT_COLOR_ALPHA_MASK)>0)
+				(parameters->compressed_light_color&LENS_FLARE_LIGHT_COLOR_ALPHA_MASK)>0 &&
+				((parameters->compressed_window_index&_lens_flare_first_person_weapon_flag) ||
+				render_frustum_sphere_visible(&global_window_parameters.frustum, &parameters->position,
+					3.0f * parameters->definition->occlusion_radius)))
 			{
 				struct rasterizer_lens_flare_submit_parameters *lens_flare_parameters=
 					lens_flare_parameters_get((short)local_lens_flare_count++);
@@ -626,7 +626,7 @@ void rasterizer_lens_flare_submit(
 					}
 				}
 
-				if (rasterizer_debug_options.stats==_rasterizer_statistics_mode_geometry)
+				if (rasterizer_debug_options.statistics_mode==_rasterizer_statistics_mode_geometry)
 				{
 					rasterizer_frame_statistics.lens_flare_count++;
 				}
@@ -654,7 +654,7 @@ void rasterizer_lights_begin_for_new_frame(
 #endif
 	rasterizer_profile_begin(_rasterizer_profile_lens_flare_occlusion_query);
 
-	if (rasterizer_debug_options.lens_flares && !screenshot_in_progress())
+	if (rasterizer_debug_options.draw_lens_flares && !screenshot_in_progress())
 	{
 		short lens_flare_index;
 
@@ -684,13 +684,30 @@ void rasterizer_lights_begin_for_new_frame(
 			{
 				byte previous_visibility= *occlusion_test_result;
 
+				/* The native builds draw several frames per tick
+				(port/linux/game/render_interpolation.c): move a quarter of the
+				way up and half of the way down per 30 Hz tick, not per frame,
+				at least a step a frame for as long as a tick's step would still
+				move it. */
+				real frame_ticks= main_get_seconds_elapsed()*TICKS_PER_SECOND;
+
 				if (latest_visibility>previous_visibility)
 				{
-					*occlusion_test_result= (byte)((3*previous_visibility + latest_visibility)/4);
+					long difference= latest_visibility - previous_visibility;
+
+					if (difference>=4)
+					{
+						long step= (long)(difference*(1.f - (real)pow(0.75f, frame_ticks)) + 0.5f);
+
+						*occlusion_test_result= (byte)(previous_visibility + PIN(step, 1, difference));
+					}
 				}
 				else if (latest_visibility<previous_visibility)
 				{
-					*occlusion_test_result= (byte)((previous_visibility + latest_visibility)/2);
+					long difference= previous_visibility - latest_visibility;
+					long step= (long)(difference*(1.f - (real)pow(0.5f, frame_ticks)) + 0.5f);
+
+					*occlusion_test_result= (byte)(previous_visibility - PIN(step, 1, difference));
 				}
 			}
 		}
@@ -738,7 +755,7 @@ long rasterizer_light_submit(
 		light_index= rasterizer_lights.light_count++;
 		rasterizer_lights.lights[light_index]= *parameters;
 
-		if (rasterizer_debug_options.stats==_rasterizer_statistics_mode_geometry)
+		if (rasterizer_debug_options.statistics_mode==_rasterizer_statistics_mode_geometry)
 		{
 			rasterizer_frame_statistics.dynamic_light_count++;
 		}
@@ -760,18 +777,39 @@ void rasterizer_lights_end(
 void rasterizer_lens_flare_submit_for_cluster(
 	short cluster_index)
 {
-	if (rasterizer_debug_options.lens_flares && !screenshot_in_progress())
+	if (rasterizer_debug_options.draw_lens_flares && !screenshot_in_progress())
 	{
 		struct structure_bsp *structure_bsp= global_structure_bsp_get();
 		struct structure_cluster *cluster= TAG_BLOCK_GET_ELEMENT(&structure_bsp->clusters, cluster_index, struct structure_cluster);
 		long lens_flare_marker_index;
+		/* port: only markers the BSP has, and no more than the occlusion
+		results hold: a marker's index goes into a short, read back sign
+		extended (rasterizer_lens_flare_submit), with the queued flares'
+		after it (a map's range: past it the index wrapped negative) */
+		long marker_count= MIN(
+			structure_bsp->lens_flare_markers.count,
+			SHORT_MAX+1-MAXIMUM_QUEUED_LENS_FLARES);
 
 		for (lens_flare_marker_index= 0; lens_flare_marker_index<cluster->lens_flare_marker_count; lens_flare_marker_index++)
 		{
 			long structure_lens_flare_marker_index= cluster->first_lens_flare_marker_index+lens_flare_marker_index;
-			struct structure_lens_flare_marker *marker= TAG_BLOCK_GET_ELEMENT(&structure_bsp->lens_flare_markers, structure_lens_flare_marker_index, struct structure_lens_flare_marker);
-			struct structure_lens_flare *structure_lens_flare= TAG_BLOCK_GET_ELEMENT(&structure_bsp->lens_flares, marker->lens_flare_index, struct structure_lens_flare);
+			struct structure_lens_flare_marker *marker;
+			struct structure_lens_flare *structure_lens_flare;
 			struct rasterizer_lens_flare_submit_parameters parameters;
+
+			if (structure_lens_flare_marker_index>=marker_count)
+			{
+				lens_flare_data_error("marker");
+				break;
+			}
+			marker= TAG_BLOCK_GET_ELEMENT(&structure_bsp->lens_flare_markers, structure_lens_flare_marker_index, struct structure_lens_flare_marker);
+			/* port: and a lens flare the BSP has (a map's index) */
+			if (marker->lens_flare_index>=structure_bsp->lens_flares.count)
+			{
+				lens_flare_data_error("lens flare");
+				continue;
+			}
+			structure_lens_flare= TAG_BLOCK_GET_ELEMENT(&structure_bsp->lens_flares, marker->lens_flare_index, struct structure_lens_flare);
 
 			{
 				real_vector3d direction;
@@ -812,7 +850,7 @@ void rasterizer_lens_flares_submit_occlusion_tests(
 {
 	rasterizer_profile_begin(_rasterizer_profile_lens_flare_occlusion_submit);
 
-	if (rasterizer_debug_options.lens_flares && !screenshot_in_progress() &&
+	if (rasterizer_debug_options.draw_lens_flares && !screenshot_in_progress() &&
 		global_window_parameters.rasterizer_target == _rasterizer_target_render_primary &&
 		local_lens_flare_count > 0)
 	{
@@ -832,15 +870,21 @@ void rasterizer_lens_flares_submit_occlusion_tests(
 			if ((lens_flare_parameters->compressed_window_index & _lens_flare_window_index_mask) ==
 				global_window_parameters.window_index)
 			{
+				boolean first_person = (lens_flare_parameters->compressed_window_index &
+					_lens_flare_first_person_weapon_flag) != 0;
 				real occlusion_radius = definition->occlusion_radius;
 				real_point3d occlusion_point;
+
+				/* port: the first-person weapon's projection (view_fov.c) */
+				if (first_person)
+					viewmodel_projection_begin();
 
 				switch (definition->occlusion_offset_direction)
 				{
 				case _lens_flare_occlusion_offset_direction_toward_viewer:
 					point_from_line3d(
 						&lens_flare_parameters->position,
-						&global_window_parameters.camera_forward,
+						&global_window_parameters.camera.forward,
 						-definition->occlusion_radius,
 						&occlusion_point);
 					break;
@@ -868,6 +912,9 @@ void rasterizer_lens_flares_submit_occlusion_tests(
 						&occlusion_point,
 						occlusion_radius,
 						lens_flare_index);
+
+				if (first_person)
+					viewmodel_projection_end();
 			}
 		}
 
@@ -890,7 +937,7 @@ void rasterizer_lens_flares_draw(
 #endif
 	rasterizer_profile_begin(_rasterizer_profile_lens_flares);
 
-	if (rasterizer_debug_options.lens_flares &&
+	if (rasterizer_debug_options.draw_lens_flares &&
 		global_window_parameters.rasterizer_target == _rasterizer_target_render_primary &&
 		local_lens_flare_count > 0)
 	{
@@ -908,15 +955,21 @@ void rasterizer_lens_flares_draw(
 			if ((lens_flare_parameters->compressed_window_index & _lens_flare_window_index_mask) ==
 				global_window_parameters.window_index)
 			{
+				boolean first_person = (lens_flare_parameters->compressed_window_index &
+					_lens_flare_first_person_weapon_flag) != 0;
 				struct lens_flare_definition *definition = lens_flare_parameters->definition;
+
+				/* port: the first-person weapon's projection (view_fov.c) */
+				if (first_person)
+					viewmodel_projection_begin();
 
 				if (lens_flare_parameters->internal__occlusion_pixels > 0 &&
 					LENS_FLARE_LIGHT_COLOR_ALPHA(lens_flare_parameters->compressed_light_color) > 0 &&
 					definition->reflections.count > 0)
 				{
-					real_point3d position = lens_flare_parameters->position;
-					real_vector3d camera_offset;
-					real_vector3d mirror;
+					real_point3d corona_position = lens_flare_parameters->position;
+					real_vector3d eye_to_corona_vector;
+					real_vector3d corona_axis;
 					real depth;
 					real occlusion_fraction;
 					real light_brightness;
@@ -929,14 +982,14 @@ void rasterizer_lens_flares_draw(
 					short reflection_index;
 
 					vector_from_points3d(
-						&global_window_parameters.camera_position,
-						&position,
-						&camera_offset);
-					depth = dot_product3d(&global_window_parameters.camera_forward, &camera_offset);
+						&global_window_parameters.camera.position,
+						&corona_position,
+						&eye_to_corona_vector);
+					depth = dot_product3d(&global_window_parameters.camera.forward, &eye_to_corona_vector);
 
-					scale_vector3d(&global_window_parameters.camera_forward, depth, &mirror);
-					subtract_vectors3d(&mirror, &camera_offset, &mirror);
-					scale_vector3d(&mirror, 2.0f, &mirror);
+					scale_vector3d(&global_window_parameters.camera.forward, depth, &corona_axis);
+					subtract_vectors3d(&corona_axis, &eye_to_corona_vector, &corona_axis);
+					scale_vector3d(&corona_axis, 2.0f, &corona_axis);
 
 					occlusion_fraction = *occlusion_test_result*(1.0f/255.0f);
 
@@ -960,26 +1013,26 @@ void rasterizer_lens_flares_draw(
 						definition->corona_rotation_function,
 						lens_flare_parameters)*definition->corona_rotation_function_scale;
 					screen_rotation = (real)atan2(
-						dot_product3d(&global_window_parameters.view_to_world.forward, &camera_offset),
-						dot_product3d(&global_window_parameters.view_to_world.left, &camera_offset))*(180.0f/((real)M_PI));
+						dot_product3d(&global_window_parameters.frustum.view_to_world.forward, &eye_to_corona_vector),
+						dot_product3d(&global_window_parameters.frustum.view_to_world.left, &eye_to_corona_vector))*(180.0f/((real)M_PI));
 
 					cosine_scale = 1.0f/
 						(definition->runtime_cosine_falloff_angle-definition->runtime_cosine_cutoff_angle);
 					cosine_offset = -(definition->runtime_cosine_cutoff_angle*cosine_scale);
 
-					normalize3d(&camera_offset);
+					normalize3d(&eye_to_corona_vector);
 
 					scale_functions[_lens_flare_reflection_scale_function_none] = 1.0f;
 					scale_functions[_lens_flare_reflection_scale_function_light_direction] = PIN(
-						-dot_product3d(&global_window_parameters.camera_forward, &direction)*cosine_scale+cosine_offset,
+						-dot_product3d(&global_window_parameters.camera.forward, &direction)*cosine_scale+cosine_offset,
 						0.0f,
 						1.0f);
 					scale_functions[_lens_flare_reflection_scale_function_light_to_camera] = PIN(
-						-dot_product3d(&direction, &camera_offset)*cosine_scale+cosine_offset,
+						-dot_product3d(&direction, &eye_to_corona_vector)*cosine_scale+cosine_offset,
 						0.0f,
 						1.0f);
 					scale_functions[_lens_flare_reflection_scale_function_camera_direction] = PIN(
-						dot_product3d(&global_window_parameters.camera_forward, &camera_offset)*cosine_scale+cosine_offset,
+						dot_product3d(&global_window_parameters.camera.forward, &eye_to_corona_vector)*cosine_scale+cosine_offset,
 						0.0f,
 						1.0f);
 
@@ -994,9 +1047,14 @@ void rasterizer_lens_flares_draw(
 								reflection_index,
 								struct lens_flare_reflection);
 							real brightness_lower_bound = reflection->brightness_lower_bounds;
+							/* port: a scale function the table doesn't have (a map's)
+							scales it to nothing */
 							real brightness = (brightness_lower_bound+
 								(reflection->brightness_upper_bounds-brightness_lower_bound)*light_scale)*
-								scale_functions[reflection->brightness_scale_function]*light_brightness;
+								(VALID_INDEX(reflection->brightness_scale_function, NUMBER_OF_LENS_FLARE_REFLECTION_SCALE_FUNCTIONS) ?
+									scale_functions[reflection->brightness_scale_function] :
+									0.0f)*
+								light_brightness;
 
 							if (reflection_index == 0)
 							{
@@ -1009,7 +1067,7 @@ void rasterizer_lens_flares_draw(
 								real radius = radius_lower_bound+
 									(reflection->radius_upper_bounds-radius_lower_bound)*light_scale;
 								real_argb_color color;
-								real_vector2d radius_scale;
+								real_vector2d scale;
 								real rotation;
 								pixel32 pixel;
 								real tint_factor;
@@ -1087,12 +1145,12 @@ void rasterizer_lens_flares_draw(
 								if (reflection_index == 0)
 								{
 									rotation = corona_rotation+reflection->rotation_offset;
-									radius_scale = definition->corona_radius_scale;
+									scale = definition->corona_radius_scale;
 								}
 								else
 								{
 									rotation = reflection->rotation_offset;
-									radius_scale.i = radius_scale.j = 1.0f;
+									scale.i = scale.j = 1.0f;
 								}
 
 								if (TEST_FLAG(reflection->flags, _lens_flare_reflection_rotate_from_center_of_screen_bit))
@@ -1112,9 +1170,9 @@ void rasterizer_lens_flares_draw(
 									real offset = reflection->offset;
 									real_point3d point;
 
-									point.x = offset*mirror.i + position.x;
-									point.y = offset*mirror.j + position.y;
-									point.z = offset*mirror.k + position.z;
+									point.x = offset*corona_axis.i + corona_position.x;
+									point.y = offset*corona_axis.j + corona_position.y;
+									point.z = offset*corona_axis.k + corona_position.z;
 
 									if (rasterizer_widget_set_texture(
 										0,
@@ -1137,7 +1195,7 @@ void rasterizer_lens_flares_draw(
 									rasterizer_widget_draw_sprite3d(
 										&point,
 										radius,
-										&radius_scale,
+										&scale,
 										rotation*(_pi/180.0f),
 										pixel);
 								}
@@ -1145,13 +1203,16 @@ void rasterizer_lens_flares_draw(
 						}
 					}
 				}
+
+				if (first_person)
+					viewmodel_projection_end();
 			}
 		}
 
 		rasterizer_set_stencil_mode(RASTERIZER_STENCIL_MODE_NONE);
 		rasterizer_widget_end();
 
-		if (rasterizer_debug_options.ray_of_buddha)
+		if (rasterizer_debug_options.lens_flare_sun_glow_enabled)
 		{
 			for (lens_flare_index = 0; lens_flare_index < local_lens_flare_count; lens_flare_index++)
 			{

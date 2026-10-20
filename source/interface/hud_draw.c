@@ -83,6 +83,7 @@ symbols in this file:
 /* ---------- headers */
 
 #include "cseries/cseries.h"
+#include "cseries/errors.h"
 #include "math/real_math.h"
 #include "bitmaps/bitmaps.h"
 #include "bitmaps/bitmap_group.h"
@@ -91,7 +92,6 @@ symbols in this file:
 #include "cache/texture_cache.h"
 #include "effects/particles.h"
 #include "game/game.h"
-#include "game/player_control.h"
 #include "game/players.h"
 #include "interface/hud_definitions.h"
 #include "interface/hud_draw.h"
@@ -104,12 +104,22 @@ symbols in this file:
 #include "render/render.h"
 #include "units/unit_definitions.h"
 #include "units/units.h"
+#include "view_fov.h" /* port: port/linux/game/view_fov.c */
+
+/* port: whether a Halo PC map is loaded (cache_files.c), and what the
+Custom Edition map loaded relies on Halo PC's HUD for
+(port/linux/game/ce_hud.c) */
+boolean cache_file_tags_are_ce(void);
+boolean ce_hud_halo_pc_overlay_blend_functions(void);
+boolean ce_hud_overlays_blocked(void);
 
 /* ---------- constants */
 
 enum
 {
 	_hud_dont_scale_offset_bit = 0,
+	/* port: Halo PC's, which the Xbox's tags never set */
+	_hud_use_high_resolution_scale_bit = 2,
 };
 
 /* hud number and meter definitions (no shared header declares these yet;
@@ -209,6 +219,17 @@ enum hud_multitexture_overlay_blend_function
 enum bitmap_group_type
 {
 	_bitmap_group_type_interface_bitmaps = 4,
+};
+
+/* port: Halo PC's bitmap group flag, which the Xbox's tags never set */
+enum
+{
+	_bitmap_group_half_hud_scale_bit = 4,
+};
+
+enum
+{
+	_bitmap_linear_bit = 4,
 };
 
 enum
@@ -380,7 +401,8 @@ static void hud_draw_bitmap_internal(
 	real_rectangle2d const *bounds,
 	real_vector2d const *xy_scale,
 	real theta,
-	pixel32 color);
+	pixel32 color,
+	real reticle_scale);	/* port: (display.fov, view_fov.c) */
 static void hud_draw_bitmap_with_meter(
 	void *meter_parameters,
 	struct bitmap_data const *bitmap,
@@ -406,31 +428,37 @@ static void hud_draw_multitexture_overlay(
 	real theta,
 	pixel32 color);
 
+#ifdef _WIN64
+/* <execinfo.h>'s (port/windows/src/win32_posix.c) */
+int backtrace(void **frames, int count);
+#endif
+
 /* ---------- globals */
+
+/* port: a hud bitmap's bad sequence or sprite was reported (once) */
+static boolean hud_bad_bitmap_reported = FALSE;
 
 /* ---------- public code */
 
 /* Inspect the guarded caller's frame, not the return site of this helper.
  * A normal prologue would replace EBP and defeat the paired stack check. */
 #ifndef HALO_N3DS
-#ifdef HALO_ANDROID
 __attribute__((noinline)) long get_return_eip(
 	void)
 {
-	/* the caller's return address, as [ebp+4] is in the naked original */
-	return (long)__builtin_return_address(1);
-}
+#ifdef _WIN64
+	/* an x64 Windows frame pointer points into its frame, not at the saved
+	one, so there is no chain to follow: the unwind information finds the
+	caller's return address instead (the return addresses into this
+	function, into the guarded caller, and the guarded caller's own) */
+	void *frames[3];
+
+	return backtrace(frames, 3) == 3 ? (long)(__INTPTR_TYPE__)frames[2] : 0;
 #else
-__declspec(naked) long get_return_eip(
-	void)
-{
-	__asm
-	{
-		mov eax, [ebp+4]
-		ret
-	}
-}
+	/* the caller's return address, as [ebp+4] is in the naked original */
+	return (long)(__INTPTR_TYPE__)__builtin_return_address(1);
 #endif
+}
 #endif
 
 real hud_globals_get_scale(
@@ -458,7 +486,8 @@ void hud_retrieve_bitmap_and_bounding_rect(
 	{
 		struct bitmap_group *group = bitmap_group_get(bitmap_group_index);
 
-		if (sequence_index<group->sequences.count)
+		/* port: and not below the first sequence (the index is the map's) */
+		if (sequence_index>=0 && sequence_index<group->sequences.count)
 		{
 			struct bitmap_group_sequence *sequence = TAG_BLOCK_GET_ELEMENT(
 				&group->sequences, sequence_index, struct bitmap_group_sequence);
@@ -470,11 +499,27 @@ void hud_retrieve_bitmap_and_bounding_rect(
 			sprite_count = sequence->sprites.count;
 			if (sprite_count)
 			{
-				struct bitmap_group_sprite *sprite = TAG_BLOCK_GET_ELEMENT(
-					&sequence->sprites, frame_index%sprite_count, struct bitmap_group_sprite);
+				/* port: a negative sprite count would give a negative sprite.
+				A sprite's bitmap must be one the group has, or the sprite is
+				not drawn. */
+				struct bitmap_group_sprite *sprite = sprite_count>0 ? TAG_BLOCK_GET_ELEMENT(
+					&sequence->sprites, frame_index%sprite_count, struct bitmap_group_sprite) : NULL;
 
-				*bitmap = TAG_BLOCK_GET_ELEMENT(
-					&group->bitmaps, sprite->bitmap_index, struct bitmap_data);
+				if (sprite && sprite->bitmap_index>=0 && sprite->bitmap_index<group->bitmaps.count)
+				{
+					*bitmap = TAG_BLOCK_GET_ELEMENT(
+						&group->bitmaps, sprite->bitmap_index, struct bitmap_data);
+				}
+				else
+				{
+					*bitmap = NULL;
+					if (!hud_bad_bitmap_reported)
+					{
+						hud_bad_bitmap_reported = TRUE;
+						error(_error_silent, "hud bitmap 0x%08lX sequence #%d has a bad sprite (not drawn)",
+							(unsigned long)bitmap_group_index, sequence_index);
+					}
+				}
 			}
 			else
 			{
@@ -548,6 +593,33 @@ static boolean hud_draw_multitexture_overlay_get_current_weapon_definition(
 	match_assert_stack_frame("c:\\halo\\SOURCE\\interface\\hud_draw.c", 1032);
 
 	return result;
+}
+
+/* port: Halo PC picks an overlay's shader by the value this build turns its
+blend function into (add, multiply, subtract, multiply2x, dot), from
+shaders listed alphabetically (add, dot, multiply, multiply2x, subtract).
+For the maps made around that (Chimera's multitexture_overlay_fix.cpp, by
+SnowyMouse; ce_hud.c lists them), each function becomes the one Halo PC drew
+with. (OpenCE's, by MrBruh) */
+static short hud_multitexture_overlay_blend_function(
+	short blend_function)
+{
+	static short const halo_pc_blend_functions[NUMBER_OF_HUD_MULTITEXTURE_OVERLAY_BLEND_FUNCTIONS] =
+	{
+		_hud_multitexture_overlay_blend_function_add,
+		_hud_multitexture_overlay_blend_function_multiply,
+		_hud_multitexture_overlay_blend_function_dot,
+		_hud_multitexture_overlay_blend_function_multiply2x,
+		_hud_multitexture_overlay_blend_function_subtract,
+	};
+
+	if (ce_hud_halo_pc_overlay_blend_functions() &&
+		blend_function >= 0 && blend_function < NUMBER_OF_HUD_MULTITEXTURE_OVERLAY_BLEND_FUNCTIONS)
+	{
+		return halo_pc_blend_functions[blend_function];
+	}
+
+	return blend_function;
 }
 
 static void hud_draw_multitexture_overlay(
@@ -654,7 +726,19 @@ static void hud_draw_multitexture_overlay(
 				((parameters.map[map_index]->width-1)&parameters.map[map_index]->width) != 0 ||
 				((parameters.map[map_index]->height-1)&parameters.map[map_index]->height) != 0;
 
-			if (non_power_of_two)
+			/* port: on a Halo PC map, a linear map is sampled in texels,
+			so the 0 to 1 that the element's (not interface) bitmap spans
+			becomes the map's width and height: Halo PC's interface bitmaps
+			are linear at any size, and bigass_v3's dynamic DMR reticle drew
+			as a square. The Xbox's maps keep the Xbox's scale (OpenCE's) */
+			if (cache_file_tags_are_ce() && TEST_FLAG(parameters.map[map_index]->flags, _bitmap_linear_bit))
+			{
+				parameters.map_texture_scale[map_index].i =
+					(real)parameters.map[map_index]->width;
+				parameters.map_texture_scale[map_index].j =
+					(real)parameters.map[map_index]->height;
+			}
+			else if (!cache_file_tags_are_ce() && non_power_of_two)
 			{
 				parameters.map_texture_scale[map_index].i =
 					1.0f/(real)parameters.map[map_index]->width;
@@ -681,7 +765,8 @@ static void hud_draw_multitexture_overlay(
 				&parameters.map1_to_2_blend_function
 			};
 
-			switch (overlay->map_blending_function[map_index])
+			/* port: (Halo PC's, on the maps that rely on it) */
+			switch (hud_multitexture_overlay_blend_function(overlay->map_blending_function[map_index]))
 			{
 			case _hud_multitexture_overlay_blend_function_add:
 				*out_modes[map_index] =
@@ -722,7 +807,7 @@ static void hud_draw_multitexture_overlay(
 	{
 		static real theta;
 		struct multitexture_overlay_hud_element_effector_definition *effector;
-		real source_value;
+		real source_value = 0.0f;
 		real dest_value;
 		real_rgb_color dest_color;
 
@@ -904,7 +989,13 @@ static void hud_draw_multitexture_overlay(
 		}
 	}
 
+	/* port: Halo PC adds a Halo PC map's overlay's color weighted by its
+	alpha, where those overlays keep their shape (bigass_v3's dynamic DMR
+	reticle added its whole square): for this draw alone (OpenCE's) */
+	rasterizer_screen_quad_alpha_weighted = cache_file_tags_are_ce() &&
+		parameters.framebuffer_blend_function == _shader_framebuffer_blend_function_add;
 	rasterizer_psuedo_dynamic_screen_quad_draw(&parameters, vertices);
+	rasterizer_screen_quad_alpha_weighted = FALSE;
 
 	match_assert_stack_frame("c:\\halo\\SOURCE\\interface\\hud_draw.c", 1372);
 
@@ -1196,12 +1287,32 @@ void hud_draw_weapon_overlays(
 		if (!TEST_FLAG(item->flags, _hud_overlay_runtime_invalid_bit) &&
 			(item->type & type_flags))
 		{
-			struct bitmap_group_sequence *sequence = TAG_BLOCK_GET_ELEMENT(
-				&bitmap_group_get(overlays->bitmap.index)->sequences,
-				item->sequence_index,
-				struct bitmap_group_sequence);
+			struct bitmap_group_sequence *sequence = NULL;
 			pixel32 color;
 			short frame_index;
+
+			/* port: the item's sequence is the map's. Only one the bitmap has
+			is looked at, and a sequence with no sprites stays on frame 0
+			(it was a divide by zero). The bad sequence itself isn't drawn
+			(hud_retrieve_bitmap_and_bounding_rect). */
+			if (overlays->bitmap.index!=NONE)
+			{
+				struct bitmap_group *group = bitmap_group_get(overlays->bitmap.index);
+
+				if (item->sequence_index>=0 && item->sequence_index<group->sequences.count)
+				{
+					sequence = TAG_BLOCK_GET_ELEMENT(
+						&group->sequences,
+						item->sequence_index,
+						struct bitmap_group_sequence);
+				}
+				else if (!hud_bad_bitmap_reported)
+				{
+					hud_bad_bitmap_reported = TRUE;
+					error(_error_silent, "hud overlay bitmap 0x%08lX has no sequence #%d (not drawn)",
+						(unsigned long)overlays->bitmap.index, item->sequence_index);
+				}
+			}
 
 			if (TEST_FLAG(item->flags, _hud_overlay_flashes_bit) &&
 				TEST_FLAG(draw_flags, _hud_draw_flashing_bit))
@@ -1215,7 +1326,8 @@ void hud_draw_weapon_overlays(
 
 			if (TEST_FLAG(item->flags, _hud_overlay_flashes_bit) &&
 				TEST_FLAG(draw_flags, _hud_draw_flashing_bit) &&
-				item->frame_rate > 0)
+				item->frame_rate > 0 &&
+				sequence && sequence->sprites.count > 0)
 			{
 				frame_index = (short)(((game_time_get() - reference_time) /
 					item->frame_rate / TICKS_PER_SECOND) % sequence->sprites.count);
@@ -1291,6 +1403,65 @@ void hud_draw_bitmap(
 	return;
 }
 
+/* port: a screen wider than 640 widens the HUD's window, which the HUD's
+elements keep to by their corners (the ammo counter to the left edge). The
+zoomed view's elements (the sniper rifle's angle ticks and range numbers)
+are placed by a corner too, but where they meet the scope, which is at the
+middle: drawn in a 640 wide window at the middle of the wide one, they meet
+it again. An element is the zoomed view's when its overlays follow the zoom
+level, or a number is shown only when zoomed. */
+boolean hud_multitexture_overlays_follow_zoom(
+	struct tag_block const *multitexture_overlays)
+{
+	long overlay_index;
+
+	for (overlay_index = 0; overlay_index < multitexture_overlays->count; overlay_index++)
+	{
+		struct multitexture_overlay_hud_element_definition const *overlay = TAG_BLOCK_GET_ELEMENT(
+			multitexture_overlays,
+			overlay_index,
+			struct multitexture_overlay_hud_element_definition);
+		long effector_index;
+
+		for (effector_index = 0; effector_index < overlay->functions.count; effector_index++)
+		{
+			struct multitexture_overlay_hud_element_effector_definition const *effector = TAG_BLOCK_GET_ELEMENT(
+				&overlay->functions,
+				effector_index,
+				struct multitexture_overlay_hud_element_effector_definition);
+
+			if (effector->source == _hud_multitexture_overlay_effector_source_zoom_level)
+				return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+boolean hud_number_shows_only_when_zoomed(
+	struct number_hud_element_definition const *number)
+{
+	return TEST_FLAG(number->number_flags, _hud_number_show_only_when_zoomed_bit);
+}
+
+/* the window as it would be 640 wide, at the middle of the wide one (each
+split screen window its share) */
+void hud_zoomed_layout_begin(
+	rectangle2d *saved_window_bounds)
+{
+	long width = render.camera.window_bounds.x1 - render.camera.window_bounds.x0;
+	short inset = (short)((width - width * 640 / halo_screen_width()) / 2);
+
+	*saved_window_bounds = render.camera.window_bounds;
+	render.camera.window_bounds.x0 += inset;
+	render.camera.window_bounds.x1 -= inset;
+}
+
+void hud_zoomed_layout_end(
+	rectangle2d const *saved_window_bounds)
+{
+	render.camera.window_bounds = *saved_window_bounds;
+}
+
 void hud_draw_static_element(
 	short local_player_index,
 	struct hud_absolute_placement_definition const *absolute_placement,
@@ -1346,8 +1517,10 @@ void hud_draw_static_element(
 			is_interface_bitmap,
 			FALSE);
 
+		/* port: (none on the maps Chimera lists as drawing none: ce_hud.c) */
 		for (overlay_index = 0;
-			overlay_index < static_element->multitexture_overlays.count;
+			overlay_index < static_element->multitexture_overlays.count &&
+				!ce_hud_overlays_blocked();
 			overlay_index++)
 		{
 			struct multitexture_overlay_hud_element_definition const *overlay =
@@ -1418,7 +1591,8 @@ static void hud_draw_bitmap_internal(
 	real_rectangle2d const *bounds,
 	real_vector2d const *xy_scale,
 	real theta,
-	pixel32 color)
+	pixel32 color,
+	real reticle_scale)
 {
 	long return_eip = get_return_eip();
 	long stack_buffer[STACK_BUFFER_LENGTH];
@@ -1447,6 +1621,25 @@ static void hud_draw_bitmap_internal(
 		vertices[vertex_index].texture_coordinates.x = texture_x;
 		vertices[vertex_index].texture_coordinates.y = texture_y;
 		vertices[vertex_index].color = color;
+	}
+
+	if (reticle_scale != 1.0f)
+	{
+		real center_x = (render.camera.window_bounds.x1 + render.camera.window_bounds.x0) / 2 -
+			render.camera.viewport_bounds.x0;
+		real center_y = (render.camera.window_bounds.y1 + render.camera.window_bounds.y0) / 2 -
+			render.camera.viewport_bounds.y0;
+
+		/* port: the reticle scaled about the view's centre, where it aims,
+		with display.fov (view_fov.c): its offsets and separate pieces
+		shrink with its picture */
+		for (vertex_index = 0; vertex_index < 4; vertex_index++)
+		{
+			vertices[vertex_index].position.x = center_x +
+				(vertices[vertex_index].position.x - center_x) * reticle_scale;
+			vertices[vertex_index].position.y = center_y +
+				(vertices[vertex_index].position.y - center_y) * reticle_scale;
+		}
 	}
 
 	csmemset(&parameters, 0, sizeof(parameters));
@@ -1532,7 +1725,10 @@ static void hud_draw_bitmap_with_meter(
 		&bounds,
 		&xy_scale,
 		theta,
-		color);
+		color,
+		/* port: a reticle at the centre keeps to its aim (view_fov.c) */
+		is_crosshair_bitmap && absolute_placement->corner == _hud_anchor_center ?
+			render_fov_reticle_scale(render.local_player_index) : 1.0f);
 
 	match_assert_stack_frame("c:\\halo\\SOURCE\\interface\\hud_draw.c", 814);
 
@@ -1556,13 +1752,15 @@ static real_rectangle2d const *get_sprite_clip_rect(
 	{
 		struct bitmap_group *group = bitmap_group_get(bitmap_group_index);
 
-		if (sequence_index<group->sequences.count)
+		/* port: no sequence below the first, and no sprite from a negative
+		sprite count or frame (all the map's) */
+		if (sequence_index>=0 && sequence_index<group->sequences.count)
 		{
 			struct bitmap_group_sequence *sequence = TAG_BLOCK_GET_ELEMENT(
 				&group->sequences, sequence_index, struct bitmap_group_sequence);
 			long sprite_count = sequence->sprites.count;
 
-			if (sprite_count)
+			if (sprite_count>0 && frame_index>=0)
 			{
 				struct bitmap_group_sprite *sprite = TAG_BLOCK_GET_ELEMENT(
 					&sequence->sprites, frame_index%sprite_count, struct bitmap_group_sprite);
@@ -1692,7 +1890,8 @@ void hud_draw_bitmap_direct(
 		&bounds,
 		&xy_scale,
 		theta,
-		color);
+		color,
+		1.0f);
 
 	match_assert_stack_frame("c:\\halo\\SOURCE\\interface\\hud_draw.c", 856);
 
@@ -1793,9 +1992,12 @@ void hud_draw_meter(
 
 		meter_parameters.background_color =
 			((UNSIGNED_CHAR_MAX - (meter->empty_color>>24))<<24) | (meter->empty_color&0xFFFFFF);
+		/* port: the meter's fade and opacity taken within [0, 1], as the
+		tool keeps them: a Halo PC map's may be past them (Chronopolis's
+		weapon meters), which asserted */
 		meter_parameters.tint_color = real_alpha_intensity_to_pixel32(
-			meter->fade,
-			1.0f-meter->opacity);
+			PIN(meter->fade, 0.0f, 1.0f),
+			PIN(1.0f-meter->opacity, 0.0f, 1.0f));
 		meter_parameters.gradient = 1.0f;
 		meter_parameters.flash_color_is_negative = FALSE;
 		meter_parameters.tint_mode_2 = TRUE;
@@ -1847,6 +2049,43 @@ void hud_draw_numbers(
 			0,
 			0);
 		boolean kilometers = value > 999;
+		/* port: the Xbox's digits are sprites of one bitmap, and the asserts
+		below check that sheet. A Custom Edition map's digit can be its own
+		bitmap, with no sprites or with a sprite that names that bitmap.
+		Those draw from the bitmap the digit names. */
+		boolean digits_on_one_bitmap = FALSE;
+		long sprite_index;
+
+		if (source_bitmap && bitmap_group->sequences.count > 0)
+		{
+			struct bitmap_group_sequence const *sequence = TAG_BLOCK_GET_ELEMENT(
+				&bitmap_group->sequences, 0, struct bitmap_group_sequence);
+
+			if (sequence->sprites.count > 0)
+			{
+				digits_on_one_bitmap = TRUE;
+				for (sprite_index = 0; sprite_index < sequence->sprites.count; sprite_index++)
+				{
+					struct bitmap_group_sprite const *sprite = TAG_BLOCK_GET_ELEMENT(
+						&sequence->sprites, sprite_index, struct bitmap_group_sprite);
+					struct bitmap_data const *sprite_bitmap = NULL;
+
+					if (sprite->bitmap_index >= 0 &&
+						sprite->bitmap_index < bitmap_group->bitmaps.count)
+					{
+						sprite_bitmap = TAG_BLOCK_GET_ELEMENT(
+							&bitmap_group->bitmaps,
+							sprite->bitmap_index,
+							struct bitmap_data);
+					}
+					if (sprite_bitmap != source_bitmap)
+					{
+						digits_on_one_bitmap = FALSE;
+						break;
+					}
+				}
+			}
+		}
 
 		if (_texture_cache_bitmap_get_hardware_format(source_bitmap, FALSE, TRUE))
 		{
@@ -1857,6 +2096,7 @@ void hud_draw_numbers(
 			real decimal_point_width = (real)(numbers->fractional_digits ?
 				hud_number->decimal_point_width : 0);
 			real scale;
+			real digit_scale;
 			point2d origin;
 			point2d cursor;
 			short digit_index;
@@ -1870,6 +2110,15 @@ void hud_draw_numbers(
 				scale = hud_globals_get_scale(
 					TEST_FLAG(draw_flags, _hud_draw_in_multiplayer_bit));
 			}
+			/* port: Halo PC draws the digits at half their size, spaced as
+			the digits tag says, for a number flagged to use its high
+			resolution scale (its Custom Edition maps' digits are twice the
+			size) or digits whose bitmap has its half HUD scale; the Xbox's
+			maps have neither (OpenCE's; ce_hud.c keeps the numbers' flags) */
+			digit_scale = cache_file_tags_are_ce() &&
+				(TEST_FLAG(numbers->placement.multiplayer_scaling_flags, _hud_use_high_resolution_scale_bit) ||
+					TEST_FLAG(bitmap_group->flags, _bitmap_group_half_hud_scale_bit)) ?
+				scale*0.5f : scale;
 
 			if (TEST_FLAG(numbers->number_flags, _hud_number_show_trailing_m_bit))
 			{
@@ -1942,19 +2191,22 @@ void hud_draw_numbers(
 						kilometers ? _hud_number_kilometers_index : _hud_number_meters_index,
 						&number_bitmap,
 						&clip);
-					match_assert(
-						"c:\\halo\\SOURCE\\interface\\hud_draw.c",
-						515,
-						source_bitmap==number_bitmap);
-					hud_draw_bitmap_direct(
-						number_bitmap,
-						absolute_placement->corner,
-						&point,
-						clip,
-						scale,
-						0.0f,
-						color,
-						bitmap_group->type == _bitmap_group_type_interface_bitmaps);
+					if (number_bitmap)
+					{
+						match_assert(
+							"c:\\halo\\SOURCE\\interface\\hud_draw.c",
+							515,
+							!digits_on_one_bitmap || source_bitmap==number_bitmap);
+						hud_draw_bitmap_direct(
+							number_bitmap,
+							absolute_placement->corner,
+							&point,
+							clip,
+							digit_scale,
+							0.0f,
+							color,
+							bitmap_group->type == _bitmap_group_type_interface_bitmaps);
+					}
 					cursor.x = (short)(cursor.x - hud_number->screen_width*scale);
 				}
 
@@ -1983,19 +2235,22 @@ void hud_draw_numbers(
 							decimal_value % 10,
 							&number_bitmap,
 							&clip);
-						match_assert(
-							"c:\\halo\\SOURCE\\interface\\hud_draw.c",
-							539,
-							source_bitmap==number_bitmap);
-						hud_draw_bitmap_direct(
-							number_bitmap,
-							absolute_placement->corner,
-							&point,
-							clip,
-							scale,
-							0.0f,
-							color,
-							bitmap_group->type == _bitmap_group_type_interface_bitmaps);
+						if (number_bitmap)
+						{
+							match_assert(
+								"c:\\halo\\SOURCE\\interface\\hud_draw.c",
+								539,
+								!digits_on_one_bitmap || source_bitmap==number_bitmap);
+							hud_draw_bitmap_direct(
+								number_bitmap,
+								absolute_placement->corner,
+								&point,
+								clip,
+								digit_scale,
+								0.0f,
+								color,
+								bitmap_group->type == _bitmap_group_type_interface_bitmaps);
+						}
 						cursor.x = (short)(cursor.x - hud_number->screen_width*scale);
 						decimal_value /= 10;
 					}
@@ -2018,19 +2273,22 @@ void hud_draw_numbers(
 							_hud_number_decimal_index,
 							&number_bitmap,
 							&clip);
-						match_assert(
-							"c:\\halo\\SOURCE\\interface\\hud_draw.c",
-							556,
-							source_bitmap==number_bitmap);
-						hud_draw_bitmap_direct(
-							number_bitmap,
-							absolute_placement->corner,
-							&point,
-							clip,
-							scale,
-							0.0f,
-							color,
-							bitmap_group->type == _bitmap_group_type_interface_bitmaps);
+						if (number_bitmap)
+						{
+							match_assert(
+								"c:\\halo\\SOURCE\\interface\\hud_draw.c",
+								556,
+								!digits_on_one_bitmap || source_bitmap==number_bitmap);
+							hud_draw_bitmap_direct(
+								number_bitmap,
+								absolute_placement->corner,
+								&point,
+								clip,
+								digit_scale,
+								0.0f,
+								color,
+								bitmap_group->type == _bitmap_group_type_interface_bitmaps);
+						}
 						cursor.x = (short)(cursor.x - hud_number->screen_width*scale);
 					}
 				}
@@ -2055,19 +2313,22 @@ void hud_draw_numbers(
 						digit,
 						&number_bitmap,
 						&clip);
-					match_assert(
-						"c:\\halo\\SOURCE\\interface\\hud_draw.c",
-						575,
-						source_bitmap==number_bitmap);
-					hud_draw_bitmap_direct(
-						number_bitmap,
-						absolute_placement->corner,
-						&point,
-						clip,
-						scale,
-						0.0f,
-						color,
-						bitmap_group->type == _bitmap_group_type_interface_bitmaps);
+					if (number_bitmap)
+					{
+						match_assert(
+							"c:\\halo\\SOURCE\\interface\\hud_draw.c",
+							575,
+							!digits_on_one_bitmap || source_bitmap==number_bitmap);
+						hud_draw_bitmap_direct(
+							number_bitmap,
+							absolute_placement->corner,
+							&point,
+							clip,
+							digit_scale,
+							0.0f,
+							color,
+							bitmap_group->type == _bitmap_group_type_interface_bitmaps);
+					}
 					cursor.x = (short)(cursor.x - hud_number->screen_width*scale);
 					value /= 10;
 				}
@@ -2088,19 +2349,22 @@ void hud_draw_numbers(
 						_hud_number_negative_sign_index,
 						&number_bitmap,
 						&clip);
-					match_assert(
-						"c:\\halo\\SOURCE\\interface\\hud_draw.c",
-						595,
-						source_bitmap==number_bitmap);
-					hud_draw_bitmap_direct(
-						number_bitmap,
-						absolute_placement->corner,
-						&point,
-						clip,
-						scale,
-						0.0f,
-						color,
-						bitmap_group->type == _bitmap_group_type_interface_bitmaps);
+					if (number_bitmap)
+					{
+						match_assert(
+							"c:\\halo\\SOURCE\\interface\\hud_draw.c",
+							595,
+							!digits_on_one_bitmap || source_bitmap==number_bitmap);
+						hud_draw_bitmap_direct(
+							number_bitmap,
+							absolute_placement->corner,
+							&point,
+							clip,
+							digit_scale,
+							0.0f,
+							color,
+							bitmap_group->type == _bitmap_group_type_interface_bitmaps);
+					}
 				}
 			}
 		}

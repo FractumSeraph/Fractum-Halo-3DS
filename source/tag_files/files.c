@@ -9,7 +9,7 @@ FILES.C
 
 /* ---------- globals */
 
-char file_location_volume_names[NUMBER_OF_FILE_REFERENCE_LOCATIONS-1][256];
+char file_location_volume_names[NUMBER_OF_FILE_REFERENCE_LOCATIONS][256];
 
 /* ---------- public code */
 
@@ -299,6 +299,25 @@ void directory_create_or_delete_contents(
 	return;
 }
 
+/* port: make the folder when it is missing. An existing folder is left
+alone, including whatever is already in it. */
+void directory_create(
+	const char *directory_name)
+{
+	struct file_reference directory;
+	struct file_reference_info *info = (struct file_reference_info *)&directory;
+
+	memset(info, 0, FILE_REFERENCE_SIZE);
+	info->signature = FILE_REFERENCE_SIGNATURE;
+	info->location = NONE;
+
+	file_reference_add_directory(&directory, directory_name);
+	if (!file_exists(&directory))
+		file_create(&directory);
+
+	return;
+}
+
 boolean datastore_read(
 	const char *file_name,
 	const char *field_name,
@@ -306,7 +325,7 @@ boolean datastore_read(
 	void *data)
 {
 	struct file_reference file_ref;
-	boolean success;
+	boolean success = FALSE;
 	unsigned long datastore_size = 0;
 	struct datastore *datastore;
 

@@ -67,7 +67,7 @@ symbols in this file:
 002A042C 001f:
 	??_C@_0BP@HLIODOFJ@untransformed_axis_of_rotation?$AA@ (0000)
 0030E778 0018:
-	_data_0030e778 (0000)
+	_global_sprite_render_orientations_enum_strings (0000)
 	_global_sprite_render_orientations_enum (000c)
 004C0518 0001:
 	_bss_004c0518 (0000)
@@ -86,8 +86,10 @@ symbols in this file:
 #include "render/render_cameras_internal.h"
 #include "render/render_debug.h"
 #include "render/render_sprite.h"
+#include "cache/texture_cache.h"
 #include "tag_files/tag_files.h"
 #include "tag_files/tag_groups.h"
+#include "view_fov.h" /* port: port/linux/game/view_fov.c */
 
 /* ---------- constants */
 
@@ -134,28 +136,7 @@ struct build_sprite_vertex
 typedef char build_sprite_vertex_size_assert[
 	sizeof(struct build_sprite_vertex) == 0x18 ? 1 : -1];
 
-struct build_sprite_globals_data
-{
-	boolean initialized;
-	boolean debug_flag;
-	word pad02;
-	real screen_coverage;
-	short big_sprite_count;
-	word pad0A;
-	real screen_area_scale;
-	real_vector3d viewer_space_world_up;
-	real_vector3d viewer_space_world_forward;
-};
-
-typedef char build_sprite_globals_data_size_assert[
-	sizeof(struct build_sprite_globals_data) == 0x28 ? 1 : -1];
-
 /* ---------- prototypes */
-
-void *_texture_cache_bitmap_get_hardware_format(
-	struct bitmap_data *bitmap,
-	boolean block,
-	boolean load);
 
 static void build_sprite_transform_origin_and_direction(
 	struct build_sprite_data const *data,
@@ -184,10 +165,24 @@ static void build_sprite_compute_basis(
 
 /* ---------- globals */
 
-extern boolean debug_sprites;
-extern struct build_sprite_globals_data build_sprite_globals;
+boolean debug_sprites;
+struct
+{
+	boolean initialized;
+	boolean debug_flag;
+	real screen_coverage;
+	short big_sprite_count;
+	real screen_area_scale;
+	real_vector3d viewer_space_world_up;
+	real_vector3d viewer_space_world_forward;
+} build_sprite_globals;
 
-static char *sprite_render_orientation_names[NUMBER_OF_BUILD_SPRITE_ORIENTATIONS] =
+typedef char build_sprite_globals_data_size_assert[
+	sizeof(build_sprite_globals) == 0x28 ? 1 : -1];
+
+/* name from the 2003 PC demo PDB and the HCEX PDB (file static char *[3]); January's three pointers
+ * name the same strings in the same order, followed by the enum definition at +0xC as in the demo */
+static char *global_sprite_render_orientations_enum_strings[NUMBER_OF_BUILD_SPRITE_ORIENTATIONS] =
 {
 	"screen facing",
 	"parallel to direction",
@@ -197,7 +192,7 @@ static char *sprite_render_orientation_names[NUMBER_OF_BUILD_SPRITE_ORIENTATIONS
 struct tag_enum_definition global_sprite_render_orientations_enum =
 {
 	NUMBER_OF_BUILD_SPRITE_ORIENTATIONS,
-	sprite_render_orientation_names,
+	global_sprite_render_orientations_enum_strings,
 	NULL,
 };
 
@@ -225,6 +220,9 @@ void build_sprites_begin(
 		!TEST_FLAG(flags, _build_sprites_valid_bit));
 
 	data->bitmap_group_index = bitmap_group_index;
+	/* port: the first-person weapon's projection (view_fov.c) */
+	if (TEST_FLAG(flags, _build_sprites_first_person_bit))
+		viewmodel_projection_begin();
 	data->flags = flags;
 	data->shader = shader;
 	data->group_count = 0;
@@ -316,6 +314,9 @@ void build_sprites_end(
 	}
 
 	SET_FLAG(data->flags, _build_sprites_valid_bit, FALSE);
+	/* port: (view_fov.c) */
+	if (TEST_FLAG(data->flags, _build_sprites_first_person_bit))
+		viewmodel_projection_end();
 	return;
 }
 
@@ -438,9 +439,9 @@ void build_sprite(
 					short vertex_index = NUMBER_OF_VERTICES_PER_QUADRILATERAL*group->sprite_count;
 					real rotation_sine = 0.f;
 					real rotation_cosine = 1.f;
-					real_rectangle3d bounds = *global_null_rectangle3d;
+					real_rectangle3d bounding_rectangle = *global_null_rectangle3d;
 					real_point3d transformed_origin;
-					real_vector3d transformed_direction;
+					real_vector3d direction;
 					real_matrix4x3 basis;
 					pixel32 pixel;
 					real alpha;
@@ -466,13 +467,13 @@ void build_sprite(
 						untransformed_origin,
 						untransformed_direction,
 						&transformed_origin,
-						&transformed_direction);
+						&direction);
 					build_sprite_compute_basis(
 						data,
 						mode,
 						flags,
 						&transformed_origin,
-						&transformed_direction,
+						&direction,
 						&basis);
 					build_sprite_compute_scale(data, mode, flags, &transformed_origin, bitmap, &scale);
 
@@ -541,18 +542,18 @@ void build_sprite(
 								transformed_origin.y;
 							point.z = (basis.forward.k*x + basis.left.k*y)*scale +
 								transformed_origin.z;
-							if (point.x<bounds.x0)
-								bounds.x0 = point.x;
-							if (point.x>bounds.x1)
-								bounds.x1 = point.x;
-							if (point.y<bounds.y0)
-								bounds.y0 = point.y;
-							if (point.y>bounds.y1)
-								bounds.y1 = point.y;
-							if (point.z<bounds.z0)
-								bounds.z0 = point.z;
-							if (point.z>bounds.z1)
-								bounds.z1 = point.z;
+							if (point.x<bounding_rectangle.x0)
+								bounding_rectangle.x0 = point.x;
+							if (point.x>bounding_rectangle.x1)
+								bounding_rectangle.x1 = point.x;
+							if (point.y<bounding_rectangle.y0)
+								bounding_rectangle.y0 = point.y;
+							if (point.y>bounding_rectangle.y1)
+								bounding_rectangle.y1 = point.y;
+							if (point.z<bounding_rectangle.z0)
+								bounding_rectangle.z0 = point.z;
+							if (point.z>bounding_rectangle.z1)
+								bounding_rectangle.z1 = point.z;
 							sprite_vertex->point = point;
 							sprite_vertex->texture_coordinates.x = u;
 							sprite_vertex->texture_coordinates.y = v;
@@ -569,7 +570,7 @@ void build_sprite(
 
 					if (!TEST_FLAG(data->flags, _build_sprites_screen_space_bit))
 					{
-						real coverage = render_frustum_cube_view_fraction(&render.frustum, &bounds);
+						real coverage = render_frustum_cube_view_fraction(&render.frustum, &bounding_rectangle);
 
 #ifdef HALO_N3DS
                         build_sprite_globals.screen_coverage += coverage;
@@ -636,7 +637,7 @@ void build_sprite(
 void build_sprite_rotational(
 	struct build_sprite_data *data,
 	unsigned long flags,
-	short sequence_index,
+	short first_sequence_index,
 	short sprite_index,
 	real_point3d const *untransformed_origin,
 	real_vector3d const *untransformed_axis_of_rotation,
@@ -645,8 +646,8 @@ void build_sprite_rotational(
 	real_argb_color const *color,
 	real fade)
 {
-	real_point3d transformed_origin;
-	real_vector3d transformed_axis_of_rotation;
+	real_point3d origin;
+	real_vector3d axis_of_rotation;
 	real const quarter_circle = _pi/2;
 	real fraction;
 	real angle;
@@ -667,20 +668,25 @@ void build_sprite_rotational(
 		flags & FLAG(_build_sprite_rotational_viewer_space_bit),
 		untransformed_origin,
 		untransformed_axis_of_rotation,
-		&transformed_origin,
-		&transformed_axis_of_rotation);
+		&origin,
+		&axis_of_rotation);
 
 	angle = angle_between_vectors3d(
-		(real_vector3d const *)&transformed_origin,
-		&transformed_axis_of_rotation) - quarter_circle;
+		(real_vector3d const *)&origin,
+		&axis_of_rotation) - quarter_circle;
 	fraction = angle*angle/(quarter_circle*quarter_circle);
 	fraction = PIN(fraction, 0.f, 1.f);
+	/* port: the edge-on sprites are the sequence after the face-on ones,
+	which a Halo PC map's bitmap may not have (Hornets Nest's): the face-on
+	ones only then, rather than read past the bitmap's sequences */
+	if (first_sequence_index+1 >= bitmap_group_get(data->bitmap_group_index)->sequences.count)
+		fraction = 0.f;
 
 	if (fraction>0.05f)
 	{
 		struct bitmap_group_sequence *sequence = TAG_BLOCK_GET_ELEMENT(
 			&bitmap_group_get(data->bitmap_group_index)->sequences,
-			sequence_index+1,
+			first_sequence_index+1,
 			struct bitmap_group_sequence);
 		short sprite_count = (short)sequence->sprites.count;
 		unsigned long edge_flags = FLAG(_build_sprite_viewer_space_bit);
@@ -706,9 +712,9 @@ void build_sprite_rotational(
 		build_sprite(
 			data,
 			_build_sprite_normal,
-			sequence_index+1,
+			first_sequence_index+1,
 			edge_sprite_index,
-			&transformed_origin,
+			&origin,
 			NULL,
 			sprite_rotation,
 			scale,
@@ -722,22 +728,22 @@ void build_sprite_rotational(
 	{
 		struct bitmap_group_sequence *sequence = TAG_BLOCK_GET_ELEMENT(
 			&bitmap_group_get(data->bitmap_group_index)->sequences,
-			sequence_index,
+			first_sequence_index,
 			struct bitmap_group_sequence);
 		short sprite_count = (short)sequence->sprites.count;
 
 		build_sprite(
 			data,
 			_build_sprite_normal,
-			sequence_index,
+			first_sequence_index,
 			(short)fmod(
 				sprite_count*one_over_full_circle*rotation + 0.5f,
 				(real)sprite_count),
-			&transformed_origin,
+			&origin,
 			NULL,
 			arctangent(
-				transformed_axis_of_rotation.j,
-				transformed_axis_of_rotation.i),
+				axis_of_rotation.j,
+				axis_of_rotation.i),
 			scale,
 			color,
 			fraction*fade,
@@ -819,6 +825,10 @@ static short build_sprite_get_group(
 	struct build_sprite_data *data,
 	struct bitmap_data *bitmap)
 {
+	/* Name, type and function scope from the 2003 PC demo PDB and the HCEX PDB (static local
+	   unsigned char warned). Neither PDB records the block: placing it at the top of the function
+	   is unattested. January corroborates: its one-byte .bss is referenced only here. */
+	static boolean warned;
 	short group_index;
 
 	for (group_index = 0; group_index < data->group_count; group_index++)
@@ -827,6 +837,23 @@ static short build_sprite_get_group(
 			break;
 	}
 
+#ifdef HALO_CUSTOM_EDITION
+	/* port: a Halo PC map's particle may be drawn from more bitmaps than a
+	call takes (beavercreek_rev_beta's fluid bursts have a bitmap a frame, up
+	to 56), which halted a debug build: its sprites on the others are not
+	drawn, as a release build already did, and it is logged once */
+	if (group_index >= data->group_count && data->group_count >= MAXIMUM_BUILD_SPRITE_GROUPS)
+	{
+		static boolean logged;
+
+		if (!logged)
+		{
+			error(_error_silent, "%s: a particle's sprites on more than %d bitmaps; those past them are not drawn",
+				tag_get_name(data->bitmap_group_index), MAXIMUM_BUILD_SPRITE_GROUPS);
+			logged = TRUE;
+		}
+	}
+#else
 	match_vassert(
 		"c:\\halo\\SOURCE\\render\\render_sprite.c",
 		275,
@@ -836,6 +863,7 @@ static short build_sprite_get_group(
 			temporary,
 			"a build_sprites_begin call can accomodate at most %d bitmaps",
 			MAXIMUM_BUILD_SPRITE_GROUPS));
+#endif
 
 	if (group_index < data->group_count ||
 		data->group_count < MAXIMUM_BUILD_SPRITE_GROUPS)
@@ -863,12 +891,12 @@ static short build_sprite_get_group(
 				}
 				else
 				{
-					if (!build_sprite_vertex_allocation_failure_reported)
+					if (!warned)
 					{
 						error(
 							_error_silent,
 							"build_sprite failed to allocate dynamic vertices");
-						build_sprite_vertex_allocation_failure_reported = TRUE;
+						warned = TRUE;
 					}
 					group->vertices = NULL;
 				}

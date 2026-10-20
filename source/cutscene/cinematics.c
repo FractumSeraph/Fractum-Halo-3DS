@@ -62,6 +62,8 @@ symbols in this file:
 #include "game/game.h"
 #include "game/game_globals.h"
 #include "game/players.h"
+#include "interface/hud.h"
+#include "interface/hud_definitions.h"
 #include "interface/ui_widget.h"
 #include "items/projectiles.h"
 #include "rasterizer/rasterizer.h"
@@ -72,6 +74,7 @@ symbols in this file:
 #include "scenario/scenario_definitions.h"
 #include "text/draw_string.h"
 #include "text/text_group.h"
+#include "network_coop.h" /* port: port/linux/game/network_coop.c */
 
 /* ---------- constants */
 
@@ -103,14 +106,6 @@ struct scenario_cutscene_title
 	byte unused50[0x10];
 };
 
-struct hud_global_data
-{
-	byte unused000[0x54];
-	long single_player_font_index;
-	byte unused058[0x284];
-	rectangle2d default_title_bounds;
-};
-
 typedef char verify_scenario_cutscene_title_size[
 	sizeof(struct scenario_cutscene_title) == 0x60 ? 1 : -1];
 typedef char verify_scenario_cutscene_title_name_offset[
@@ -120,19 +115,14 @@ typedef char verify_scenario_cutscene_title_bounds_offset[
 typedef char verify_scenario_cutscene_title_fade_offset[
 	offsetof(struct scenario_cutscene_title, fade_in_time) == 0x44 ? 1 : -1];
 typedef char verify_hud_global_single_player_font_offset[
-	offsetof(struct hud_global_data, single_player_font_index) == 0x54 ? 1 : -1];
+	offsetof(struct hud_globals_definition, messaging.single_player_font.index) == 0x54 ? 1 : -1];
 typedef char verify_hud_global_default_title_bounds_offset[
-	offsetof(struct hud_global_data, default_title_bounds) == 0x2DC ? 1 : -1];
+	offsetof(struct hud_globals_definition, defaults.default_title_bounds) == 0x2DC ? 1 : -1];
 
 /* ---------- prototypes */
 
-void draw_quad(
-	rectangle2d *rectangle,
-	pixel32 color);
-
 /* ---------- globals */
 
-extern struct hud_global_data *hud_globals;
 struct cinematic_global_data *cinematic_globals = NULL;
 
 /* ---------- public code */
@@ -276,6 +266,7 @@ void cinematic_set_title_delayed(
 {
 	short title_slot_index;
 
+	network_coop_note_title(title_index, delay);
 	for (title_slot_index = 0;
 		title_slot_index < MAXIMUM_QUEUED_CINEMATIC_TITLES &&
 		cinematic_globals->queued_titles[title_slot_index].title_index != NONE;
@@ -384,7 +375,7 @@ void cinematic_render(
 			if (active_title->title_index == NONE)
 				continue;
 
-			font_index = hud_globals->single_player_font_index;
+			font_index = hud_globals->messaging.single_player_font.index;
 			if (font_index == NONE)
 				continue;
 
@@ -411,7 +402,7 @@ void cinematic_render(
 			if (title_bounds->x1 == title_bounds->x0 ||
 				title_bounds->y1 == title_bounds->y0)
 			{
-				title_bounds = &hud_globals->default_title_bounds;
+				title_bounds = &hud_globals->defaults.default_title_bounds;
 			}
 
 			if (!game_in_editor())
@@ -434,22 +425,26 @@ void cinematic_render(
 				fade_amount = PIN(fade_amount, 0.0f, 1.0f);
 			}
 
+			/* port: not drawn over a menu, as the letterbox is not (the
+			fullscreen overlays come after the players' windows and their
+			menus); the title's time goes on as before */
+			if (!ui_widgets_active())
 			{
-				real_argb_color color;
+				real_argb_color text_color;
 				long shadow_alpha;
 
 				pixel32_to_real_argb_color(
 					title->foreground_color,
-					&color);
-				color.alpha *= fade_amount;
+					&text_color);
+				text_color.alpha *= fade_amount;
 
-				if (fabs(color.red - 1.0f) < _real_epsilon &&
-					fabs(color.green - 1.0f) < _real_epsilon &&
-					fabs(color.blue - 1.0f) < _real_epsilon)
+				if (fabs(text_color.red - 1.0f) < _real_epsilon &&
+					fabs(text_color.green - 1.0f) < _real_epsilon &&
+					fabs(text_color.blue - 1.0f) < _real_epsilon)
 				{
-					color.red = MIN(color.red, 0.8f);
-					color.green = MIN(color.green, 0.8f);
-					color.blue = MIN(color.blue, 0.8f);
+					text_color.red = MIN(text_color.red, 0.8f);
+					text_color.green = MIN(text_color.green, 0.8f);
+					text_color.blue = MIN(text_color.blue, 0.8f);
 				}
 
 				draw_string_set_draw_mode(
@@ -457,7 +452,7 @@ void cinematic_render(
 					title->style - 1,
 					title->justification,
 					title->text_flags,
-					&color);
+					&text_color);
 
 				shadow_alpha = PIN(
 					fast_ftol(
@@ -470,20 +465,18 @@ void cinematic_render(
 					((pixel32)shadow_alpha << 24) |
 					(title->shadow_color & 0x00FFFFFF));
 
-#ifdef HALO_ANDROID
 				{
 					/* the bounds are for 640 columns: on a wider screen move
 					them so they keep their place relative to its sides */
 					static rectangle2d wide_bounds;
 					short shift = (short)(((title_bounds->x0 + title_bounds->x1) / 2) *
-						(halo_android_screen_width() - 640) / 640);
+						(halo_screen_width() - 640) / 640);
 
 					wide_bounds = *title_bounds;
 					wide_bounds.x0 += shift;
 					wide_bounds.x1 += shift;
 					title_bounds = &wide_bounds;
 				}
-#endif
 				rasterizer_draw_unicode_string(
 					title_bounds,
 					NULL,

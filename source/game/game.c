@@ -119,11 +119,8 @@ struct game_options;
 /* ---------- headers */
 
 #include "cseries/cseries.h"
-#define set_random_seed set_random_seed_inline
 #include "game/game.h"
-#undef set_random_seed
 #include "ai/ai.h"
-#include "ai/ai_runtime.h"
 #include "bink/bink_playback.h"
 #include "bungie_net/network/transport.h"
 #include "cache/cache_files.h"
@@ -144,8 +141,6 @@ struct game_options;
 #include "game/cheats.h"
 #include "game/game_allegiance.h"
 #include "game/game_engine.h"
-#include "game/game_engine_runtime.h"
-#include "game/player_control.h"
 #include "game/player_queues_new.h"
 #include "game/player_rumble.h"
 #include "game/players.h"
@@ -162,27 +157,47 @@ struct game_options;
 #include "items/projectiles.h"
 #include "main/main.h"
 #include "main/console.h"
-#include "math/random_math.h"
 #include "math/real_math.h"
 #include "memory/data.h"
 #include "networking/network_messages.h"
 #include "networking/telnet_console.h"
+#include "objects/object_lights.h"
 #include "objects/objects.h"
+#include "objects/widgets/antenna.h"
+#include "objects/widgets/widgets.h"
 #include "physics/breakable_surfaces.h"
 #include "physics/collision_usage.h"
 #include "physics/point_physics.h"
+#include "rasterizer/common/rasterizer_common.h"
 #include "rasterizer/rasterizer.h"
 #include "rasterizer/common/rasterizer_common.h"
 #include "render/render.h"
 #include "saved games/game_state.h"
 #include "saved games/saved_game_files.h"
 #include "scenario/scenario.h"
+#include "shaders/shaders.h"
 #include "sound/game_sound.h"
 #include "sound/sound_classes.h"
 #include "sound/sound_manager.h"
 #include "structures/structures.h"
 #include "units/units.h"
 #include "units/vehicles.h"
+#ifdef HALO_64BIT
+#include "rasterizer/common/rasterizer_common.h"
+#endif
+#include "network_coop.h" /* port: port/linux/game/network_coop.c */
+#ifdef HALO_PROFILE
+#include "profile_console.h" /* port: port/linux/game/profile_console.c */
+#endif
+#include "profile_sections.h" /* port: port/linux/include/profile_sections.h */
+#include "networking/network_game_globals.h"
+#include "tag_files/tag_files.h"
+#include "cseries/cseries_windows.h"
+
+/* network_game_globals.c's */
+boolean network_game_distributed_client(void);
+/* port: a client drives the host's actors' units as the host sent them (port/linux/game/network_actors.c) */
+void network_actors_drive(void);
 
 /* ---------- constants */
 
@@ -253,144 +268,16 @@ typedef char verify_game_runtime_globals_difficulty_offset[
 
 /* ---------- prototypes */
 
-void game_engine_game_starting(
-	void);
-
-void game_engine_player_added(
-	long player_index);
-
-void recorded_animations_dispose(
-	void);
-void cinematic_dispose(
-	void);
-void hs_dispose(
-	void);
-void cheats_dispose(
-	void);
-void ui_widgets_dispose(
-	void);
-void editor_dispose(
-	void);
-void player_effect_dispose(
-	void);
-void rumble_dispose(
-	void);
-void game_sound_dispose(
-	void);
-void sound_classes_dispose(
-	void);
-void particles_dispose(
-	void);
-void contrails_dispose(
-	void);
-void players_dispose(
-	void);
-void decals_dispose(
-	void);
-void breakable_surfaces_dispose(
-	void);
-void structures_dispose(
-	void);
-void render_dispose(
-	void);
-void objects_dispose(
-	void);
-void director_dispose(
-	void);
-void interface_dispose(
-	void);
-void game_allegiance_dispose(
-	void);
-void saved_game_files_dispose(
-	void);
-void event_manager_dispose(
-	void);
-void input_abstraction_dispose(
-	void);
-void player_ui_dispose(
-	void);
-void game_state_dispose(
-	void);
-void bink_playback_dispose(
-	void);
-void progress_bar_dispose(
-	void);
-
-void rasterizer_dispose_from_old_map(
-	void);
-void game_state_dispose_from_old_map(
-	void);
-void cheats_dispose_from_old_map(
-	void);
-void recorded_animations_dispose_from_old_map(
-	void);
-void hs_dispose_from_old_map(
-	void);
-void cinematic_dispose_from_old_map(
-	void);
-void editor_dispose_from_old_map(
-	void);
-void ai_dispose_from_old_map(
-	void);
-void player_effect_dispose_from_old_map(
-	void);
-void rumble_dispose_from_old_map(
-	void);
-void point_physics_dispose_from_old_map(
-	void);
-void decals_dispose_from_old_map(
-	void);
-void breakable_surfaces_dispose_from_old_map(
-	void);
-void structures_dispose_from_old_map(
-	void);
-void render_dispose_from_old_map(
-	void);
-void objects_dispose_from_old_map(
-	void);
-void director_dispose_from_old_map(
-	void);
-void observer_dispose_from_old_map(
-	void);
-void interface_dispose_from_old_map(
-	void);
-void players_dispose_from_old_map(
-	void);
-void contrails_dispose_from_old_map(
-	void);
-void particles_dispose_from_old_map(
-	void);
-void game_sound_dispose_from_old_map(
-	void);
-void sound_classes_dispose_from_old_map(
-	void);
-void sound_dispose_from_old_map(
-	void);
-void game_allegiance_dispose_from_old_map(
-	void);
-void game_engine_dispose_from_old_map(
-	void);
-void scenario_dispose_from_old_map(
-	void);
-void particles_update(
-	real dt);
-void contrails_update(
-	real dt);
-void widgets_update(
-	real dt);
-void scenario_frame_update(
-	real dt);
-void rasterizer_frame_update(
-	real dt);
-void numeric_countdown_timer_update(
-	void);
-
 /* ---------- globals */
 
 static struct game_runtime_globals_prefix *game_globals = NULL;
+#ifdef HALO_BROWSER
+static char web_map_loading_name[32];
+#endif
 extern struct game_variant game_variant_global;
 extern struct data_array *player_data;
-extern short player_spawn_count;
+/* port: the PC options the game plays by (game_set_game_variant_options) */
+static struct game_variant_options game_variant_options_global;
 
 char const *global_game_difficulty_level_names[NUMBER_OF_GAME_DIFFICULTY_LEVELS] =
 {
@@ -401,6 +288,35 @@ char const *global_game_difficulty_level_names[NUMBER_OF_GAME_DIFFICULTY_LEVELS]
 };
 
 static struct profile_section game_update_section = {"game_update", NONE, TRUE};
+/* port: game_tick's steps, timed in the profiling build */
+PROFILE_SECTION(game_tick_cheats_enforce_section, "game_tick.cheats_enforce")
+PROFILE_SECTION(game_tick_remove_quitting_players_section, "game_tick.remove_quitting_players")
+PROFILE_SECTION(game_tick_allegiance_section, "game_tick.allegiance")
+PROFILE_SECTION(game_tick_units_section, "game_tick.units")
+PROFILE_SECTION(game_tick_ai_section, "game_tick.ai")
+PROFILE_SECTION(game_tick_actors_drive_section, "game_tick.actors_drive")
+PROFILE_SECTION(game_tick_players_before_section, "game_tick.players_before")
+PROFILE_SECTION(game_tick_effects_section, "game_tick.effects")
+PROFILE_SECTION(game_tick_antennas_section, "game_tick.antennas")
+PROFILE_SECTION(game_tick_first_person_section, "game_tick.first_person")
+PROFILE_SECTION(game_tick_game_engine_section, "game_tick.game_engine")
+PROFILE_SECTION(game_tick_editor_section, "game_tick.editor")
+PROFILE_SECTION(game_tick_hs_section, "game_tick.hs")
+PROFILE_SECTION(game_tick_recorded_animations_section, "game_tick.recorded_animations")
+PROFILE_SECTION(game_tick_objects_section, "game_tick.objects")
+PROFILE_SECTION(game_tick_players_after_section, "game_tick.players_after")
+PROFILE_SECTION(game_tick_hud_section, "game_tick.hud")
+PROFILE_SECTION(game_tick_player_effect_section, "game_tick.player_effect")
+
+static unsigned long game_loading_screen_hold_milliseconds(
+	char const *map_name);
+static void game_loading_screen_hold_progress(
+	unsigned long hold_start,
+	unsigned long hold_milliseconds,
+	boolean loaded);
+static void game_loading_screen_hold(
+	unsigned long hold_start,
+	unsigned long hold_milliseconds);
 
 /* ---------- public code */
 
@@ -487,32 +403,62 @@ void game_tick(
 		0x28D,
 		game_globals->active);
 
-	remove_quitting_players_from_game();
-	game_allegiance_update();
-	units_update();
-	ai_update();
-	players_update_before_game();
+	/* port: a data array gone out of order reported, and the lights made
+	again if it was theirs (game_state.c, object_lights.c), before anything
+	of the tick: a loaded game state's first tick, its scripts placing
+	actors, made the first light from it (Sentry NATIVE-7) */
+	game_state_check_data_arrays();
+	lights_port_recover();
+
+	/* port: a client of another's game, the host's rules (its own cheats and
+	game speed, set before it joined too, put back) */
+	profile_scope(game_tick_cheats_enforce_section, cheats_network_client_enforce();)
+	profile_scope(game_tick_remove_quitting_players_section, remove_quitting_players_from_game();)
+	profile_scope(game_tick_allegiance_section, game_allegiance_update();)
+	profile_scope(game_tick_units_section, units_update();)
+	/* (the host's actors drive the host's units, which a client of the
+	distributed netcode has from the host: its own would fight the host's
+	positions, and could place objects of their own) */
+	if (!network_game_distributed_client())
+		profile_scope(game_tick_ai_section, ai_update();)
+	else
+		profile_scope(game_tick_actors_drive_section, network_actors_drive();)
+	profile_scope(game_tick_players_before_section, players_update_before_game();)
 
 	seconds_per_tick = game_globals->players_are_double_speed
 		? 1.0f / (2 * TICKS_PER_SECOND)
 		: 1.0f / TICKS_PER_SECOND;
-    NATIVE_GAME_STAMP(1);
-	effects_update(seconds_per_tick);
-    NATIVE_GAME_STAMP(2);
-	lock_global_random_seed();
-	rumble_update();
-	first_person_weapons_update();
-	unlock_global_random_seed();
-	game_engine_update();
-	editor_update();
-	hs_update();
-	recorded_animations_update();
-    NATIVE_GAME_STAMP(3);
-	objects_update();
-    NATIVE_GAME_STAMP(4);
-	players_update_after_game();
-	hud_update();
-	player_effect_update();
+	NATIVE_GAME_STAMP(1);
+	profile_scope(game_tick_effects_section, effects_update(seconds_per_tick);)
+	NATIVE_GAME_STAMP(2);
+	/* An antenna's chain is a simulation of the Xbox's own step, an update a
+	tick: stepped a frame at a time, its springs, its carry and its points'
+	physics act against the frames' own movement of it, and a vehicle at
+	speed swings it far wider than a tick's step does. The frames between the
+	ticks are drawn from what each tick leaves (antenna.c). */
+	profile_scope(game_tick_antennas_section, antennas_update(seconds_per_tick);)
+	profile_scope(game_tick_first_person_section,
+		lock_global_random_seed();
+		rumble_update();
+		first_person_weapons_update();
+		unlock_global_random_seed();)
+	profile_scope(game_tick_game_engine_section, game_engine_update();)
+	profile_scope(game_tick_editor_section, editor_update();)
+	/* port: in network co-op only the host runs the scripts. A client running
+	them would place the map's actors and objects a second time and make
+	decisions that belong to the host. */
+	if (!(network_game_distributed_client() && network_coop_active()))
+		profile_scope(game_tick_hs_section, hs_update();)
+	profile_scope(game_tick_recorded_animations_section, recorded_animations_update();)
+	NATIVE_GAME_STAMP(3);
+	profile_scope(game_tick_objects_section, objects_update();)
+	NATIVE_GAME_STAMP(4);
+	profile_scope(game_tick_players_after_section, players_update_after_game();)
+	profile_scope(game_tick_hud_section, hud_update();)
+	profile_scope(game_tick_player_effect_section, player_effect_update();)
+	/* port: and at its end, before the frame draws the lights */
+	game_state_check_data_arrays();
+	lights_port_recover();
 
 	profile_exit(game_update_section);
 	collision_log_end_period();
@@ -601,8 +547,27 @@ void game_set_game_variant(
 	{
 		game_variant_global = *variant;
 	}
+	/* port: its PC options, until the network game's are given */
+	game_variant_options_default(&game_variant_global, &game_variant_options_global);
 
 	return;
+}
+
+void game_set_game_variant_options(
+	struct game_variant_options const *options)
+{
+	if (options)
+		game_variant_options_global = *options;
+	else
+		game_variant_options_default(&game_variant_global, &game_variant_options_global);
+
+	return;
+}
+
+struct game_variant_options const *game_variant_options_get(
+	void)
+{
+	return &game_variant_options_global;
 }
 
 void game_set_game_engine_index(
@@ -706,17 +671,15 @@ boolean game_is_cooperative(
 	return player_spawn_count > 1;
 }
 
-void set_random_seed(
-	unsigned long seed)
-{
-	*get_global_random_seed_address() = seed;
-
-	return;
-}
-
 boolean game_load(
 	struct game_options *options)
 {
+#ifdef HALO_PROFILE
+	/* port: the profiling build's recording learns of the map (every map
+	load passes here: main_new_map's and a network game's,
+	network_game_manager.c) */
+	profile_console_map_loaded(options->map_name);
+#endif
 	match_assert(
 		"c:\\halo\\SOURCE\\game\\game.c",
 		0x192,
@@ -740,11 +703,12 @@ boolean game_load(
 	return game_globals->map_loaded;
 }
 
+void network_distributed_new_game(void);
+void network_objects_placed(void);
+
 void game_initialize_for_new_map(
 	void)
 {
-	unsigned long random_seed;
-
 	match_assert(
 		"c:\\halo\\SOURCE\\game\\game.c",
 		0x1D1,
@@ -754,8 +718,7 @@ void game_initialize_for_new_map(
 		0x1D2,
 		!game_globals->active);
 
-	random_seed = game_globals->options.random_seed;
-	*get_global_random_seed_address() = random_seed;
+	set_random_seed(game_globals->options.random_seed);
 	game_engine_dispose();
 	game_engine_initialize(&game_variant_global);
 	real_math_reset_precision();
@@ -767,6 +730,13 @@ void game_initialize_for_new_map(
 	players_initialize_for_new_map();
 	scenario_initialize_for_new_map();
 	objects_initialize_for_new_map();
+	/* nothing of the distributed netcode's carried into the new game
+	(port/linux/game/network_distributed.c), before anything of the map
+	makes an object: a client makes the map's objects, and the game type's
+	(the flags of capture the flag, game_engine_initialize_for_new_map), at
+	the host's indices, not its own objects' of the last game's */
+	network_distributed_new_game();
+	render_interpolation_reset();
 	render_initialize_for_new_map();
 	structures_initialize_for_new_map();
 	breakable_surfaces_initialize_for_new_map();
@@ -800,9 +770,20 @@ void game_initialize_for_new_map(
 	objects_place();
 	if (!game_in_editor())
 		ai_place();
+	/* (the map's objects, placed as on the host: a distributed client's own
+	from now on go elsewhere, port/linux/game/network_objects.c) */
+	network_objects_placed();
 	ui_widgets_safe_to_load(TRUE);
 
 	return;
+}
+
+/* port: whether a map is loaded, the main menu's too: game_in_progress()
+is not, once game_time_end() stops its clock */
+boolean game_map_loaded(
+	void)
+{
+	return game_globals->map_loaded;
 }
 
 boolean game_map_loading_in_progress(
@@ -810,11 +791,26 @@ boolean game_map_loading_in_progress(
 {
 	struct game_runtime_globals_prefix *globals = game_globals;
 
+	if (!globals)
+	{
+		if (progress)
+			*progress = 0.0f;
+		return FALSE;
+	}
+
 	if (progress)
 		*progress = globals->loading_progress;
 
 	return globals->map_load_in_progress;
 }
+
+#ifdef HALO_BROWSER
+const char *game_map_loading_name(
+	void)
+{
+	return web_map_loading_name;
+}
+#endif
 
 void game_unload(
 	void)
@@ -905,6 +901,9 @@ void game_precache_new_map(
 	boolean blocking)
 {
 	long map_status;
+	/* port: display.loading_screen_min_seconds */
+	unsigned long hold_milliseconds = blocking ? game_loading_screen_hold_milliseconds(map_name) : 0;
+	unsigned long hold_start = system_milliseconds();
 
 	if (!cache_files_precache_map_loaded(map_name))
 	{
@@ -944,6 +943,11 @@ void game_precache_new_map(
 		{
 			struct game_runtime_globals_prefix *globals = game_globals;
 
+#ifdef HALO_BROWSER
+			csstrncpy(web_map_loading_name, tag_name_strip_path(map_name),
+				NUMBEROF(web_map_loading_name) - 1);
+			web_map_loading_name[NUMBEROF(web_map_loading_name) - 1] = '\0';
+#endif
 			globals->map_load_in_progress = TRUE;
 			globals->loading_progress = 0.0f;
 			match_assert(
@@ -953,15 +957,23 @@ void game_precache_new_map(
 					cache_files_precache_is_copying_map(map_name));
 			ui_widget_load_progress_widget();
 			progress_bar_begin(global_scenario_index != NONE);
+			map_status = 0;
 			do
 			{
-				map_status = cache_files_precache_map_status(
-					&game_globals->loading_progress);
+				/* port: (asked until it is done, then held) */
+				if (!map_status)
+				{
+					map_status = cache_files_precache_map_status(
+						&game_globals->loading_progress);
+				}
+				game_loading_screen_hold_progress(hold_start, hold_milliseconds, map_status != 0);
 				main_pregame_render();
 				main_rasterizer_throttle();
 				main_present_frame();
 			}
-			while (!map_status);
+			while (!map_status ||
+				(map_status != _cached_map_file_failed &&
+					system_milliseconds() - hold_start < hold_milliseconds));
 
 			progress_bar_end();
 			ui_widgets_close_all();
@@ -976,6 +988,12 @@ void game_precache_new_map(
 			globals->map_load_in_progress = FALSE;
 			globals->loading_progress = 1.0f;
 		}
+	}
+	else if (hold_milliseconds > 0)
+	{
+		/* port: a map already in its cache file loads at once; the loading
+		screen is still held for display.loading_screen_min_seconds */
+		game_loading_screen_hold(hold_start, hold_milliseconds);
 	}
 
 	if (blocking)
@@ -1085,7 +1103,9 @@ void remove_quitting_players_from_game(
 	struct player_datum *player;
 	long current_time;
 
-	if (!game_engine_running())
+	/* port: also in network co-op, which has no game engine. Without this a
+	player who left kept their unit, and it respawned. */
+	if (!game_engine_running() && !network_coop_active())
 		return;
 
 	current_time = game_time_get();
@@ -1096,7 +1116,9 @@ void remove_quitting_players_from_game(
 
 		if (quit_time != NONE && !player->quit_out_of_game)
 		{
-			if (current_time == quit_time)
+			/* port: at its time or past it (a client's clock may jump the
+			ticks it missed to the host's, game_time_set_distributed) */
+			if (current_time >= quit_time)
 			{
 				long unit_index = player->unit_index;
 
@@ -1106,15 +1128,6 @@ void remove_quitting_players_from_game(
 					unit_get(unit_index);
 					unit_kill_no_statistics(player->unit_index);
 				}
-			}
-			else if (current_time > quit_time)
-			{
-				error(
-					_error_silent,
-					"player %x failed to quit, wanted %d is %d",
-					iterator.datum_index,
-					quit_time,
-					current_time);
 			}
 		}
 	}
@@ -1135,3 +1148,65 @@ void game_set_game_variant_from_name(
 }
 
 /* ---------- private code */
+
+/* port_config.c */
+double config_real(char const *name);
+
+/* port: display.loading_screen_min_seconds (0, the default, for none): the
+least time the original loading screen stays up when a level loads, as
+loading from the Xbox's disc took, where the port's loads are over before it
+shows. Only in a game no other machine is in (campaign, a split screen game):
+this loop runs nothing of the network, so a game on it is not held. Never for
+the main menu's map. */
+static unsigned long game_loading_screen_hold_milliseconds(
+	char const *map_name)
+{
+	double seconds = config_real("display.loading_screen_min_seconds");
+
+	if (!(seconds > 0.0) || !_stricmp(tag_name_strip_path(map_name), "ui"))
+		return 0;
+	if (game_connection() != _game_connection_local && !network_game_is_splitscreen_local())
+		return 0;
+
+	return (unsigned long)(PIN(seconds, 0.0, 30.0) * 1000.0);
+}
+
+/* while the loading screen is held, its picture moves on with the time held
+as with a load's progress: the slower of the two */
+static void game_loading_screen_hold_progress(
+	unsigned long hold_start,
+	unsigned long hold_milliseconds,
+	boolean loaded)
+{
+	real held;
+
+	if (hold_milliseconds == 0)
+		return;
+	held = (real)(system_milliseconds() - hold_start) / (real)hold_milliseconds;
+	if (loaded)
+		game_globals->loading_progress = 1.0f;
+	game_globals->loading_progress = PIN(MIN(game_globals->loading_progress, held), 0.001f, 1.0f);
+}
+
+/* the loading screen alone, held for a map already loaded */
+static void game_loading_screen_hold(
+	unsigned long hold_start,
+	unsigned long hold_milliseconds)
+{
+	game_globals->map_load_in_progress = TRUE;
+	game_globals->loading_progress = 0.0f;
+	ui_widget_load_progress_widget();
+	progress_bar_begin(global_scenario_index != NONE);
+	do
+	{
+		game_loading_screen_hold_progress(hold_start, hold_milliseconds, TRUE);
+		main_pregame_render();
+		main_rasterizer_throttle();
+		main_present_frame();
+	}
+	while (system_milliseconds() - hold_start < hold_milliseconds);
+	progress_bar_end();
+	ui_widgets_close_all();
+	game_globals->map_load_in_progress = FALSE;
+	game_globals->loading_progress = 1.0f;
+}

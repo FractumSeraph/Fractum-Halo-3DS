@@ -29,9 +29,9 @@ symbols in this file:
 001AF4D0 0020:
 	_game_state_reverted (0000)
 001AF4F0 0160:
-	_code_001af4f0 (0000)
+	_game_state_header_valid (0000)
 001AF650 0070:
-	_code_001af650 (0000)
+	_game_state_allocation_record (0000)
 001AF6C0 0020:
 	_code_001af6c0 (0000)
 001AF6E0 0110:
@@ -96,6 +96,7 @@ symbols in this file:
 
 #include "cseries.h"
 #include "cseries_windows.h"
+#include "cseries/errors.h"
 #include "real_math.h"
 #include "console.h"
 #include "game_state.h"
@@ -120,13 +121,19 @@ symbols in this file:
 #include "data.h"
 #include "lruv_cache.h"
 #include "memory_pool.h"
+#include "cluster_partitions.h"
+/* port: object_bounds_cache.c's */
+void object_bounds_cache_invalidate(void);
+
+void platform_log(const char *format, ...);
 
 /* ---------- constants */
 
 enum
 {
-	GAME_STATE_CPU_SIZE = 0x305000,
-	GAME_STATE_GPU_SIZE = 0x40000,
+	/* the native builds' larger game state (halo_port_capacity.h) */
+	GAME_STATE_CPU_SIZE = HALO_PORT_GAME_STATE_CPU_SIZE,
+	GAME_STATE_GPU_SIZE = HALO_PORT_GAME_STATE_GPU_SIZE,
 	GAME_STATE_SIZE = GAME_STATE_CPU_SIZE+GAME_STATE_GPU_SIZE
 };
 
@@ -138,10 +145,10 @@ enum
 
 void dummy(
 	void);
-static boolean code_001af4f0(
+static boolean game_state_header_valid(
 	struct game_state_header *header,
 	boolean halt_on_error);
-static void code_001af650(
+static void game_state_allocation_record(
 	const char *name,
 	const char *type,
 	long size,
@@ -155,7 +162,7 @@ boolean recover_saved_games_hack;
 
 static FILE* bss_004d27b0;
 
-struct
+static struct
 {
 	void *base_address; // 0x0
 	long cpu_allocation_size; // 0x4
@@ -179,6 +186,11 @@ static game_state_before_save_proc before_save_procs[] =
 static game_state_before_load_proc before_load_procs[] =
 {
 	game_sound_clear,
+	/* port: where the cluster lists' references are, which the game state
+	being loaded does not hold */
+	cluster_partitions_port_forget,
+	/* port: (the objects are put back: object_bounds_cache.c) */
+	object_bounds_cache_invalidate,
 };
 
 static game_state_after_load_proc after_load_procs[] =
@@ -206,7 +218,7 @@ void dummy(
 	return;
 }
 
-void game_state_call_before_save_procs(
+static void game_state_call_before_save_procs(
 	void)
 {
 	game_state_before_save_proc *proc = before_save_procs;
@@ -220,7 +232,7 @@ void game_state_call_before_save_procs(
 	return;
 }
 
-void game_state_call_before_load_procs(
+static void game_state_call_before_load_procs(
 	void)
 {
 	game_state_before_load_proc *proc = before_load_procs;
@@ -234,7 +246,7 @@ void game_state_call_before_load_procs(
 	return;
 }
 
-void game_state_call_after_load_procs(
+static void game_state_call_after_load_procs(
 	void)
 {
 	game_state_after_load_proc *proc = after_load_procs;
@@ -257,10 +269,29 @@ void game_state_dispose(
 	return;
 }
 
+/* port: what last rewrote the game state, and when (game time), for
+game_state_check_data_arrays' report */
+static char const *game_state_last_event = "startup";
+static long game_state_last_event_time = NONE;
+
+static void game_state_note_event(
+	char const *event)
+{
+	game_state_last_event = event;
+	game_state_last_event_time = game_time_initialized() ? game_time_get() : NONE;
+}
+
+static void game_state_data_arrays_new_map(void);
+
 void game_state_initialize_for_new_map(
 	void)
 {
 	const char *name;
+
+	/* port: (the objects are put back: object_bounds_cache.c) */
+	object_bounds_cache_invalidate();
+	game_state_note_event("map start");
+	game_state_data_arrays_new_map();
 
 	game_state_globals.locked = TRUE;
 	game_state_globals.saved_game_valid = FALSE;
@@ -269,7 +300,9 @@ void game_state_initialize_for_new_map(
 	memset(game_state_globals.header, 0, sizeof(*game_state_globals.header));
 
 	name = tag_get_name(global_scenario_index);
-	strcpy(game_state_globals.header->map_name, name);
+	/* port: no longer than the header has room for (a map's scenario's
+	name is the map's) */
+	strncpy(game_state_globals.header->map_name, name, sizeof(game_state_globals.header->map_name) - 1);
 	strcpy(game_state_globals.header->build_number, "01.01.14.2342");
 
 	game_state_globals.header->player_count = player_spawn_count;
@@ -303,10 +336,26 @@ static void game_state_capture_checkpoint(boolean persist)
              &game_state_globals.header->checksum,sizeof(*game_state_globals.header),GAME_STATE_SIZE);}
 #endif
 	main_start_time();
+	game_state_note_event("checkpoint saved");
 
 	return;
 }
 
+/* port: whether game_state_revert has a saved state to go back to */
+boolean game_state_port_saved_game_valid(
+	void)
+{
+	return game_state_globals.saved_game_valid;
+}
+
+/* port: stamps the revert at the current game time again, after a network
+co-op host moved its clock on past the revert (game_state_reverted
+compares the two) */
+void game_state_port_restamp_revert_time(
+	void)
+{
+	game_state_globals.revert_time = game_time_get();
+}
 void game_state_save(void) { game_state_capture_checkpoint(TRUE); }
 
 void game_state_revert(
@@ -319,8 +368,15 @@ void game_state_revert(
 		return;
 	}
 
+	game_state_note_event("checkpoint revert");
 	game_state_call_before_load_procs();
-	game_state_read_from_file();
+	/* port: a file that is not a saved game of this build is not taken, and
+	the map starts over */
+	if (!game_state_read_from_file())
+	{
+		game_state_globals.saved_game_valid = FALSE;
+		main_reset_map();
+	}
 	game_state_call_after_load_procs();
 
 	return;
@@ -335,12 +391,14 @@ void game_state_save_to_persistent_storage(
 #endif
 	if (player_spawn_count==1)
 	{
+		game_state_note_event("save and quit");
 		game_state_revert();
 		game_state_write_to_persistent_storage(
 			game_state_globals.base_address,
 			&game_state_globals.header->checksum,
 			sizeof(*game_state_globals.header),
-			0x345000);
+			/* the whole of the native builds' larger game state */
+			GAME_STATE_SIZE);
 	}
 
 	return;
@@ -358,11 +416,13 @@ boolean game_state_test_persistent_storage(
 		&header,
 		&header.checksum,
 		sizeof(*game_state_globals.header),
-		0x345000,
+		/* the whole of the native builds' larger game state */
+		GAME_STATE_SIZE,
 		corrupted))
 	{
 		*difficulty = header.difficulty;
-		strcpy(map_name, header.map_name);
+		csstrncpy(map_name, header.map_name, sizeof(header.map_name));
+		map_name[sizeof(header.map_name) - 1] = 0;
 
 		success = TRUE;
 	}
@@ -380,7 +440,8 @@ boolean game_state_test_persistent_storage(
 void game_state_save_core(
 	const char *name)
 {
-	if (game_state_write_core(name, game_state_globals.base_address, 0x345000))
+	/* the whole of the native builds' larger game state */
+	if (game_state_write_core(name, game_state_globals.base_address, GAME_STATE_SIZE))
 	{
 		console_printf(FALSE, "saved '%s'", name);
 	}
@@ -398,26 +459,13 @@ boolean game_state_reverted(
 	return (game_state_globals.revert_time==game_time_get());
 }
 
-static boolean code_001af4f0(
+static boolean game_state_header_valid(
 	struct game_state_header *header,
 	boolean halt_on_error)
 {
 	boolean valid = FALSE;
 
-	if (csstrcmp(header->build_number, "01.01.14.2342"))
-	{
-		if (halt_on_error)
-		{
-			// Original bug: %d formats two string pointers. A non-matching bug-fix
-			// build should use %s for both values instead.
-			match_vassert(
-				"c:\\halo\\SOURCE\\saved games\\game_state.c",
-				405,
-				FALSE,
-				csprintf(temporary, "expected build #%d but got #%d", "01.01.14.2342", header->build_number));
-		}
-	}
-	else if (csstrcmp(header->map_name, tag_get_name(global_scenario_index)))
+	if (csstrcmp(header->map_name, tag_get_name(global_scenario_index)))
 	{
 		if (halt_on_error)
 		{
@@ -465,11 +513,20 @@ static boolean code_001af4f0(
 	{
 		valid = TRUE;
 	}
+	/* port: why a saved game is not loaded, for the log */
+	if (!valid)
+	{
+		error(_error_silent, "the saved game is not taken: its header is of map '%s' (this is '%s'), allocations %08lx (%08lx), %d players (%d), map checksum %08lx (%08lx)",
+			header->map_name, tag_get_name(global_scenario_index),
+			(unsigned long)header->allocation_size_checksum, (unsigned long)game_state_globals.allocation_size_checksum,
+			header->player_count, player_spawn_count,
+			(unsigned long)header->cache_file_checksum, (unsigned long)cache_files_get_checksum());
+	}
 
 	return valid;
 }
 
-static void code_001af650(
+static void game_state_allocation_record(
 	const char *name,
 	const char *type,
 	long size,
@@ -514,7 +571,7 @@ void *game_state_malloc(
 	match_assert("c:\\halo\\SOURCE\\saved games\\game_state.c", 156, !game_state_globals.locked);
 	match_assert("c:\\halo\\SOURCE\\saved games\\game_state.c", 159, game_state_globals.cpu_allocation_size+size<=GAME_STATE_CPU_SIZE);
 
-	code_001af650(name, type, size, FALSE);
+	game_state_allocation_record(name, type, size, FALSE);
 
 	pointer = (byte *)game_state_globals.base_address+game_state_globals.cpu_allocation_size;
 	game_state_globals.cpu_allocation_size+= size;
@@ -539,7 +596,7 @@ void *game_state_gpu_malloc(
 	match_assert("c:\\halo\\SOURCE\\saved games\\game_state.c", 185, !game_state_globals.locked);
 	match_assert("c:\\halo\\SOURCE\\saved games\\game_state.c", 188, game_state_globals.gpu_allocation_size+size<=GAME_STATE_GPU_SIZE);
 
-	code_001af650(name, type, size, TRUE);
+	game_state_allocation_record(name, type, size, TRUE);
 
 	game_state_globals.gpu_allocation_size+= size;
 	pointer = (byte *)game_state_globals.base_address-game_state_globals.gpu_allocation_size+GAME_STATE_SIZE;
@@ -549,17 +606,356 @@ void *game_state_gpu_malloc(
 	return pointer;
 }
 
+
+/* ---------- port: the image of a saved game
+
+A saved game (a checkpoint's savegame.bin, a core) is the game state's
+memory as it was, read back over it: with the data arrays' pointers to
+their elements, the objects' memory pool's blocks and their references, and
+the caches' procedures in it. The file is anyone's, so before an image is
+taken, what the game state has of those is checked against what was made
+at startup (the same in every run of this build: the header's allocation
+checksum says so), and the procedures are put back. An image that fails is
+not taken. */
+
+enum
+{
+	_game_state_allocation_data,
+	_game_state_allocation_memory_pool,
+	_game_state_allocation_lruv_cache,
+
+	MAXIMUM_GAME_STATE_ALLOCATIONS = 256,
+};
+
+struct game_state_allocation
+{
+	short kind;
+	short maximum_count;
+	short element_size;
+	void *address;
+	long size;
+	long page_count;
+	long page_size_bits;
+	lruv_delete_block_proc delete_block_proc;
+	lruv_locked_block_proc locked_block_proc;
+	/* a data array's last tick in order this map (NONE: not yet), and
+	whether it was reported since (game_state_check_data_arrays) */
+	long good_time;
+	boolean reported;
+};
+
+static struct game_state_allocation game_state_allocations[MAXIMUM_GAME_STATE_ALLOCATIONS];
+static long game_state_allocation_count;
+
+static struct game_state_allocation *game_state_allocation_new(
+	short kind,
+	void *address)
+{
+	struct game_state_allocation *allocation;
+
+	match_assert("game_state.c", 0, game_state_allocation_count < MAXIMUM_GAME_STATE_ALLOCATIONS);
+	if (game_state_allocation_count >= MAXIMUM_GAME_STATE_ALLOCATIONS)
+		return NULL;
+	allocation = &game_state_allocations[game_state_allocation_count++];
+	csmemset(allocation, 0, sizeof(*allocation));
+	allocation->kind = kind;
+	allocation->address = address;
+
+	return allocation;
+}
+
+/* whether [address, address+size) lies in the game state */
+static boolean game_state_image_contains(
+	void const *address,
+	long size)
+{
+	byte const *base = game_state_globals.base_address;
+	byte const *pointer = address;
+
+	return size >= 0 && pointer >= base && pointer <= base + GAME_STATE_SIZE &&
+		size <= (base + GAME_STATE_SIZE) - pointer;
+}
+
+/* where the image holds what the game state has at address */
+static void *game_state_image_pointer(
+	byte *image,
+	void const *address)
+{
+	return image + ((byte const *)address - (byte const *)game_state_globals.base_address);
+}
+
+static boolean game_state_image_refuse(
+	char const *name,
+	char const *reason)
+{
+	error(2, "the saved game is not taken: %s %s", name, reason);
+
+	return FALSE;
+}
+
+/* a data array as it was made (its pointer to its elements, its capacity)
+with counts that fit */
+static boolean game_state_image_data_valid(
+	byte *image,
+	struct data_array *live,
+	short maximum_count,
+	short element_size)
+{
+	struct data_array *data = game_state_image_pointer(image, live);
+	char const *name;
+
+	data->name[NUMBEROF(data->name) - 1] = 0;
+	name = data->name;
+	if (data->signature != 'd@t@')
+		return game_state_image_refuse(name, "is a data array of another signature");
+	if (data->maximum_count != maximum_count || data->size != element_size)
+		return game_state_image_refuse(name, "is a data array of another capacity");
+	if (data->data != XBOX_ADDRESS(live + 1))
+		return game_state_image_refuse(name, "is a data array whose elements are elsewhere");
+	if (data->count < 0 || data->count > data->maximum_count ||
+		data->first_free_absolute_index < 0 || data->first_free_absolute_index > data->maximum_count ||
+		data->actual_count < 0 || data->actual_count > data->count)
+	{
+		return game_state_image_refuse(name, "is a data array with counts past its capacity");
+	}
+	data->valid = data->valid != FALSE;
+	data->identifier_zero_invalid = data->identifier_zero_invalid != FALSE;
+	/* (one made for the map has its identifiers seeded, and the game's is
+	made for this map too: data_make_valid) */
+	if (data->valid && !data->next_identifier)
+		return game_state_image_refuse(name, "is a data array with no identifier to give out");
+	if (!data->valid && live->valid)
+		return game_state_image_refuse(name, "is a data array not made for the map");
+
+	return TRUE;
+}
+
+/* whether the reference of a block (the pointer to it that the pool keeps
+up to date) is in a data array's elements */
+static boolean game_state_image_reference_valid(
+	void **reference)
+{
+	long index;
+
+	if (!game_state_image_contains(reference, sizeof(*reference)) || (POINTER_BITS(reference) & 3))
+		return FALSE;
+	for (index = 0; index < game_state_allocation_count; index++)
+	{
+		struct game_state_allocation const *allocation = &game_state_allocations[index];
+
+		if (allocation->kind == _game_state_allocation_data)
+		{
+			byte const *first = (byte const *)((struct data_array *)allocation->address + 1);
+			byte const *last = first + (long)allocation->maximum_count * allocation->element_size;
+
+			if ((byte const *)reference >= first && (byte const *)(reference + 1) <= last)
+				return TRUE;
+		}
+	}
+
+	return FALSE;
+}
+
+/* a memory pool as it was made, whose blocks lie in it in order, each
+referenced from a data array's element that holds the block's address */
+static boolean game_state_image_memory_pool_valid(
+	byte *image,
+	struct memory_pool *live,
+	long size)
+{
+	struct memory_pool *pool = game_state_image_pointer(image, live);
+	byte const *first = (byte const *)(live + 1);
+	byte const *last = first + size;
+	struct memory_pool_block *block_live = pool->first_block;
+	struct memory_pool_block *previous_live = NULL;
+	long used = 0;
+	long count = 0;
+	char const *name;
+
+	pool->name[NUMBEROF(pool->name) - 1] = 0;
+	name = pool->name;
+	if (pool->signature != 'pool')
+		return game_state_image_refuse(name, "is a memory pool of another signature");
+	if (pool->base_address != live + 1 || pool->size != size)
+		return game_state_image_refuse(name, "is a memory pool of another size or place");
+	while (block_live)
+	{
+		struct memory_pool_block *block;
+
+		if ((byte const *)block_live < first || (byte const *)block_live > last - sizeof(*block) ||
+			(POINTER_BITS(block_live) & 3) || ++count > size / (long)sizeof(*block))
+		{
+			return game_state_image_refuse(name, "is a memory pool with a block outside it");
+		}
+		block = game_state_image_pointer(image, block_live);
+		if (block->header_signature != 'head' || block->trailer_signature != 'tail')
+			return game_state_image_refuse(name, "is a memory pool with a block of another signature");
+		if (block->size < (long)sizeof(*block) || (block->size & 3) || block->size > last - (byte const *)block_live)
+			return game_state_image_refuse(name, "is a memory pool with a block of a bad size");
+		if (block->previous_block != previous_live)
+			return game_state_image_refuse(name, "is a memory pool with blocks out of order");
+		if (block->next_block && (byte const *)block->next_block < (byte const *)block_live + block->size)
+			return game_state_image_refuse(name, "is a memory pool with blocks that overlap");
+		if (!game_state_image_reference_valid(block->reference) ||
+			*(void **)game_state_image_pointer(image, block->reference) != block_live + 1)
+		{
+			return game_state_image_refuse(name, "is a memory pool with a block referenced from elsewhere");
+		}
+		used += block->size;
+		previous_live = block_live;
+		block_live = block->next_block;
+	}
+	if (pool->last_block != previous_live || pool->free_size != size - used)
+		return game_state_image_refuse(name, "is a memory pool whose last block or free size is wrong");
+
+	return TRUE;
+}
+
+/* an lruv cache as it was made, with its procedures put back */
+static boolean game_state_image_lruv_cache_valid(
+	byte *image,
+	struct lruv_cache *live,
+	struct game_state_allocation const *allocation)
+{
+	struct lruv_cache *cache = game_state_image_pointer(image, live);
+	struct data_array *blocks_live = (struct data_array *)(live + 1);
+	char const *name;
+
+	cache->name[NUMBEROF(cache->name) - 1] = 0;
+	name = cache->name;
+	if (cache->signature != 'weee')
+		return game_state_image_refuse(name, "is a cache of another signature");
+	if (cache->blocks != blocks_live || cache->page_count != allocation->page_count ||
+		cache->page_size_bits != allocation->page_size_bits)
+	{
+		return game_state_image_refuse(name, "is a cache of another size or place");
+	}
+	cache->delete_block_proc = allocation->delete_block_proc;
+	cache->locked_block_proc = allocation->locked_block_proc;
+
+	return game_state_image_data_valid(image, blocks_live, allocation->maximum_count, sizeof(struct lruv_cache_block));
+}
+
+boolean game_state_image_accept(
+	void *image,
+	long size)
+{
+	long index;
+
+	if (size != GAME_STATE_SIZE)
+		return game_state_image_refuse("the image", "is of another size");
+	for (index = 0; index < game_state_allocation_count; index++)
+	{
+		struct game_state_allocation const *allocation = &game_state_allocations[index];
+		boolean valid;
+
+		switch (allocation->kind)
+		{
+		case _game_state_allocation_data:
+			valid = game_state_image_data_valid(image, allocation->address, allocation->maximum_count,
+				allocation->element_size);
+			break;
+		case _game_state_allocation_memory_pool:
+			valid = game_state_image_memory_pool_valid(image, allocation->address, allocation->size);
+			break;
+		case _game_state_allocation_lruv_cache:
+			valid = game_state_image_lruv_cache_valid(image, allocation->address, allocation);
+			break;
+		default:
+			valid = FALSE;
+			break;
+		}
+		if (!valid)
+			return FALSE;
+	}
+	csmemcpy(game_state_globals.base_address, image, size);
+	error(_error_silent, "the saved game is taken");
+
+	return TRUE;
+}
+
 struct data_array *game_state_data_new(
 	const char *name,
 	short maximum_count,
 	short size)
 {
 	struct data_array *data;
+	struct game_state_allocation *allocation;
 
 	data = game_state_malloc(name, "data array", data_allocation_size(maximum_count, size));
 	data_initialize(data, name, maximum_count, size);
+	allocation = game_state_allocation_new(_game_state_allocation_data, data);
+	if (allocation)
+	{
+		allocation->maximum_count = maximum_count;
+		allocation->element_size = size;
+		allocation->good_time = NONE;
+	}
 
 	return data;
+}
+
+/* port: a data array in order: an array (its signature, its own elements)
+made valid for the map, with an identifier to give out and counts that fit
+(data.c's data_usable) */
+static boolean game_state_data_array_good(
+	struct data_array const *data)
+{
+	return data->signature == 'd@t@' && data->data == XBOX_ADDRESS(data + 1) && data->valid && data->next_identifier &&
+		data->count >= 0 && data->count <= data->maximum_count &&
+		data->actual_count >= 0 && data->actual_count <= data->count &&
+		data->first_free_absolute_index >= 0 && data->first_free_absolute_index <= data->maximum_count;
+}
+
+static void game_state_data_arrays_new_map(
+	void)
+{
+	long index;
+
+	for (index = 0; index < game_state_allocation_count; index++)
+	{
+		game_state_allocations[index].good_time = NONE;
+		game_state_allocations[index].reported = FALSE;
+	}
+}
+
+/* port: each tick, every data array that was in order this map and no
+longer is, reported once a map to halo.log (which a crash report carries):
+when it went wrong (between its last tick in order and this one), how, and
+what last rewrote the game state. A lights array found made for no map
+(Sentry NATIVE-7) was the first sign of it; data.c now gives out no datum
+from such an array, so this says where it came from. */
+void game_state_check_data_arrays(
+	void)
+{
+	long now = game_time_get();
+	long index;
+
+	for (index = 0; index < game_state_allocation_count; index++)
+	{
+		struct game_state_allocation *allocation = &game_state_allocations[index];
+		struct data_array const *data = allocation->address;
+
+		if (allocation->kind != _game_state_allocation_data)
+			continue;
+		if (game_state_data_array_good(data))
+		{
+			allocation->good_time = now;
+			continue;
+		}
+		if (allocation->good_time == NONE || allocation->reported)
+			continue;
+		allocation->reported = TRUE;
+		platform_log("game state: %.31s went wrong between ticks %ld and %ld of %.255s: signature %08lx, %s, "
+			"next identifier %04x, count %d (%d used, first free %d) of %d; last rewritten by %s at tick %ld",
+			data->name, allocation->good_time, now, game_state_globals.header->map_name,
+			(unsigned long)data->signature, data->valid ? "valid" : "not valid",
+			(unsigned short)data->next_identifier, data->count, data->actual_count,
+			data->first_free_absolute_index, data->maximum_count, game_state_last_event,
+			game_state_last_event_time);
+		error(_error_silent, "game state: %.31s went wrong between ticks %ld and %ld (last rewritten by %s at tick %ld)",
+			data->name, allocation->good_time, now, game_state_last_event, game_state_last_event_time);
+	}
 }
 
 struct memory_pool *game_state_memory_pool_new(
@@ -570,6 +966,12 @@ struct memory_pool *game_state_memory_pool_new(
 
 	pool = game_state_malloc(name, "memory pool", memory_pool_allocation_size(size));
 	memory_pool_initialize(pool, name, size);
+	{
+		struct game_state_allocation *allocation = game_state_allocation_new(_game_state_allocation_memory_pool, pool);
+
+		if (allocation)
+			allocation->size = size;
+	}
 
 	return pool;
 }
@@ -586,6 +988,18 @@ struct lruv_cache *game_state_lruv_cache_new(
 
 	cache = game_state_malloc(name, "lruv cache", lruv_allocation_size(maximum_block_count));
 	lruv_initialize(cache, name, page_count, page_size_bits, maximum_block_count, delete_block_proc, locked_block_proc);
+	{
+		struct game_state_allocation *allocation = game_state_allocation_new(_game_state_allocation_lruv_cache, cache);
+
+		if (allocation)
+		{
+			allocation->maximum_count = (short)maximum_block_count;
+			allocation->page_count = page_count;
+			allocation->page_size_bits = page_size_bits;
+			allocation->delete_block_proc = delete_block_proc;
+			allocation->locked_block_proc = locked_block_proc;
+		}
+	}
 
 	return cache;
 }
@@ -601,9 +1015,12 @@ void game_state_try_and_load_from_persistent_storage(
 			sizeof(header),
 			GAME_STATE_SIZE,
 			NULL)
-		&& code_001af4f0(&header, FALSE)
-		&& main_get_difficulty() == header.difficulty)
+		&& game_state_header_valid(&header, FALSE)
+		&& (main_get_difficulty() == header.difficulty ||
+			(error(_error_silent, "the saved game is not taken: it is of difficulty %d, this game of %d",
+				header.difficulty, main_get_difficulty()), FALSE)))
 	{
+		game_state_note_event("saved game loaded");
 		game_state_call_before_load_procs();
 		game_state_read_from_persistent_storage(
 			game_state_globals.base_address,
@@ -624,8 +1041,9 @@ void game_state_load_core(
 	struct game_state_header header;
 
 	if (game_state_read_core_header(name, &header, sizeof(header))
-		&& code_001af4f0(&header, TRUE))
+		&& game_state_header_valid(&header, TRUE))
 	{
+		game_state_note_event("core loaded");
 		game_state_call_before_load_procs();
 		game_state_read_core(
 			name,
@@ -646,7 +1064,9 @@ void game_state_initialize(
 	void)
 {
 	crc_new(&game_state_globals.allocation_size_checksum);
-	game_state_globals.base_address = game_state_allocate_buffer(0x80061000, GAME_STATE_CPU_SIZE, 0x40000);
+	/* the native builds place their larger game state above the tag cache
+	(halo_port_capacity.h, cache/physical_memory_map.c) */
+	game_state_globals.base_address = game_state_allocate_buffer(HALO_PORT_GAME_STATE_BASE_ADDRESS, GAME_STATE_CPU_SIZE, GAME_STATE_GPU_SIZE);
 	game_state_create_or_open_file();
 	game_state_globals.header = game_state_malloc("header", NULL, sizeof(*game_state_globals.header));
 

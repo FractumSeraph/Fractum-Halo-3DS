@@ -261,6 +261,7 @@ symbols in this file:
 #include "ai_profile.h"
 #include "encounters.h"
 #include "game/game.h"
+#include "game/game_allegiance.h"
 #include "items/projectile_definitions.h"
 #include "items/projectiles.h"
 #include "items/weapon_definitions.h"
@@ -438,31 +439,6 @@ enum
 		(delta_x) * (delta_x) + (delta_y) * (delta_y))
 
 /* ---------- structures */
-
-struct actor_perception_ai_debug_state_view
-{
-	byte __unknown000[6];
-	boolean perception_ignore_player_props;
-	boolean perception_blind_player_props;
-	byte __unknown008[3];
-	boolean perception_blind_all_props;
-	boolean perception_deaf_all_props;
-	byte __unknown00D[0x94];
-	boolean perception_trace_player_awareness;
-};
-
-struct actor_perception_debug_info_view
-{
-	byte __unknown0000[0x6578];
-	short perception_awareness_speed;
-	short evaluation_mode;
-};
-
-#define actor_perception_ai_debug_get() \
-	((struct actor_perception_ai_debug_state_view *)&ai_debug)
-
-#define actor_perception_debug_get(index) \
-	((struct actor_perception_debug_info_view *)&actor_debug_array[(index)])
 
 #define actor_perception_object_get(index) \
 	((struct object_datum *)object_get_and_verify_type( \
@@ -749,25 +725,12 @@ struct actor_target_weight_weapon_definition_view
 	real minimum_target_range;
 };
 
-struct actor_perception_projectile_datum_view
-{
-	byte __unknown000[0x1DC];
-	byte attachment_flags;
-};
-
 struct actor_perception_vehicle_definition_view
 {
 	byte __unknown000[4];
 	real bounding_radius;
 	byte __unknown008[0x2E8];
 	byte danger_zone_flags;
-};
-
-struct actor_perception_projectile_view
-{
-	byte __unknown000[0x1F0];
-	real time_remaining;
-	real arming_rate;
 };
 
 struct actor_perception_communication_context
@@ -992,20 +955,10 @@ typedef char actor_emotion_definition_minimum_stand_offset_assert[
 	offsetof(struct actor_definition, defensive.defensive_crouch_min_stand_time) == 0x304 ? 1 : -1];
 typedef char actor_emotion_definition_minimum_crouch_offset_assert[
 	offsetof(struct actor_definition, defensive.defensive_crouch_min_crouch_time) == 0x308 ? 1 : -1];
-typedef char actor_perception_ai_debug_ignore_players_offset_assert[
-	offsetof(struct actor_perception_ai_debug_state_view, perception_ignore_player_props) == 6 ? 1 : -1];
-typedef char actor_perception_ai_debug_blind_players_offset_assert[
-	offsetof(struct actor_perception_ai_debug_state_view, perception_blind_player_props) == 7 ? 1 : -1];
-typedef char actor_perception_ai_debug_blind_all_offset_assert[
-	offsetof(struct actor_perception_ai_debug_state_view, perception_blind_all_props) == 11 ? 1 : -1];
-typedef char actor_perception_ai_debug_deaf_all_offset_assert[
-	offsetof(struct actor_perception_ai_debug_state_view, perception_deaf_all_props) == 12 ? 1 : -1];
-typedef char actor_perception_ai_debug_trace_offset_assert[
-	offsetof(struct actor_perception_ai_debug_state_view, perception_trace_player_awareness) == 0xA1 ? 1 : -1];
+#ifndef HALO_64BIT
 typedef char actor_perception_debug_awareness_speed_offset_assert[
-	offsetof(struct actor_perception_debug_info_view, perception_awareness_speed) == 0x6578 ? 1 : -1];
-typedef char actor_perception_projectile_attachment_flags_offset_assert[
-	offsetof(struct actor_perception_projectile_datum_view, attachment_flags) == 0x1DC ? 1 : -1];
+	offsetof(struct actor_debug_info, perception_awareness_speed) == 0x6578 ? 1 : -1];
+#endif
 typedef char actor_perception_source_unit_sound_offset_assert[
 	offsetof(struct unit_definition, unit.constant_sound) == 0x182 ? 1 : -1];
 typedef char actor_perception_source_actor_target_offset_assert[
@@ -1034,10 +987,12 @@ typedef char actor_perception_encounter_view_corpse_ignore_time_offset_assert[
 	offsetof(struct actor_perception_encounter_view, corpse_ignore_time) == 0x58 ? 1 : -1];
 typedef char actor_visibility_variant_modified_vision_range_offset_assert[
 	offsetof(struct actor_variant_definition, ranged_combat.modified_vision_range) == 0x150 ? 1 : -1];
+#ifndef HALO_64BIT
 typedef char actor_visibility_debug_info_size_assert[
 	sizeof(struct actor_debug_info) == 0x657C ? 1 : -1];
 typedef char actor_visibility_debug_info_last_time_offset_assert[
 	offsetof(struct actor_debug_info, vision_last_time) == 0x656C ? 1 : -1];
+#endif
 typedef char actor_orphan_prop_view_related_prop_index_offset_assert[
 	offsetof(struct actor_orphan_prop_view, related_prop_index) == 0xC ? 1 : -1];
 typedef char actor_orphan_prop_view_orphan_inspection_ticks_offset_assert[
@@ -1098,41 +1053,6 @@ static int actor_perception_qsort_compare_optional_props(
 	void const *a,
 	void const *b);
 
-void actor_situation_update_target_status(
-	long actor_index);
-
-void actor_situation_combat_status_update(
-	long actor_index);
-
-real actor_compute_prop_target_weight(
-	long actor_index,
-	long prop_index);
-
-boolean actor_compute_prop_unopposable(
-	long actor_index,
-	long prop_index);
-
-long ai_get_responsible_unit(
-	long object_index,
-	boolean include_self);
-
-long vehicle_find_pathfinding_surface_index(
-	long vehicle_index,
-	real_point3d *position);
-
-long biped_find_pathfinding_surface_index(
-	long biped_index,
-	real_point3d *position);
-
-boolean actor_attacking_target(
-	long actor_index,
-	real_vector3d *attack_vector);
-
-void actor_stimulus_prop_sighted(
-	long actor_index,
-	long prop_index,
-	boolean initial_acknowledgement);
-
 static long actor_perception_unit_from_swarm(
 	long swarm_actor_index,
 	long actor_index,
@@ -1155,37 +1075,6 @@ static void actor_perception_refresh_test_object(
 	struct actor_perception_refresh_list *friend_list,
 	struct actor_perception_refresh_list *enemy_list);
 
-void actor_input_sample_position(
-	long actor_index,
-	long unit_index,
-	struct actor_position_data *position);
-
-boolean vehicle_causes_collision_damage(
-	long vehicle_index);
-
-boolean game_team_is_enemy(
-	short team_index0,
-	short team_index1);
-
-short actor_visibility_at_point(
-	long actor_index,
-	struct actor_position_data const *position,
-	real_point3d const *target_position,
-	char lighting,
-	short line_of_sight,
-	boolean use_maximum_distance,
-	boolean target_is_player,
-	short perception_knowledge);
-
-short actor_audibility_at_point(
-	long actor_index,
-	struct actor_position_data const *position,
-	real_point3d const *source_position,
-	struct location const *source_location,
-	short source_type,
-	real scale,
-	short line_of_sight);
-
 static boolean actor_perception_assess_suicide_danger(
 	long actor_index,
 	long object_index,
@@ -1193,10 +1082,6 @@ static boolean actor_perception_assess_suicide_danger(
 	real distance,
 	boolean enemy,
 	boolean visible);
-
-real actor_look_compute_prop_interest(
-	long actor_index,
-	long prop_index);
 
 /* TU-local copy: the same macro exists in actor_stimulus.c. */
 #define prop_acknowledged(prop) \
@@ -2051,12 +1936,12 @@ boolean actor_perception_friend_prop_is_attacking(
 }
 
 short actor_perception_aiming_vector_test_blockage(
-	real_point3d const *origin,
-	real_vector3d const *aiming_vector,
-	real_point3d const *point,
-	real_vector3d *error)
+	real_point3d const *source_position,
+	real_vector3d const *source_vector,
+	real_point3d const *friend_position,
+	real_vector3d *friend_direction_to_aiming_vector)
 {
-	real_vector2d horizontal_aiming;
+	real_vector2d source_planar_direction;
 	real_vector3d friend_vector;
 	real_vector3d blockage_vector;
 	real horizontal_aiming_magnitude;
@@ -2065,15 +1950,15 @@ short actor_perception_aiming_vector_test_blockage(
 	real horizontal_error_squared;
 	short blockage = 0;
 
-	horizontal_aiming.i = aiming_vector->i;
-	horizontal_aiming.j = aiming_vector->j;
-	horizontal_aiming_magnitude = magnitude2d(&horizontal_aiming);
+	source_planar_direction.i = source_vector->i;
+	source_planar_direction.j = source_vector->j;
+	horizontal_aiming_magnitude = magnitude2d(&source_planar_direction);
 	if (!(_real_epsilon > fabs(horizontal_aiming_magnitude)))
 	{
 		real inverse_magnitude = 1.0f / horizontal_aiming_magnitude;
 
-		horizontal_aiming.i *= inverse_magnitude;
-		horizontal_aiming.j *= inverse_magnitude;
+		source_planar_direction.i *= inverse_magnitude;
+		source_planar_direction.j *= inverse_magnitude;
 	}
 	else
 	{
@@ -2083,10 +1968,10 @@ short actor_perception_aiming_vector_test_blockage(
 	if (!(horizontal_aiming_magnitude > 0.0f))
 		goto done;
 
-	vector_from_points3d(origin, point, &friend_vector);
+	vector_from_points3d(source_position, friend_position, &friend_vector);
 	projection =
-		friend_vector.i * horizontal_aiming.i +
-		friend_vector.j * horizontal_aiming.j;
+		friend_vector.i * source_planar_direction.i +
+		friend_vector.j * source_planar_direction.j;
 	friend_distance = square_root(
 		friend_vector.i * friend_vector.i +
 		friend_vector.j * friend_vector.j);
@@ -2097,17 +1982,17 @@ short actor_perception_aiming_vector_test_blockage(
 
 	projection = -projection;
 	blockage_vector.i =
-		friend_vector.i + projection * aiming_vector->i;
+		friend_vector.i + projection * source_vector->i;
 	blockage_vector.j =
-		friend_vector.j + projection * aiming_vector->j;
+		friend_vector.j + projection * source_vector->j;
 	blockage_vector.k =
-		friend_vector.k + projection * aiming_vector->k;
+		friend_vector.k + projection * source_vector->k;
 
-	if (error != NULL)
+	if (friend_direction_to_aiming_vector != NULL)
 	{
-		error->i = -blockage_vector.i;
-		error->j = -blockage_vector.j;
-		error->k = -blockage_vector.k;
+		friend_direction_to_aiming_vector->i = -blockage_vector.i;
+		friend_direction_to_aiming_vector->j = -blockage_vector.j;
+		friend_direction_to_aiming_vector->k = -blockage_vector.k;
 	}
 
 	if (blockage_vector.k > -0.5f && blockage_vector.k < 0.9f)
@@ -2458,8 +2343,10 @@ struct actor_emotion_prop_view
 	boolean dangerous_vehicle_driver;
 };
 
+#ifndef HALO_64BIT
 typedef char actor_emotion_target_size_assert[
 	sizeof(struct actor_emotion_target) == 0x1C ? 1 : -1];
+#endif
 typedef char actor_emotion_actor_last_time_offset_assert[
 	offsetof(struct actor_emotion_actor_view, last_emotion_target_time) == 0x3A4 ? 1 : -1];
 typedef char actor_emotion_actor_ticks_offset_assert[
@@ -3499,30 +3386,9 @@ void actor_emotion_update(
 		actor->emotions.forced_to_charge = TRUE;
 	}
 
-	/* BUG (preserved for exact matching): the scan starts at
-	 * NUMBER_OF_ACTOR_THREAT_TYPES rather than NUMBER_OF_ACTOR_THREAT_TYPES-1,
-	 * so its first iteration reads specific_threats[9] - one element past the
-	 * end of the nine-element array, which is cumulative_threats[0].
-	 * Evidence: January emits `mov eax,9` at +0xf5, then the six-byte alignment
-	 * nop 8d 9b 00 00 00 00 (`lea ebx,[ebx]`, which touches neither EAX nor
-	 * memory), and falls into the loop head at +0x100, `movsx edx,ax` followed by
-	 * `cmp byte ptr [edx+esi+0x1ee],0`; the `dec eax` is at +0x10d, AFTER that
-	 * load. In the same object actor_situation_update increments
-	 * cumulative_threats for threat types 1..8 at esi+0x1f8..esi+0x1ff and
-	 * area_friends at esi+0x200, which fixes cumulative_threats at esi+0x1f7 and
-	 * so specific_threats at esi+0x1ee with exactly nine elements.
-	 * Layout is asserted, not assumed: see
-	 * actor_perception_specific_threats_size_assert and
-	 * actor_perception_threat_arrays_adjacent_assert above, which fail to compile
-	 * if the two arrays ever stop being adjacent or change length.
-	 * Consequence: none observable. cumulative_threats[_actor_threat_none] is the
-	 * one element of that array nothing ever writes - every write in the tree
-	 * uses _actor_threat_visible..._actor_threat_damaging_me, i.e. 1..8, and the
-	 * single variable-index use is a read-only csprintf argument in the
-	 * actor_debug_print_threat macro - so the stray byte is always zero, the
-	 * early-out is never taken on the stray iteration, and the scan falls through
-	 * to the intended starting index. */
-	for (priority = NUMBER_OF_ACTOR_THREAT_TYPES;
+	/* port: the scan starts at the last threat type, not one past the end of
+	specific_threats (January read cumulative_threats[0] there, always zero) */
+	for (priority = NUMBER_OF_ACTOR_THREAT_TYPES - 1;
 		priority > 0 &&
 			actor->situation.specific_threats[priority] <= 0;
 		priority--)
@@ -3974,12 +3840,8 @@ void prop_status_refresh(
 							prop->preferred_target = TRUE;
 							break;
 
-						/* BUG (preserved for exact matching): January compares a platoon
-						 * reference with the actor's squad index (actor+0x3a) and a squad
-						 * reference with its platoon index (actor+0x3c), the reverse of
-						 * actor_action_handle_vehicle_entry. A corrected build should compare
-						 * platoon references with meta.platoon_index and squad references with
-						 * meta.squad_index. */
+						/* (as the original game, kept: a platoon reference is compared with the actor's squad,
+						and a squad reference with its platoon) */
 						case _ai_reference_type_squad:
 							if ((short)(((unsigned long)actor->external_orders.desired_target_ai_index >> 16) & UNSIGNED_CHAR_MAX) ==
 								prop_actor->meta.platoon_index)
@@ -5510,8 +5372,8 @@ static void actor_perception_refresh_test_object(
 			}
 			else if (current_object->object.type == _object_type_projectile)
 			{
-				struct actor_perception_projectile_datum_view *projectile =
-					(struct actor_perception_projectile_datum_view *)
+				struct projectile_datum *projectile =
+					(struct projectile_datum *)
 						current_object;
 				struct projectile_definition *projectile_definition =
 					projectile_definition_get(
@@ -5519,7 +5381,7 @@ static void actor_perception_refresh_test_object(
 
 				if (projectile_definition->projectile.danger_radius > 0.0f &&
 					(current_object->object.parent_object_index == NONE ||
-						TEST_FLAG(projectile->attachment_flags, 5)))
+						TEST_FLAG(projectile->projectile.flags, 5)))
 				{
 					struct actor_position_data position;
 					real_point3d origin;
@@ -5931,10 +5793,8 @@ static void actor_perception_refresh(
 				}
 				else
 				{
-					/* BUG (preserved for exact matching): January walks the perceiving actor's
-					 * swarm unit list (actor+0x24 through the actor_get(actor_index) pointer),
-					 * not the uncached swarm actor's list. A corrected build should start from
-					 * swarm_actor->meta.swarm_unit_index. */
+					/* (as the original game, kept: the perceiving actor's swarm is walked, not the swarm
+					actor's) */
 					long unit_index = actor->meta.swarm_unit_index;
 
 					while (unit_index != NONE)
@@ -6056,9 +5916,7 @@ static void actor_perception_refresh(
 					prop_position_refresh(actor_index, prop_index, &position, FALSE, FALSE);
 				}
 
-				/* BUG (preserved for exact matching): January leaves the loop before
-				 * advancing past the entry that reached the limit, so the discard loop
-				 * below also deletes that entry when it was an existing prop. */
+				/* (as the original game, kept: the entry that reached the limit is discarded below too) */
 				if (++enemies.accepted_count >= 4)
 				{
 					break;
@@ -6682,7 +6540,7 @@ void actor_perception_update(
 
 		case _prop_state_becoming_acknowledged:
 			{
-				struct actor_perception_debug_info_view *debug = actor_perception_debug_get(DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index));
+				struct actor_debug_info *debug = &actor_debug_array[DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index)];
 
 				if (prop->perception == _actor_perception_none)
 				{
@@ -6704,7 +6562,7 @@ void actor_perception_update(
 				{
 					short knowledge_type = actor_get_perception_knowledge(actor_index, iterator.index);
 					short awareness_speed;
-					real awareness_delta;
+					real awareness_delta = 0.0f;
 
 #line 489 "c:\\halo\\SOURCE\\ai\\actor_perception.c"
 					assert((knowledge_type >= 0) && (knowledge_type < NUMBER_OF_ACTOR_KNOWLEDGE_TYPES));

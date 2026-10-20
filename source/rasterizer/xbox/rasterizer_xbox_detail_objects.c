@@ -75,7 +75,9 @@ symbols in this file:
 #include "cseries.h"
 #include "bitmaps/bitmap_group.h"
 #include "cseries/errors.h"
+#include "main/main.h"
 #include "rasterizer/rasterizer.h"
+#include "rasterizer/rasterizer_console_vars.h"
 #include "scenario/scenario.h"
 #include "scenario/scenario_definitions.h"
 #include "structures/structure_bsp_definitions.h"
@@ -83,6 +85,7 @@ symbols in this file:
 #include <xtl.h>
 
 #include "rasterizer/xbox/rasterizer_xbox.h"
+#include "rasterizer/xbox/rasterizer_xbox_pixel_shader.h"
 
 /* ---------- constants */
 
@@ -101,14 +104,6 @@ enum
 	((struct detail_object_collection_definition *)tag_get('dobc', (index)))
 
 /* ---------- structures */
-
-struct detail_objects_debug_options
-{
-	byte reserved00[0x24];
-	boolean detail_objects;
-	byte reserved25[0x2B];
-	float detail_objects_offset_multiplier;
-};
 
 struct detail_object
 {
@@ -207,32 +202,6 @@ struct detail_object_view_data
 	word pad;
 };
 
-struct pixel_shader_definition
-{
-	unsigned long alpha_inputs[8];
-	unsigned long final_combiner_inputs_abcd;
-	unsigned long final_combiner_inputs_efg;
-	unsigned long constant_0[8];
-	unsigned long constant_1[8];
-	unsigned long alpha_outputs[8];
-	unsigned long rgb_inputs[8];
-	unsigned long compare_mode;
-	unsigned long final_combiner_constant_0;
-	unsigned long final_combiner_constant_1;
-	unsigned long rgb_outputs[8];
-	unsigned long combiner_count;
-	unsigned long texture_modes;
-	unsigned long dot_mapping;
-	unsigned long input_texture;
-	unsigned long c0_mapping;
-	unsigned long c1_mapping;
-	unsigned long final_combiner_constants;
-};
-
-typedef char detail_objects_enabled_offset_assert[
-	offsetof(struct detail_objects_debug_options, detail_objects) == 0x24 ? 1 : -1];
-typedef char detail_objects_multiplier_offset_assert[
-	offsetof(struct detail_objects_debug_options, detail_objects_offset_multiplier) == 0x50 ? 1 : -1];
 typedef char detail_objects_pixel_shader_size_assert[
 	sizeof(struct pixel_shader_definition) == 0xF0 ? 1 : -1];
 typedef char detail_object_size_assert[
@@ -251,6 +220,7 @@ typedef char detail_object_palette_entry_size_assert[
 	sizeof(struct scenario_detail_object_collection_palette_entry) == 0x30 ? 1 : -1];
 typedef char structure_detail_object_data_size_assert[
 	sizeof(struct structure_detail_object_data) == 0x40 ? 1 : -1];
+#ifndef HALO_64BIT
 typedef char detail_object_cell_data_size_assert[
 	sizeof(struct detail_object_cell_data) == 0x18 ? 1 : -1];
 typedef char detail_object_layer_data_size_assert[
@@ -258,19 +228,34 @@ typedef char detail_object_layer_data_size_assert[
 typedef char detail_object_view_data_size_assert[
 	sizeof(struct detail_object_view_data) == 0x8 ? 1 : -1];
 
+#endif
 /* ---------- prototypes */
 
-short main_get_window_count(
-	void);
+static void detail_object_data_error(
+	char const *problem);
 
 /* ---------- globals */
 
-extern struct detail_objects_debug_options rasterizer_debug_options;
-D3DVertexBuffer *bss_0045e904 = NULL;
+static D3DVertexBuffer *bss_0045e904 = NULL;
 
 #define local_d3d_vertex_buffer bss_0045e904
 
 /* ---------- private code */
+
+/* port: a map's detail objects past what the draw has room for; said once */
+static void detail_object_data_error(
+	char const *problem)
+{
+	static boolean reported = FALSE;
+
+	if (!reported)
+	{
+		error(_error_silent, "### ERROR detail objects have a bad %s; the rest are left out", problem);
+		reported = TRUE;
+	}
+
+	return;
+}
 
 static void detail_object_build_vertices(
 	long detail_object_count,
@@ -284,6 +269,14 @@ static void detail_object_build_vertices(
 	word color;
 	byte color_low;
 	byte color_high;
+
+	/* port: a collection without types (a map's) has none to pick (it
+	divided by zero) */
+	if (detail_object_count > 0 && collection->type_definitions.count <= 0)
+	{
+		detail_object_data_error("type count");
+		detail_object_count = 0;
+	}
 
 	if (detail_object_count > 0)
 	{
@@ -311,10 +304,12 @@ static void detail_object_build_vertices(
 				type_definitions,
 				(short)type_index,
 				struct detail_object_type_definition);
+			/* port: a type without sprites (a map's) draws its first (it
+			divided by zero) */
 			vertex.sprite = (word)(
 				(type_index << 4) |
 				((type_definition->first_sprite_index +
-					((detail_object->data & 0xF) % type_definition->sprite_count)) << 8));
+					(type_definition->sprite_count ? (detail_object->data & 0xF) % type_definition->sprite_count : 0)) << 8));
 
 			*vertices++ = vertex;
 			vertex.sprite++;
@@ -372,7 +367,7 @@ void _rasterizer_detail_objects_begin(
 	void)
 {
 	rasterizer_profile_begin(_rasterizer_profile_detail_objects);
-	if (!rasterizer_debug_options.detail_objects)
+	if (!rasterizer_debug_options.draw_detail_objects)
 	{
 		return;
 	}
@@ -415,7 +410,7 @@ void _rasterizer_detail_objects_begin(
 			8.0f,
 			8.0f,
 			8.0f,
-			rasterizer_debug_options.detail_objects_offset_multiplier,
+			rasterizer_debug_options.detail_object_screen_facing_offset_multiplier,
 			1.0f,
 			1.0f,
 			0.5f,
@@ -478,7 +473,7 @@ void _rasterizer_detail_objects_rebuild_vertices(
 	long cell_index;
 	boolean warned;
 
-	if (!rasterizer_debug_options.detail_objects)
+	if (!rasterizer_debug_options.draw_detail_objects)
 	{
 		return;
 	}
@@ -525,6 +520,12 @@ void _rasterizer_detail_objects_rebuild_vertices(
 	{
 		detail_object_data = NULL;
 	}
+	/* port: a BSP without detail object data has no objects to build */
+	if (!detail_object_data)
+	{
+		IDirect3DVertexBuffer8_Unlock(local_d3d_vertex_buffer);
+		return;
+	}
 	detail_objects = TAG_BLOCK_GET_ELEMENT(
 		&detail_object_data->detail_objects,
 		0,
@@ -552,6 +553,14 @@ void _rasterizer_detail_objects_rebuild_vertices(
 				do
 				{
 					cell = &layer->cells[(short)cell_index];
+					/* port: only objects the BSP has (a map's range) */
+					if (cell->detail_object_count < 0 ||
+						cell->first_detail_object_index < 0 ||
+						cell->detail_object_count > detail_object_data->detail_objects.count - cell->first_detail_object_index)
+					{
+						detail_object_data_error("cell range");
+						cell->detail_object_count = 0;
+					}
 					detail_object_count = cell->detail_object_count;
 					if (detail_object_count > MAXIMUM_DETAIL_OBJECTS_PER_FRAME - submitted_count)
 					{
@@ -616,10 +625,11 @@ void _rasterizer_detail_objects_draw(
 	long sprite_index;
 	long frame_count;
 	long cell_index;
+	long type_count;
 	boolean success;
 
 	success = TRUE;
-	if (!rasterizer_debug_options.detail_objects)
+	if (!rasterizer_debug_options.draw_detail_objects)
 	{
 		return;
 	}
@@ -700,7 +710,13 @@ void _rasterizer_detail_objects_draw(
 			frame_count = 0;
 			state.counter = 0;
 			type_definitions = &collection->type_definitions;
-			if (type_definitions->count > 0)
+			/* port: no more types than type_data holds (a map's count) */
+			type_count = MIN(type_definitions->count, MAXIMUM_DETAIL_OBJECT_TYPES_PER_COLLECTION);
+			if (type_definitions->count > type_count)
+			{
+				detail_object_data_error("type count");
+			}
+			if (type_count > 0)
 			{
 				long type_index = 0;
 				struct detail_object_bitmap_group_sequence *type_sequence;
@@ -734,7 +750,7 @@ void _rasterizer_detail_objects_draw(
 					state.counter++;
 					type_index = (short)state.counter;
 				}
-				while (type_index < type_definitions->count);
+				while (type_index < type_count);
 			}
 
 			state.counter = 0;
@@ -756,6 +772,13 @@ void _rasterizer_detail_objects_draw(
 						{
 							do
 							{
+								/* port: no more sprites than frame_data holds (a
+								map's counts) */
+								if (frame_count >= MAXIMUM_DETAIL_OBJECT_SPRITES_PER_COLLECTION)
+								{
+									detail_object_data_error("sprite count");
+									break;
+								}
 								sprite = TAG_BLOCK_GET_ELEMENT(
 									&sequence->sprites,
 									(short)sprite_index,
@@ -785,7 +808,7 @@ void _rasterizer_detail_objects_draw(
 				global_d3d_device,
 				-0x4B,
 				type_data,
-				type_definitions->count) >= 0 && success)
+				type_count) >= 0 && success)
 			{
 				success = TRUE;
 			}

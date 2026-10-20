@@ -94,6 +94,7 @@ symbols in this file:
 
 #include "cseries.h"
 #include "periodic_functions.h"
+#include "cseries/errors.h"
 #include "tag_files/tag_groups.h"
 
 /* ---------- constants */
@@ -142,6 +143,9 @@ static void transition_function_build_table(
 static void periodic_function_build_table(
 	short function_type,
 	byte *table);
+static void function_type_error(
+	char const *kind,
+	short function_type);
 
 /* ---------- globals */
 
@@ -257,11 +261,24 @@ real periodic_function_evaluate(
 
 	if (function_type == _periodic_function_one)
 		return 1.0f;
+	/* a function there is none of (a Halo PC map's tag may name one:
+	port/linux/game/ce_functions.c makes the fields it knows valid ones) is
+	the first, one, as a zeroed field is: never a table past the last */
+	if (function_type < 0 || function_type >= NUMBER_OF_PERIODIC_FUNCTIONS)
+		return 1.0f;
 
 	match_assert(
 		"c:\\halo\\SOURCE\\math\\periodic_functions.c",
 		157,
 		function_type>=0 && function_type<NUMBER_OF_PERIODIC_FUNCTIONS);
+
+	/* port: a type the tables have, or the default, one (a map's type; it
+	picked a table pointer from past the tables) */
+	if (!VALID_INDEX(function_type, NUMBER_OF_PERIODIC_FUNCTIONS))
+	{
+		function_type_error("periodic", function_type);
+		return 1.0f;
+	}
 
 	if (function_tables_initialized)
 	{
@@ -291,15 +308,7 @@ real periodic_function_evaluate(
 			return result;
 		}
 
-#ifdef HALO_LINUX
-		/* the native builds' x87 code can carry 255*(1.0f/255.0f) at more
-		than single precision, a hair past 1, and the game asserts that colours
-		driven by these functions stay within [0, 1] */
-		result = (1.0f-fraction)*first_value + second_value*fraction;
-		return PIN(result, 0.0f, 1.0f);
-#else
 		return (1.0f-fraction)*first_value + second_value*fraction;
-#endif
 	}
 
 	return 0.0f;
@@ -323,11 +332,22 @@ real transition_function_evaluate(
 
 	if (function_type == _transition_function_linear)
 		return value;
+	/* as for a periodic function: the first, linear */
+	if (function_type < 0 || function_type >= NUMBER_OF_TRANSITION_FUNCTIONS)
+		return value;
 
 	match_assert(
 		"c:\\halo\\SOURCE\\math\\periodic_functions.c",
 		216,
 		function_type>=0 && function_type<NUMBER_OF_TRANSITION_FUNCTIONS);
+
+	/* port: a type the tables have, or the default, linear (a map's type; it
+	picked a table pointer from past the tables) */
+	if (!VALID_INDEX(function_type, NUMBER_OF_TRANSITION_FUNCTIONS))
+	{
+		function_type_error("transition", function_type);
+		return value;
+	}
 
 	if (function_tables_initialized)
 	{
@@ -363,7 +383,7 @@ static void __fastcall periodic_function_build_variable_period_x_table(
 	for (index = 0; index < PERIODIC_FUNCTION_TABLE_SIZE; index++)
 	{
 		x_table[index] = sum;
-		sum += (real_random()+1.0f)*0.25f +
+		sum += real_random()*0.25f + 0.25f +
 			((real)cos(8.2f*_pi*index/PERIODIC_FUNCTION_TABLE_SIZE)+1.0f)*real_random() +
 			((real)cos(10.2f*_pi*index/PERIODIC_FUNCTION_TABLE_SIZE)+1.0f)*real_random() +
 			((real)cos(14.6f*_pi*index/PERIODIC_FUNCTION_TABLE_SIZE)+1.0f)*real_random();
@@ -409,9 +429,14 @@ static void transition_function_build_table(
 		case _transition_function_cosine:
 			result = ((real)sin(value*3.1415927f-1.5707964f)+1.0f)*0.5f;
 			break;
+		/* January left result unassigned in this arm, trusting system_exit not to
+		 * return; a build whose asserts do not halt would go on with it. It is the
+		 * first function's value here, as an unknown function is evaluated
+		 * (periodic_function_evaluate). */
 		default:
 			display_assert(NULL, "c:\\halo\\SOURCE\\math\\periodic_functions.c", 411, TRUE);
 			system_exit(-1);
+			result = value;
 			break;
 		}
 
@@ -497,9 +522,14 @@ static void periodic_function_build_table(
 			result = (real)fmod((double)random_x, 1.0);
 			result *= result;
 			break;
+		/* January left result unassigned in this arm, trusting system_exit not to
+		 * return; a build whose asserts do not halt would go on with it. It is the
+		 * first function's value here, as an unknown function is evaluated
+		 * (periodic_function_evaluate). */
 		default:
 			display_assert(NULL, "c:\\halo\\SOURCE\\math\\periodic_functions.c", 499, TRUE);
 			system_exit(-1);
+			result = 1.0f;
 			break;
 		}
 
@@ -540,7 +570,7 @@ void periodic_functions_initialize(
 		67,
 		!function_tables_initialized);
 	function_tables_initialized = TRUE;
-	*get_global_random_seed_address() = 0x20F3F660;
+	set_random_seed(0x20F3F660);
 
 	for (function_index = 0; function_index < NUMBER_OF_PERIODIC_FUNCTIONS; function_index++)
 	{
@@ -581,6 +611,26 @@ void periodic_functions_initialize(
 	return;
 }
 
+/* port: a map's function type past the tables, reported once (functions are
+evaluated every tick) */
+static void function_type_error(
+	char const *kind,
+	short function_type)
+{
+	static boolean function_type_reported = FALSE;
+
+	if (!function_type_reported)
+	{
+		function_type_reported = TRUE;
+		error(
+			_error_silent,
+			"### ERROR a %s function has type #%d; it is evaluated as the default",
+			kind,
+			function_type);
+	}
+
+	return;
+}
 #ifdef HALO_N3DS
 real periodic_function_reference(
 	short function_type,

@@ -14,18 +14,20 @@ header included in hcex build.
 
 enum
 {
-	_game_engine_allow_dynamic_lighting_bit = 0,
-	_game_engine_allow_integrated_lights_bit,
-	_game_engine_disable_infinite_grenades_bit,
+	_game_engine_disable_dynamic_light_bit = 0,
+	_game_engine_disable_integrated_lights_bit,
+	_game_engine_5_or_more_players_bit,
 };
 
 enum
 {
 	_game_variant_draw_object_in_motion_sensor_bit = 0,
-	_game_variant_unknown1_bit = 1,
-	_game_variant_infinite_grenades_bit = 2,
+	_game_variant_allow_friendly_navpoints_bit,
+	_game_variant_infinite_grenades_bit,
 	_game_variant_no_shields_bit,
 	_game_variant_always_invisible_bit,
+	/* (the starting equipment: generic, else the map's) */
+	_game_variant_generic_starting_equipment_bit,
 };
 
 enum game_engine_type
@@ -36,7 +38,10 @@ enum game_engine_type
 	game_engine_oddball,
 	game_engine_king,
 	game_engine_race,
-	game_engine_terminator,
+	/* port: Bomb (game_engine_bomb.c), in the slot Bungie's cut terminator
+	game type had; played only between ChupathingyCE machines that agree on
+	Delta Peer's bomb capability (docs/bomb.md) */
+	game_engine_bomb,
 	game_engine_stub,
 	number_of_game_engines,
 	first_usable_game_engine_index = game_engine_ctf,
@@ -104,6 +109,12 @@ struct king_variant
 	boolean moving_hill;
 };
 
+/* the balls of an oddball game */
+enum
+{
+	MAXIMUM_ODDBALLS = 16,
+};
+
 struct oddball_variant
 {
 	boolean random_start;
@@ -121,6 +132,44 @@ struct race_variant
 	long team_scoring;
 };
 
+/* port: Bomb's rules (game_engine_bomb.c) */
+enum
+{
+	/* a goal starts a new round: every player respawns and the bomb resets */
+	_bomb_new_round_on_score_bit = 0,
+	/* melee only: no starting weapons, none on the map, no grenades or
+	powerups; a map's player-usable energy sword, if it has one, in hand
+	(game_variant_options_default) */
+	_bomb_melee_only_bit,
+};
+
+/* port: the player traits a Bomb gametype starts with
+(game_engine_traits_default) */
+enum
+{
+	_bomb_traits_none = 0,
+	_bomb_traits_grifball,
+	/* Grifball's, everyone faster (175%), the carrier faster still (200%):
+	Open Pitch, for a big map */
+	_bomb_traits_open_pitch,
+	NUMBER_OF_BOMB_TRAITS
+};
+
+struct bomb_variant
+{
+	/* seconds the carrier stands in the goal to score; 0: on contact */
+	long arm_time;
+	/* seconds a dropped bomb lies before it resets; 0: never */
+	long reset_time;
+	/* seconds a round lasts (it ends without a score); 0: no limit */
+	long round_time;
+	/* _bomb_*_bit */
+	byte flags;
+	/* _bomb_traits_* */
+	byte traits;
+	byte pad[10];
+};
+
 union game_engine_variant
 {
 	struct ctf_variant ctf;
@@ -128,7 +177,10 @@ union game_engine_variant
 	struct king_variant king;
 	struct oddball_variant oddball;
 	struct race_variant race;
+	struct bomb_variant bomb;
 };
+
+typedef char verify_game_engine_variant_size[sizeof(union game_engine_variant) == 0x18 ? 1 : -1];
 
 struct game_variant
 {
@@ -140,6 +192,97 @@ struct game_variant
 };
 
 typedef char verify_game_variant_size[sizeof(struct game_variant) == 0x68 ? 1 : -1];
+
+/* port: the PC version's gametype options that the Xbox's variant has not
+(its gametype editor's, port/linux/game/menu_functions.c). A saved gametype
+keeps them after its signature (playlist_profile.c), the network game
+carries them (network_game_manager.h), and the game plays by them
+(game_variant_options_get). */
+enum
+{
+	_friendly_fire_on = 0,
+	_friendly_fire_off,
+	_friendly_fire_shields_only,
+	_friendly_fire_explosives_only,
+	NUMBER_OF_FRIENDLY_FIRE_MODES
+};
+
+enum
+{
+	/* other players on the motion tracker: all (the variant's draw object
+	in motion sensor bit set), friends only, none */
+	_radar_players_all = 0,
+	_radar_players_friends,
+	_radar_players_none,
+	NUMBER_OF_RADAR_PLAYERS
+};
+
+enum
+{
+	_loadout_category = 0,
+	_loadout_custom,
+	NUMBER_OF_LOADOUTS
+};
+
+enum
+{
+	_loadout_weapon_none = 0,
+	_loadout_weapon_random,
+	_loadout_weapon_assault_rifle,
+	_loadout_weapon_pistol,
+	_loadout_weapon_shotgun,
+	_loadout_weapon_sniper_rifle,
+	_loadout_weapon_rocket_launcher,
+	_loadout_weapon_plasma_pistol,
+	_loadout_weapon_plasma_rifle,
+	_loadout_weapon_needler,
+	NUMBER_OF_LOADOUT_WEAPONS
+};
+
+enum
+{
+	_variant_vehicle_warthog = 0,
+	_variant_vehicle_ghost,
+	_variant_vehicle_scorpion,
+	_variant_vehicle_rocket_warthog,
+	_variant_vehicle_banshee,
+	_variant_vehicle_gun_turret,
+	NUMBER_OF_VARIANT_VEHICLES,
+	MAXIMUM_VARIANT_VEHICLE_COUNT = 4,
+	/* a team's vehicles: those of a vehicle set (universal_variant's
+	vehicle_set values), else every one the map places, as Halo PC places
+	them (PC), else its counts */
+	VARIANT_VEHICLE_SET_PC = 0xFE,
+	VARIANT_VEHICLE_SET_CUSTOM = 0xFF
+};
+
+/* (the starting equipment, generic or the map's, is the variant's own:
+_game_variant_generic_starting_equipment_bit) */
+struct game_variant_options
+{
+	/* minutes; 0: none */
+	short time_limit;
+	short friendly_fire;
+	/* seconds added to a team killer's respawn */
+	short friendly_fire_penalty;
+	/* seconds; 0: never (the Xbox game's) */
+	short vehicle_respawn_time;
+	boolean auto_team_balance;
+	byte radar_players;
+	/* red's and blue's (free for all: red's) */
+	byte vehicle_set[2];
+	byte vehicle_counts[2][NUMBER_OF_VARIANT_VEHICLES];
+	/* the weapons: the weapon set's (category), else each player starts
+	with these (custom: _loadout_weapon_none, _random, or a weapon) */
+	byte loadout;
+	byte primary_weapon;
+	byte secondary_weapon;
+	/* no weapons spawn on the map (its grenades and powerups do): for
+	a loadout of none, melee only */
+	boolean no_map_weapons;
+};
+
+typedef char verify_game_variant_options_size[sizeof(struct game_variant_options) == 0x1C ? 1 : -1];
 
 struct game_engine
 {
@@ -154,7 +297,7 @@ struct game_engine
 	void (*statistics_append)(long statistic);
 	void (*handle_client_message)(void *message);
 	void (*handle_server_message)(void *message);
-	void (*unknown2C)(void);
+	void (*pregame_post_rasterize)(void);
 	void (*post_rasterize_objects)(void);
 	void (*player_update_each_tick)(
 		long player_index);
@@ -166,7 +309,7 @@ struct game_engine
 		long player_index);
 	void (*weapon_dropped)(
 		long weapon_index);
-	void (*unknown44)(void);
+	void (*update)(void);
 	long (*get_player_score)(
 		long player_index,
 		enum get_score_type score_type);
@@ -192,11 +335,11 @@ struct game_engine
 		boolean friendly_fire);
 	boolean (*format_message)(
 		long player_index,
-		long parameter1,
-		long parameter2,
-		wchar_t *message,
-		long message_character_count);
-	float (*starting_location_rating)(
+		long message,
+		long message_data,
+		wchar_t *buffer,
+		long buffer_size);
+	real (*starting_location_rating)(
 		long player_index,
 		struct player_starting_location const *starting_location);
 	void (*prespawn_player_update)(
@@ -215,6 +358,7 @@ struct game_engine
 	long (*did_player_win)(
 		long player_index);
 };
+#ifndef HALO_64BIT
 
 typedef char verify_game_engine_size[sizeof(struct game_engine) == 0x88 ? 1 : -1];
 typedef char verify_game_engine_player_update_each_tick_offset[
@@ -231,9 +375,187 @@ typedef char verify_game_engine_format_message_offset[
 	offsetof(struct game_engine, format_message) == 0x64 ? 1 : -1];
 typedef char verify_game_engine_player_update_offset[
 	offsetof(struct game_engine, player_update) == 0x70 ? 1 : -1];
+#endif
+
+/* port: player traits (docs/bomb.md, "Player traits"): percents of a
+player's health, of the damage it deals and resists, and of its speed (100
+changes nothing), and its shields. A Bomb game type plays by them: every
+player's, and its bomb carrier's on top; its host sends them over Delta
+Peer (TRAITS: delta_wire.h has the same ranges) */
+enum
+{
+	PLAYER_TRAIT_HEALTH_MINIMUM = 10,
+	PLAYER_TRAIT_HEALTH_MAXIMUM = 400,
+	PLAYER_TRAIT_DAMAGE_MINIMUM = 25,
+	PLAYER_TRAIT_DAMAGE_MAXIMUM = 400,
+	PLAYER_TRAIT_RESISTANCE_MINIMUM = 25,
+	PLAYER_TRAIT_RESISTANCE_MAXIMUM = 400,
+	PLAYER_TRAIT_SPEED_MINIMUM = 50,
+	PLAYER_TRAIT_SPEED_MAXIMUM = 200,
+	PLAYER_TRAIT_JUMP_MINIMUM = 50,
+	PLAYER_TRAIT_JUMP_MAXIMUM = 200,
+	PLAYER_TRAIT_GRAVITY_MINIMUM = 25,
+	PLAYER_TRAIT_GRAVITY_MAXIMUM = 200,
+	PLAYER_TRAIT_MELEE_MINIMUM = 50,
+	PLAYER_TRAIT_MELEE_MAXIMUM = 200,
+};
+
+enum
+{
+	/* the variant's (its no shields option) */
+	_trait_shields_unchanged = 0,
+	_trait_shields_none,
+	_trait_shields_normal,
+	/* charged past full, as the overshield powerup charges them (three
+	times), and charged again whenever they drain */
+	_trait_shields_overshield,
+	NUMBER_OF_TRAIT_SHIELDS
+};
+
+struct player_traits
+{
+	short health;
+	short damage;
+	short resistance;
+	short speed;
+	/* _trait_shields_* */
+	byte shields;
+	/* drawn in a bright color of its own */
+	byte highlight;
+	byte pad[2];
+	/* of its jump's speed, of gravity on it in the air, and of its melee
+	blow's reach: only for players whose machine has Delta Peer's
+	bomb_movement (game_engine_traits_jump_multiplier) */
+	short jump;
+	short gravity;
+	short melee;
+	short pad2;
+};
+
+struct game_traits
+{
+	struct player_traits everyone;
+	struct player_traits carrier;
+};
+
+#ifdef HALO_GAME_BROWSER
+/* (game_engine_bomb.c) a variant's traits (none but a Bomb game type's), and
+traits kept in their ranges */
+void game_engine_traits_default(struct game_variant const *variant, struct game_traits *traits);
+void game_engine_traits_clean(struct game_traits *traits);
+/* whether the game plays by traits now (a Bomb game type) */
+boolean game_engine_traits_active(void);
+/* the traits' damage multiplier (1 when none), and whether a player has
+shields by them (NONE: the game type's own rule) */
+real game_engine_traits_damage_multiplier(long damaging_player_index, long damaged_player_index);
+long game_engine_traits_shields(long player_index);
+/* the traits' jump, gravity and melee reach multipliers of a player (1 when
+none, or when its machine or the host lacks them: it moves and strikes as
+it always did) */
+real game_engine_traits_jump_multiplier(long player_index);
+real game_engine_traits_gravity_multiplier(long player_index);
+real game_engine_traits_melee_multiplier(long player_index);
+/* the host's: its game's traits, for Delta Peer to send (none for a game
+that is no Bomb game type) */
+void game_engine_bomb_host_traits(struct game_variant const *variant);
+/* a melee-only Bomb game: and the map's energy sword in the unit's hands,
+if the map has one players can use */
+boolean game_engine_bomb_melee_only(void);
+void game_engine_bomb_give_sword(long unit_index);
+/* whether a weapon is a melee-only game's unseen fists (the pistol, given
+where the map has no sword): not drawn, no HUD of its own, can't shoot */
+boolean game_engine_bomb_hides_weapon(long definition_index);
+/* a player's view's Bomb HUD (game_engine.c draws it after the HUD): the
+round's clock and each team's rounds, the planted bomb's countdown, and the
+carrier's arming */
+void game_engine_bomb_rasterize(long player_index);
+/* whether the map's scripts are off: a Bomb game on a court with a game of
+its own (game_engine_bomb.c, bomb_courts) */
+boolean game_engine_bomb_scripts_off(void);
+/* whether a map's placed weapon is placed: a Bomb game on a court places
+none of the court's own ball (the bomb takes its place) */
+struct scenario_object_datum;
+boolean game_engine_bomb_weapon_placement_allowed(struct scenario_object_datum const *placement,
+	struct tag_block *palette);
+/* whether a weapon's pickup line is not shown (the bomb's: the game's own
+message says who has it) */
+boolean game_engine_bomb_hides_pickup(long weapon_definition_index);
+/* the game's report's Bomb members (JSON, without braces, into text): a
+player's line's, and the game's; their length, 0 for none (another game
+type) */
+long game_engine_bomb_report_player(long player_index, char *text, long size);
+long game_engine_bomb_report_game(char *text, long size);
+/* a player's carry seconds, carrier kills and kills as carrier (the event
+log's); FALSE when no Bomb game is running */
+boolean game_engine_bomb_player_statistics(long player_index, long *carry_seconds, long *carrier_kills,
+	long *kills_as_carrier);
+/* the network test's (network_test.c): the bomb, a team's goal, a team's
+score, the round, and the goal the bomb is planted in, arming (the host's;
+NONE: none) */
+long game_engine_bomb_weapon(void);
+long game_engine_bomb_planted_goal(void);
+boolean game_engine_bomb_goal(long team_index, union real_point3d *position);
+long game_engine_bomb_team_score(long team_index);
+long game_engine_bomb_round(void);
+/* a goal's countdown and blast: whether a death counts nothing (the scoring
+team's own in the blast) and when its player respawns, the countdown's
+second now (0: none), and whether no one spawns (the blast's pause) */
+boolean game_engine_bomb_silent_death(long killing_player_index, long dead_player_index, boolean friendly_fire);
+long game_engine_bomb_silent_respawn_ticks(void);
+long game_engine_bomb_countdown(void);
+boolean game_engine_bomb_holds_spawns(void);
+/* whether the game is played in rounds (a Bomb game type): a team change
+waits for the player's next respawn or the next round (team_change.c) */
+boolean game_engine_bomb_rounds(void);
+/* whether a landing hurts: not in Grifball (one hit kills, and a fall would
+be one); falling for too long still kills */
+boolean game_engine_bomb_landing_damage(void);
+/* a unit struck by a melee blow that didn't kill it: a carrier's fumble */
+void game_engine_bomb_unit_struck(long unit_index);
+#endif
+
+/* port: the most a game type's state for the distributed netcode's clients
+may take (port/linux/game/network_distributed.c's MAXIMUM_GAME_STATE_SIZE,
+less the postgame state game_engine_write_network_state puts first) */
+#define GAME_ENGINE_MAXIMUM_NETWORK_STATE_SIZE (0xF00 - 4)
 
 /* ---------- prototypes/GAME_ENGINE.C */
 
+/* port: the gametype's vehicles of each team (game_variant_options): the
+map's placement of a vehicle allowed, by its type and the nearer team's
+spawn points (counted from game_engine_vehicle_placement_begin) */
+struct scenario_object_datum;
+struct tag_block;
+void game_engine_vehicle_placement_begin(
+	void);
+#ifdef HALO_CUSTOM_EDITION
+/* port: whether a Halo PC map's vehicles are chosen by their placements'
+spawn flags in this game, and whether a placement is (game_engine.c) */
+boolean game_engine_ce_vehicles_by_placement(void);
+boolean game_engine_ce_vehicle_placement_allowed(struct scenario_object_datum const *placement);
+#endif
+boolean game_engine_vehicle_placement_allowed(
+	struct scenario_object_datum const *placement,
+	struct tag_block *palette);
+/* port: the local player whose motion sensor is drawn (FRIENDS radar) */
+void game_engine_motion_sensor_viewer(
+	short local_player_index);
+/* port: the gametype's friendly fire on a teammate's hit of the object */
+enum
+{
+	_friendly_damage_all = 0,
+	_friendly_damage_none,
+	_friendly_damage_shields
+};
+short game_engine_friendly_damage(
+	long attacker_player_index,
+	long object_index,
+	boolean explosive);
+/* port: the PC options of a variant that has none of its own (saved before
+them, or built in): the Xbox game's play */
+void game_variant_options_default(
+	struct game_variant const *variant,
+	struct game_variant_options *options);
 void game_engine_playlist_initialize(
 	void);
 
@@ -268,7 +590,7 @@ long game_engine_get_team_score(
 long players_in_game(
 	void);
 
-float get_blink_alpha(
+real get_blink_alpha(
 	void);
 
 long game_engine_player_get_team_index(
@@ -290,6 +612,8 @@ void get_postgame_hilite_colors(
 	union real_argb_color *hilite_color);
 
 boolean game_engine_running(
+	void);
+boolean game_engine_showing_postgame(
 	void);
 
 boolean game_engine_get_state_message(
@@ -329,22 +653,29 @@ void game_engine_post_rasterize(
 
 void game_engine_nonplayer_post_rasterize(
 	void);
+void game_engine_update(
+	void);
 
 void game_engine_update_non_deterministic(
-	float delta_seconds);
+	real delta_seconds);
 
 boolean match_game_type(
 	long game_type,
 	long count,
 	short const *game_types);
+void game_engine_flag_reset(
+	long weapon_index,
+	union real_point3d const *position);
 
 void game_engine_initialize(
 	struct game_variant *variant);
 
 void game_engine_initialize_for_new_map(
 	void);
+void game_engine_player_added(
+	long player_index);
 
-float game_engine_get_distance_rating_for_spawn(
+real game_engine_get_distance_rating_for_spawn(
 	long player_index,
 	union real_point3d const *position);
 
@@ -361,6 +692,8 @@ real game_engine_get_starting_location_rating(
 	long player_index,
 	struct player_starting_location const *starting_location);
 boolean game_engine_should_spawn_player(
+	long player_index);
+void game_engine_client_respawn_countdown(
 	long player_index);
 void game_engine_postspawn_player_update(
 	long player_index);
@@ -385,6 +718,8 @@ void game_engine_prespawn_player_update(
 
 long game_engine_did_player_win(
 	long player_index);
+long game_engine_did_player_win_default(
+	long player_index);
 
 struct game_variant *game_engine_get_variant(
 	void);
@@ -395,15 +730,18 @@ struct game_variant *game_engine_get_variant_by_name(
 
 boolean game_engine_get_goal_in_use(
 	short goal_index);
+real_point3d *game_engine_get_goal_position(
+	real_point3d *position,
+	short goal_index);
 
 void game_engine_set_goal_position(
 	short goal_index,
 	union real_point3d const *position,
-	float height,
+	real height,
 	char const *name,
-	long target_object_index,
+	long player_index,
 	short team_index,
-	long player_index);
+	long ignore_player_index);
 
 boolean game_engine_has_teams(
 	void);
@@ -439,7 +777,7 @@ short game_engine_player_get_custom_motion_sensor_positions(
 	short maximum_count);
 
 void game_engine_render_nav_points(
-	long local_player_index);
+	short local_player_index);
 
 union real_rgb_color *game_engine_player_get_change_color(
 	union real_rgb_color *change_color,
@@ -513,11 +851,32 @@ boolean game_engine_force_autopickup(
 
 void game_engine_play_multiplayer_sound(
 	long sound_index);
+#ifdef HALO_GAME_BROWSER
+boolean game_engine_multiplayer_sound_exists(
+	long sound_index);
+#endif
+void game_engine_update_multiplayer_sound(
+	void);
+void game_engine_intialize_queued_sounds(
+	void);
 
 long game_engine_remap_object_definition(long definition_index);
 
 long game_engine_remap_vehicle(long vehicle_definition_index);
 long game_engine_remap_equipment(long equipment_definition_index);
+void game_show_score_team(
+	long team_index,
+	long score);
+void game_show_score_you_ally_enemy(
+	long player_index,
+	long you_score,
+	long ally_score,
+	long enemy_score,
+	long other_player_index);
+void game_show_score_extended(
+	long player_index,
+	long score,
+	long team_index);
 long game_engine_remap_weapon(long weapon_definition_index);
 
 
@@ -540,4 +899,14 @@ real game_engine_get_damage_multiplier(
 	long damaging_player_index,
 	long damaged_player_index);
 
+#ifdef HALO_64BIT
+long game_engine_did_player_win_default(
+	long player_index);
+
+void game_show_score_extended(
+	long player_index,
+	long score,
+	long team_index);
+
+#endif
 #endif // __GAME_ENGINE_H

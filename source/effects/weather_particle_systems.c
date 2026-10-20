@@ -270,6 +270,8 @@ static struct weather_particle_type *weather_particle_system_get_type(
 	short type_index);
 static void weather_particle_system_type_delete_particle(
 	struct weather_particle_type *type);
+static short weather_particle_system_type_count(
+	struct weather_particle_system_definition const *definition);
 static void weather_particle_system_wrap_point(
 	real box_width,
 	real_point3d const *point,
@@ -281,6 +283,12 @@ static void weather_particle_system_box_offset_from_point3d(
 	real box_width,
 	real_point3d const *point,
 	real_point3d *offset);
+/* A frame was a tick on the Xbox; the native builds draw several frames per
+tick (port/linux/game/render_interpolation.c). Weather particles turn their
+acceleration and drift once an update: turn once per 30 Hz tick, and drift by
+the frame's share of a tick. This is the ticks the current update crosses. */
+static long weather_particle_update_ticks = 1;
+
 static void weather_particle_update_physics(
 	short local_player_index,
 	short type_index,
@@ -311,6 +319,7 @@ real const one_over_char_max = 1.f/255.f;
 boolean weather = TRUE;
 
 static struct weather_particle_system_globals weather_particle_system_globals = { 0 };
+struct data_array *weather_particle_data;
 
 /* ---------- public code */
 
@@ -379,7 +388,7 @@ void weather_particle_system_new(
 	system->time_delta_sec = 0.f;
 	weather_particle_system_globals.active_system_count+= 1;
 
-	for (type_index = 0; type_index<definition->particle_types.count; type_index++)
+	for (type_index = 0; type_index<weather_particle_system_type_count(definition); type_index++)
 	{
 		struct weather_particle_type *type = weather_particle_system_get_type(system, type_index);
 		struct weather_particle_type_definition *type_definition = TAG_BLOCK_GET_ELEMENT(
@@ -506,8 +515,15 @@ static void weather_particle_system_update(
 
 	system->time_delta_sec = render.time_delta_since_tick_sec;
 	system->time+= system->time_delta_sec;
+	{
+		static real leftover_ticks[MAXIMUM_NUMBER_OF_LOCAL_PLAYERS];
 
-	for (type_index = 0; type_index<definition->particle_types.count; type_index++)
+		leftover_ticks[local_player_index]+= system->time_delta_sec*TICKS_PER_SECOND;
+		weather_particle_update_ticks = (long)leftover_ticks[local_player_index];
+		leftover_ticks[local_player_index]-= (real)weather_particle_update_ticks;
+	}
+
+	for (type_index = 0; type_index<weather_particle_system_type_count(definition); type_index++)
 	{
 		struct weather_particle_type *type = weather_particle_system_get_type(system, type_index);
 		struct weather_particle_type_definition *type_definition = TAG_BLOCK_GET_ELEMENT(
@@ -547,12 +563,12 @@ static void weather_particle_system_render(
 {
 	struct weather_particle_system *system = weather_particle_system_get(local_player_index);
 	struct weather_particle_system_definition *definition = weather_particle_system_definition_get(system->definition_index);
-	struct structure_bsp *structure_bsp = global_structure_bsp_get();
+	struct structure_bsp *structure = global_structure_bsp_get();
 	short type_index;
 
 	weather_particle_system_update(local_player_index);
 
-	for (type_index = 0; type_index<definition->particle_types.count; type_index++)
+	for (type_index = 0; type_index<weather_particle_system_type_count(definition); type_index++)
 	{
 		struct weather_particle_type *type = &system->types[type_index];
 		struct weather_particle_type_definition *type_definition = TAG_BLOCK_GET_ELEMENT(
@@ -562,11 +578,11 @@ static void weather_particle_system_render(
 
 		if (type->particle_count)
 		{
-			real_plane3d clipping_planes[NUMBER_OF_WEATHER_PARTICLE_CLIPPING_PLANES];
+			real_plane3d clip_planes[NUMBER_OF_WEATHER_PARTICLE_CLIPPING_PLANES];
 			real_point3d box_positions[MAXIMUM_NUMBER_OF_VISIBLE_WEATHER_PARTICLE_BOXES];
-			real box_plane_distances[MAXIMUM_NUMBER_OF_VISIBLE_WEATHER_PARTICLE_BOXES][NUMBER_OF_WEATHER_PARTICLE_CLIPPING_PLANES];
-			short visible_polyhedron_indices[MAXIMUM_NUMBER_OF_VISIBLE_WEATHER_POLYHEDRA];
-			short visible_polyhedron_count = weather_polyhedra_find(visible_polyhedron_indices, type->box_width);
+			real clip_plane_d_transforms[MAXIMUM_NUMBER_OF_VISIBLE_WEATHER_PARTICLE_BOXES][NUMBER_OF_WEATHER_PARTICLE_CLIPPING_PLANES];
+			short weather_polyhedra_indices[MAXIMUM_NUMBER_OF_VISIBLE_WEATHER_POLYHEDRA];
+			short visible_polyhedron_count = weather_polyhedra_find(weather_polyhedra_indices, type->box_width);
 			struct build_sprite_data sprite_data;
 			struct weather_particle *particle;
 			real box_offsets[3];
@@ -575,9 +591,9 @@ static void weather_particle_system_render(
 			short i, j, k;
 			long particle_index;
 
-			weather_particle_system_build_clipping_planes(clipping_planes, type->box_width);
+			weather_particle_system_build_clipping_planes(clip_planes, type->box_width);
 			weather_particle_system_box_offset_from_point3d(type->box_width, &render.camera.position, &box_positions[0]);
-			weather_particle_system_transform_clip_planes_to_box(box_plane_distances[0], clipping_planes, &box_positions[0]);
+			weather_particle_system_transform_clip_planes_to_box(clip_plane_d_transforms[0], clip_planes, &box_positions[0]);
 
 			bounds.x0 = box_positions[0].x;
 			bounds.x1 = box_positions[0].x + type->box_width;
@@ -608,13 +624,15 @@ static void weather_particle_system_render(
 							box_bounds.z0 = bounds.z0 + box_offsets[k];
 							box_bounds.z1 = bounds.z1 + box_offsets[k];
 
-							if (render_frustum_cube_visible(&render.frustum, &box_bounds, TRUE))
+							/* port: and no more boxes than the arrays hold */
+							if (box_count<MAXIMUM_NUMBER_OF_VISIBLE_WEATHER_PARTICLE_BOXES &&
+								render_frustum_cube_visible(&render.frustum, &box_bounds, TRUE))
 							{
 								match_assert("c:\\halo\\SOURCE\\effects\\weather_particle_systems.c", 673, box_count<MAXIMUM_NUMBER_OF_VISIBLE_WEATHER_PARTICLE_BOXES);
 								box_positions[box_count].x = box_bounds.x0;
 								box_positions[box_count].y = box_bounds.y0;
 								box_positions[box_count].z = box_bounds.z0;
-								weather_particle_system_transform_clip_planes_to_box(box_plane_distances[box_count], clipping_planes, &box_positions[box_count]);
+								weather_particle_system_transform_clip_planes_to_box(clip_plane_d_transforms[box_count], clip_planes, &box_positions[box_count]);
 								box_count++;
 							}
 						}
@@ -626,7 +644,7 @@ static void weather_particle_system_render(
 
 			for (particle_index = type->first_particle_index; particle_index!=NONE; particle_index = particle->next_particle_index)
 			{
-				real particle_plane_distances[NUMBER_OF_WEATHER_PARTICLE_CLIPPING_PLANES];
+				real plane_evaluations[NUMBER_OF_WEATHER_PARTICLE_CLIPPING_PLANES];
 				short plane_index;
 				short box_index;
 
@@ -634,7 +652,7 @@ static void weather_particle_system_render(
 
 				for (plane_index = 0; plane_index<NUMBER_OF_WEATHER_PARTICLE_CLIPPING_PLANES; plane_index++)
 				{
-					particle_plane_distances[plane_index] = plane3d_distance_to_point(&clipping_planes[plane_index], &particle->position);
+					plane_evaluations[plane_index] = plane3d_distance_to_point(&clip_planes[plane_index], &particle->position);
 				}
 
 				for (box_index = 0; box_index<box_count; box_index++)
@@ -643,7 +661,7 @@ static void weather_particle_system_render(
 
 					for (plane_index = 0; plane_index<NUMBER_OF_WEATHER_PARTICLE_CLIPPING_PLANES && visible; plane_index++)
 					{
-						visible = box_plane_distances[box_index][plane_index] + particle_plane_distances[plane_index]<0.f;
+						visible = clip_plane_d_transforms[box_index][plane_index] + plane_evaluations[plane_index]<0.f;
 					}
 
 					if (visible)
@@ -677,8 +695,8 @@ static void weather_particle_system_render(
 						for (polyhedron_index = 0; polyhedron_index<visible_polyhedron_count; polyhedron_index++)
 						{
 							struct structure_weather_polyhedron *polyhedron = TAG_BLOCK_GET_ELEMENT(
-								&structure_bsp->weather_polyhedra,
-								visible_polyhedron_indices[polyhedron_index],
+								&structure->weather_polyhedra,
+								weather_polyhedra_indices[polyhedron_index],
 								struct structure_weather_polyhedron);
 							short polyhedron_plane_index;
 
@@ -784,7 +802,7 @@ void weather_particle_system_delete(
 	struct weather_particle_system_definition *definition = weather_particle_system_definition_get(system->definition_index);
 	short type_index;
 
-	for (type_index = 0; type_index<definition->particle_types.count; type_index++)
+	for (type_index = 0; type_index<weather_particle_system_type_count(definition); type_index++)
 	{
 		struct weather_particle_type *type = weather_particle_system_get_type(system, type_index);
 
@@ -819,6 +837,31 @@ static struct weather_particle_type *weather_particle_system_get_type(
 	match_assert("c:\\halo\\SOURCE\\effects\\weather_particle_systems.c", 102, type_index>=0 && type_index<definition->particle_types.count);
 
 	return &system->types[type_index];
+}
+
+/* port: no more particle types than a system holds (the map's count; retail
+systems have up to 3). The rest are not made, and that is said once. */
+static short weather_particle_system_type_count(
+	struct weather_particle_system_definition const *definition)
+{
+	if (definition->particle_types.count > MAXIMUM_NUMBER_OF_WEATHER_PARTICLE_TYPES)
+	{
+		static boolean reported = FALSE;
+
+		if (!reported)
+		{
+			reported = TRUE;
+			error(
+				_error_silent,
+				"weather particle system has %d particle types (only %d are made)",
+				definition->particle_types.count,
+				MAXIMUM_NUMBER_OF_WEATHER_PARTICLE_TYPES);
+		}
+
+		return MAXIMUM_NUMBER_OF_WEATHER_PARTICLE_TYPES;
+	}
+
+	return (short)definition->particle_types.count;
 }
 
 static void weather_particle_system_type_delete_particle(
@@ -940,6 +983,12 @@ static void weather_particle_update_physics(
 	unsigned long flags;
 	real_vector3d random_direction;
 
+	if ((type_definition->acceleration_lower_bound!=0.f || type_definition->acceleration_upper_bound!=0.f) &&
+		weather_particle_update_ticks<=0)
+	{
+		point_from_line3d((real_point3d *)&particle->velocity, &particle->acceleration, system->time_delta_sec, (real_point3d *)&particle->velocity);
+	}
+	else
 	if (type_definition->acceleration_lower_bound!=0.f || type_definition->acceleration_upper_bound!=0.f)
 	{
 		real magnitude = normalize3d(&particle->acceleration);
@@ -973,7 +1022,7 @@ static void weather_particle_update_physics(
 			NULL,
 			particle->radius,
 			system->time_delta_sec);
-		point_from_line3d(&particle->position, seed_random_direction3d(&seed, &random_direction), 0.001f, &particle->position);
+		point_from_line3d(&particle->position, seed_random_direction3d(&seed, &random_direction), 0.001f*system->time_delta_sec*TICKS_PER_SECOND, &particle->position);
 	}
 	weather_particle_system_wrap_point(type->box_width, &particle->position, &particle->position);
 

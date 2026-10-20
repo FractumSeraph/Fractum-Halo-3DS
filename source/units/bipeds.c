@@ -239,7 +239,7 @@ symbols in this file:
 #include "cseries.h"
 #include "ai/ai_communication.h"
 #include "ai/ai_debug.h"
-#include "ai/ai_runtime.h"
+#include "ai/ai.h"
 #include "ai/actors.h"
 #include "cseries/errors.h"
 #include "cseries/profile.h"
@@ -277,6 +277,15 @@ symbols in this file:
 #include "render/render_debug.h"
 #include "scenario/scenario.h"
 #include "structures/structure_bsp_definitions.h"
+#include "network_coop.h" /* port: port/linux/game/network_coop.c */
+
+/* port: port/linux/game/network_objects.c's (a client deletes the host's
+objects on the host's word alone) */
+boolean network_objects_may_delete(long object_index);
+
+/* port: an unarmed player's melee's length, in ticks (a weapon's is about
+this: its first person melee animation, sped up a quarter) */
+#define UNARMED_MELEE_TICKS 16
 
 /* ---------- constants */
 
@@ -315,6 +324,9 @@ enum
 	_biped_physics_in_dead_bit,
 	_biped_physics_in_pass_through_bipeds_bit,
 	_biped_physics_in_climb_anything_bit,
+	/* port: a player's, in a co-op game without player collisions: the other
+	players' bipeds are not in its way (network_coop_player_collisions) */
+	_biped_physics_in_pass_through_players_bit,
 };
 
 enum
@@ -458,7 +470,6 @@ struct vehicle_runtime_datum
 	} vehicle;
 };
 
-
 struct scenario_object_datum
 {
 	short palette_entry_index;
@@ -513,6 +524,8 @@ static void biped_update_jumping(
 	struct unit_animation_update_data *animation);
 static void biped_update_physics(
 	struct biped_physics *physics);
+/* units.c's: whether the unit gets the animation enhancements */
+boolean unit_animation_enhanced(long unit_index);
 static void biped_snap_facing(
 	long biped_index);
 
@@ -525,6 +538,17 @@ boolean debug_biped_limp_body_disable = FALSE;
 boolean rider_ejection = TRUE;
 
 static struct profile_section biped_update_section = {"biped_update", NONE, TRUE};
+
+/* port: coop_scripts.c sets this around one teleport */
+static boolean biped_fix_ignores_players;
+
+void biped_fix_ignore_players(
+	boolean ignore)
+{
+	biped_fix_ignores_players = ignore;
+
+	return;
+}
 
 extern boolean debug_objects_biped_autoaim_pills;
 extern boolean debug_objects_biped_physics_pills;
@@ -797,7 +821,13 @@ static void biped_falling_damage(
 	{
 		if (collision_velocity > falling_damage->runtime_minimum_damage_velocity)
 		{
+#ifdef HALO_GAME_BROWSER
+			/* port: a Grifball game's landings hurt no one
+			(game_engine_bomb.c) */
+			if (!immune && game_engine_bomb_landing_damage())
+#else
 			if (!immune)
+#endif
 			{
 				struct damage_data damage;
 
@@ -825,9 +855,12 @@ static void biped_falling_damage(
 				object_cause_damage(&damage, biped_index, NONE, NONE, NONE, NULL);
 			}
 
+			/* (port: not the host's biped on a client, which the host erases:
+			the delete was refused, and logged as done) */
 			if (!game_engine_running() &&
 				TEST_FLAG(biped->object.flags, _object_outside_of_map_bit) &&
-				player_index_from_unit_index(biped_index) == NONE)
+				player_index_from_unit_index(biped_index) == NONE &&
+				network_objects_may_delete(biped_index))
 			{
 				long actor_index = biped->unit.swarm_actor_index;
 
@@ -917,10 +950,10 @@ static void biped_start_landing(
 }
 
 void biped_adjust_placement(
-	long biped_index,
+	long object_index,
 	struct object_placement_data *data)
 {
-	struct biped_datum *biped = biped_get(biped_index);
+	struct biped_datum *biped = biped_get(object_index);
 	struct biped_definition *definition = biped_definition_get(biped->definition_index);
 	unsigned long flags = definition->biped.flags;
 
@@ -1070,6 +1103,8 @@ void biped_get_autoaim_pill(
 			*base = pelvis_matrix->position;
 			vector_from_points3d(&pelvis_matrix->position, &head_matrix->position, height);
 		}
+
+		*width = definition->biped.autoaim_width;
 	}
 	else
 	{
@@ -1079,9 +1114,8 @@ void biped_get_autoaim_pill(
 		biped_get_physics_pill(biped_index, base, &pill_height, &pill_width);
 		base->z += pill_height*0.5f;
 		scale_vector3d(global_up3d, pill_height*0.5f, height);
+		*width = definition->biped.autoaim_width;
 	}
-
-	*width = definition->biped.autoaim_width;
 
 	return;
 }
@@ -1144,6 +1178,12 @@ boolean biped_fix_position(
 				_biped_passes_through_bipeds_bit) ?
 				_collision_test_for_bipeds_passthrough_living_flags :
 				_collision_test_for_bipeds_living_flags;
+			/* port: (where it fits among the other players, as it moves:
+			_biped_physics_in_pass_through_players_bit). A scripted co-op
+			teleport can also stand on a teammate for this one call. */
+			if (biped_fix_ignores_players ||
+				(biped->unit.player_index != NONE && !network_coop_player_collisions()))
+				collision_flags |= FLAG(_collision_test_skip_player_bipeds_bit);
 		}
 
 		if (new_position)
@@ -1652,24 +1692,24 @@ void biped_accelerate(
 			TEST_FLAG(definition->biped.flags, _biped_flying_bit) ||
 			TEST_FLAG(definition->biped.flags, _biped_climbs_anything_bit))
 		{
-			real_vector3d axis;
+			real_vector3d angular_acceleration_axis;
 			real scale;
 
-			cross_product3d(global_up3d, acceleration, &axis);
-			normalize3d(&axis);
+			cross_product3d(global_up3d, acceleration, &angular_acceleration_axis);
+			normalize3d(&angular_acceleration_axis);
 			scale = real_random()*magnitude3d(acceleration)*(_pi/2);
-			biped->object.angular_velocity.i += axis.i*scale;
-			biped->object.angular_velocity.j += axis.j*scale;
-			biped->object.angular_velocity.k += axis.k*scale;
+			biped->object.angular_velocity.i += angular_acceleration_axis.i*scale;
+			biped->object.angular_velocity.j += angular_acceleration_axis.j*scale;
+			biped->object.angular_velocity.k += angular_acceleration_axis.k*scale;
 		}
 
 		if (biped->object.parent_object_index==NONE)
 		{
-			real_vector3d forward = *acceleration;
+			real_vector3d new_forward = *acceleration;
 
-			if (normalize3d(&forward)>0.f)
+			if (normalize3d(&new_forward)>0.f)
 			{
-				biped->object.forward = forward;
+				biped->object.forward = new_forward;
 				biped_snap_facing(biped_index);
 				biped_verify_object_vectors(biped_index, "post-accel");
 			}
@@ -1858,6 +1898,11 @@ static boolean biped_jump(
 		}
 		if (cheat.super_jump && biped->unit.player_index!=NONE)
 			jump_magnitude *= 4.f;
+#ifdef HALO_GAME_BROWSER
+		/* port: a Bomb game type's jump trait (game_engine_bomb.c) */
+		if (biped->unit.player_index!=NONE)
+			jump_magnitude *= game_engine_traits_jump_multiplier(biped->unit.player_index);
+#endif
 
 		jump_velocity = biped->object.translational_velocity;
 		{
@@ -2336,6 +2381,20 @@ static void biped_find_nearby_support_surface(
 	return;
 }
 
+#ifdef HALO_GAME_BROWSER
+/* port: a Bomb game type's gravity trait (game_engine_bomb.c) on a player's
+biped in the air */
+static real biped_trait_gravity(
+	long biped_index)
+{
+	struct biped_datum *biped = biped_get(biped_index);
+
+	if (biped->unit.player_index==NONE)
+		return 1.f;
+	return game_engine_traits_gravity_multiplier(biped->unit.player_index);
+}
+#endif
+
 static void biped_update_physics(
 	struct biped_physics *physics)
 {
@@ -2418,7 +2477,11 @@ static void biped_update_physics(
 			velocity_change = acceleration;
 		physics->new_velocity.i = velocity_change.i + physics->velocity.i;
 		physics->new_velocity.j = velocity_change.j + physics->velocity.j;
+#ifdef HALO_GAME_BROWSER
+		physics->new_velocity.k = physics->velocity.k - global_gravity*biped_trait_gravity(physics->biped_index);
+#else
 		physics->new_velocity.k = physics->velocity.k - global_gravity;
+#endif
 		physics->out_flags = TEST_FLAG(in_flags, _biped_physics_in_slipping_bit) ?
 			FLAG(_biped_physics_out_slipping_bit) : 0;
 	}
@@ -2571,6 +2634,8 @@ static void biped_update_physics(
 		collision_flags = TEST_FLAG(physics->in_flags, _biped_physics_in_pass_through_bipeds_bit) ?
 			_collision_test_for_bipeds_passthrough_living_flags :
 			_collision_test_for_bipeds_living_flags;
+		if (TEST_FLAG(physics->in_flags, _biped_physics_in_pass_through_players_bit))
+			collision_flags |= FLAG(_collision_test_skip_player_bipeds_bit);
 	}
 
 	position = physics->position;
@@ -2635,6 +2700,7 @@ static void biped_update_physics(
 				physics->existing_support_surface_index,
 				struct collision_surface);
 			long edge_index = surface->first_edge_index;
+			short edge_count = 0;
 			real_plane3d plane;
 			real_plane3d best_plane;
 			real best_velocity_dot;
@@ -2652,14 +2718,41 @@ static void biped_update_physics(
 
 			do
 			{
-				struct collision_edge *edge = TAG_BLOCK_GET_ELEMENT(
+				struct collision_edge *edge;
+				boolean reverse;
+				long neighbor_surface_index;
+
+				/* port: the surface's ring of edges ends as
+				collision_surface_edge_ring_continues says, or at an edge
+				whose vertices aren't the bsp's (a map's indices; the
+				retail rings all close within 3 to 8 edges) */
+				if (!collision_surface_edge_ring_continues(bsp, edge_index, edge_count++))
+				{
+					break;
+				}
+				edge = TAG_BLOCK_GET_ELEMENT(
 					&bsp->edges,
 					edge_index,
 					struct collision_edge);
-				boolean reverse = physics->existing_support_surface_index == edge->surface_indices[1];
-				long neighbor_surface_index = edge->surface_indices[!reverse];
+				if (!VALID_INDEX(edge->vertex_indices[0], bsp->vertices.count) ||
+					!VALID_INDEX(edge->vertex_indices[1], bsp->vertices.count))
+				{
+					static boolean reported = FALSE;
 
-				if (neighbor_surface_index != NONE)
+					if (!reported)
+					{
+						reported = TRUE;
+						error(_error_silent, "collision edge #%ld's vertices are not the bsp's", edge_index);
+					}
+					break;
+				}
+				reverse = physics->existing_support_surface_index == edge->surface_indices[1];
+				neighbor_surface_index = edge->surface_indices[!reverse];
+
+				/* port: (and a neighbor that is no surface of the bsp's is
+				none) */
+				if (neighbor_surface_index != NONE &&
+					collision_bsp_valid_surface_index(bsp, neighbor_surface_index))
 				{
 					struct collision_surface *neighbor_surface = TAG_BLOCK_GET_ELEMENT(
 						&bsp->surfaces,
@@ -3192,7 +3285,7 @@ static void biped_update_turning(
 		real target_bank;
 		real bank_blend;
 		real bank_time;
-		real_rectangle2d aiming_bounds;
+		real_rectangle2d facing_bounds;
 		real angular_velocity_limit;
 		real angular_acceleration_limit;
 
@@ -3261,10 +3354,10 @@ static void biped_update_turning(
 			biped->biped.bank = target_bank;
 		}
 
-		aiming_bounds.x0 = -_pi;
-		aiming_bounds.x1 = _pi;
-		aiming_bounds.y0 = -_pi/2.f;
-		aiming_bounds.y1 = _pi/2.f;
+		facing_bounds.x0 = -_pi;
+		facing_bounds.x1 = _pi;
+		facing_bounds.y0 = -_pi/2.f;
+		facing_bounds.y1 = _pi/2.f;
 		angular_velocity_limit =
 			definition->biped.flying_angular_velocity/TICKS_PER_SECOND;
 		angular_acceleration_limit =
@@ -3281,7 +3374,7 @@ static void biped_update_turning(
 				&biped->object.forward,
 				&target_facing,
 				&biped->object.angular_velocity,
-				&aiming_bounds,
+				&facing_bounds,
 				angular_velocity_limit,
 				angular_acceleration_limit);
 		}
@@ -3293,6 +3386,14 @@ static void biped_update_turning(
 	{
 		boolean flaming =
 			biped->unit.animation.base_seat_index==_unit_base_seat_flaming;
+		/* port: a player throwing a grenade turns with the aim, as one
+		meleeing does: the melee plays over the moving or idle state, the
+		throw is a state of its own, which the original never turned in
+		(game.enhanced_animations: unit_animation_enhanced) */
+		boolean throwing_turn =
+			biped->unit.player_index!=NONE &&
+			biped->unit.animation.state==_unit_state_throw_grenade &&
+			unit_animation_enhanced(biped_index);
 		real_vector3d turn_axis;
 		real turn_error;
 		real facing_alignment;
@@ -3356,7 +3457,8 @@ static void biped_update_turning(
 		}
 
 		if (biped->biped.state==biped_state_moving ||
-			TEST_FLAG(flags, _biped_turns_without_animating_bit))
+			TEST_FLAG(flags, _biped_turns_without_animating_bit) ||
+			throwing_turn)
 		{
 			if (!TEST_FLAG(biped->unit.control_flags, _unit_control_look_dont_turn_bit))
 			{
@@ -3708,7 +3810,7 @@ static void biped_update_moving(
 						&scenario_get_game_globals()->player_information,
 						0,
 						struct game_globals_player_information);
-				struct game_globals_player_information old_player_information;
+				struct game_globals_player_information player_information_block;
 				real body_stun_scale = 1.f;
 				real crouch;
 				real uncrouch;
@@ -3722,13 +3824,13 @@ static void biped_update_moving(
 						definition->biped.flags,
 						_biped_uses_old_player_physics_bit))
 				{
-					old_player_information = *player_information;
-					player_information = &old_player_information;
-					old_player_information.walking_speed = 0.51200002f;
-					old_player_information.run_forward_speed = 2.25f;
-					old_player_information.run_backward_speed = 2.f;
-					old_player_information.run_sideways_speed = 2.f;
-					old_player_information.run_acceleration = 0.31999999f;
+					player_information_block = *player_information;
+					player_information = &player_information_block;
+					player_information_block.walking_speed = 0.51200002f;
+					player_information_block.run_forward_speed = 2.25f;
+					player_information_block.run_backward_speed = 2.f;
+					player_information_block.run_sideways_speed = 2.f;
+					player_information_block.run_acceleration = 0.31999999f;
 				}
 
 				if (biped->unit.player_index != NONE)
@@ -3915,6 +4017,8 @@ static void biped_update_moving(
 	}
 	if (TEST_FLAG(definition->biped.flags, _biped_passes_through_bipeds_bit))
 		SET_FLAG(in_flags, _biped_physics_in_pass_through_bipeds_bit, TRUE);
+	if (biped->unit.player_index != NONE && !network_coop_player_collisions())
+		SET_FLAG(in_flags, _biped_physics_in_pass_through_players_bit, TRUE);
 	if (TEST_FLAG(definition->biped.flags, _biped_climbs_anything_bit) &&
 		!TEST_FLAG(biped->object.damage_flags, _object_dead_bit))
 	{
@@ -3946,19 +4050,19 @@ static void biped_update_moving(
 	}
 
 	{
-		real_point3d new_position = physics.new_position;
+		real_point3d new_biped_position = physics.new_position;
 		word out_flags = physics.out_flags;
 
 		if (!TEST_FLAG(
 			definition->biped.flags,
 			_biped_pill_centered_at_origin_bit))
 		{
-			new_position.z -= physics.width;
+			new_biped_position.z -= physics.width;
 		}
-		object_translate(biped_index, &new_position, NULL);
+		object_translate(biped_index, &new_biped_position, NULL);
 
 		biped->biped.support_surface_index = physics.support_surface_index;
-		biped->biped.pathfinding_point = new_position;
+		biped->biped.pathfinding_point = new_biped_position;
 		biped->biped.pathfinding_surface_index = NONE;
 		biped->object.translational_velocity = physics.new_velocity;
 		if (!animation->crouching &&
@@ -4014,8 +4118,8 @@ static void biped_update_moving(
 				target->object.bounding_sphere_radius))
 			{
 				struct collision_model_instance instance;
-				struct collision_model_test_vector_result model_result;
-				struct collision_result world_collision;
+				struct collision_model_test_vector_result vector_result;
+				struct collision_result collision;
 
 				if (collision_model_instance_new(
 					&instance,
@@ -4026,37 +4130,37 @@ static void biped_update_moving(
 							FLAG(_collision_test_back_facing_surfaces_bit),
 						&physics.position,
 						&melee_vector,
-						&model_result) &&
+						&vector_result) &&
 					!collision_test_vector(
 						_collision_test_for_bipeds_passthrough_living_flags,
 						&physics.position,
 						&melee_vector,
 						biped_index,
-						&world_collision))
+						&collision))
 				{
-					real_point3d impact_point;
-					real_plane3d impact_plane;
+					real_point3d collision_point;
+					real_plane3d collision_plane;
 
 					point_from_line3d(
 						&physics.position,
 						&melee_vector,
-						model_result.bsp_result.t,
-						&impact_point);
+						vector_result.bsp_result.t,
+						&collision_point);
 					matrix4x3_transform_plane(
-						&instance.matrices[model_result.node_index],
-						model_result.bsp_result.plane,
-						&impact_plane);
-					if (model_result.bsp_result.plane_designator < 0)
-						plane3d_negate(&impact_plane, &impact_plane);
+						&instance.matrices[vector_result.node_index],
+						vector_result.bsp_result.plane,
+						&collision_plane);
+					if (vector_result.bsp_result.plane_designator < 0)
+						plane3d_negate(&collision_plane, &collision_plane);
 					unit_impact_melee_damage(
 						biped_index,
 						biped->biped.impact_target_object_index,
-						model_result.node_index,
-						model_result.region_index,
-						model_result.bsp_result.material_index,
-						&impact_point,
-						&impact_plane.n,
-						&world_collision.location);
+						vector_result.node_index,
+						vector_result.region_index,
+						vector_result.bsp_result.material_index,
+						&collision_point,
+						&collision_plane.n,
+						&collision.location);
 				}
 			}
 
@@ -4299,13 +4403,35 @@ boolean biped_update(
 					biped_index,
 					unit_get(biped_index)->unit.current_weapon_index);
 
-				if (!weapon_prevents_melee_attack(weapon_index) &&
+				/* (port: and with no weapon, which prevents it in the
+				Xbox game: a gametype's loadout of none; not from a
+				vehicle's seat, which holds no weapon either) */
+				if (((weapon_index == NONE && biped->unit.parent_seat_index == NONE) ||
+					(weapon_index != NONE && !weapon_prevents_melee_attack(weapon_index))) &&
 					biped->unit.current_zoom_level==NONE)
 				{
 					short melee_speedup_ticks;
 
 					unit_animation_start_action(biped_index, _unit_animation_action_melee);
+					/* port: a player with no weapon (a gametype's loadout of
+					none) melees too: in a weapon's usual time, the hit
+					halfway (the Xbox game read the timing from the weapon's
+					animations, through a weapon it did not check) */
+					if (weapon_index == NONE)
+					{
+						unit_animation_start_unarmed_melee(biped_index);
+						biped->biped.player_melee_ticks = UNARMED_MELEE_TICKS;
+						biped->biped.player_melee_attack_tick = UNARMED_MELEE_TICKS / 2;
+					}
+					else
+					{
 					weapon_stop_reload(weapon_index);
+#ifdef HALO_GAME_BROWSER
+					/* (port: a melee-only Bomb game's unseen fists, held
+					unarmed, swing as no weapon does) */
+					if (game_engine_bomb_hides_weapon(weapon_get(weapon_index)->definition_index))
+						unit_animation_start_unarmed_melee(biped_index);
+#endif
 					first_person_weapon_message_from_unit(
 						biped_index,
 						_first_person_weapon_message_melee);
@@ -4320,6 +4446,7 @@ boolean biped_update(
 							_weapon_first_person_animation_time_private_key_frame,
 							_first_person_weapon_animation_melee,
 							NONE);
+					}
 
 					melee_speedup_ticks = biped->biped.player_melee_ticks >> 2;
 					biped->biped.player_melee_ticks -= melee_speedup_ticks;

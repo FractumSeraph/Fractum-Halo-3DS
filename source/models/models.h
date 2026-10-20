@@ -27,6 +27,10 @@ union real_vector3d;
 
 /* ---------- prototypes/MODELS.C */
 
+void models_fix_powerup_render_bounds(void);
+/* port: apply native transparent part links once per loaded model. */
+void models_fix_transparent_part_links(void);
+
 void model_interpolate_node_orientations(
 	struct model const *model,
 	struct real_orientation *original_node_orientations,
@@ -70,8 +74,6 @@ short model_get_marker_by_name(
 	short maximum_marker_count);
 void model_build_tangent_matrices(
 	struct model *model);
-void model_geometry_part_build_tangent_matrices(
-	struct model_geometry_part *part);
 void render_model(
 	long model_index,
 	real level_of_detail_pixels,
@@ -86,6 +88,8 @@ void render_model(
 	long unique_identifier,
 	short forced_shader_permutation_index,
 	unsigned long flags);
+boolean model_data_report_once(
+	void const *data);
 
 /* ---------- globals */
 

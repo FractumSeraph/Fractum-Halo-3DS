@@ -158,7 +158,7 @@ enum
 #if defined(HALO_N3DS)
 #define cseries_match_assert(file, line, expr) if (!(expr)) { display_assert(STRINGIFY(expr), MATCH_FILE(file), MATCH_LINE(line), TRUE); system_exit(-1); }
 #elif defined(HALO_RELEASE)
-#define cseries_match_assert(file, line, expr) { (void)(expr); }
+#define cseries_match_assert(file, line, expr) if (!(expr)) { release_assert_failed(STRINGIFY(expr), MATCH_FILE(file), MATCH_LINE(line), TRUE); }
 #else
 #define cseries_match_assert(file, line, expr) if (!(expr)) { stack_walk(0); error(_error_silent, "EXCEPTION %s in %s,#%d: %s", "halt", MATCH_FILE(file), MATCH_LINE(line), STRINGIFY(expr)); system_exit(-1); }
 #endif
@@ -170,7 +170,7 @@ enum
 
 char temporary[256];
 
-const real_argb_color global_real_argb_color_table[17] =
+static const real_argb_color global_real_argb_color_table[17] =
 {
 	{ 1.f, 1.f,		1.f,	1.f  },
 	{ 1.f, .5f,		.5f,	.5f  },
@@ -350,13 +350,79 @@ char *csprintf(
 	va_list arglist;
 	
 	va_start(arglist, format);
-	vsprintf(buffer, format, arglist);
+	/* port: no longer than the longest a string is (MAXIMUM_STRING_SIZE,
+	as csstrlen asserts): the caller's buffer's size isn't passed. But
+	temporary, which most callers format into (often with a map's tag
+	names), is only its own size */
+	vsnprintf(buffer, buffer == temporary ? sizeof(temporary) : MAXIMUM_STRING_SIZE, format, arglist);
+	va_end(arglist);
 	
 	return buffer;
 }
 
 #ifdef HALO_RELEASE
 __thread boolean display_assert_skipped = FALSE;
+
+/* port: a release build carries on past a failed assertion (cseries.h),
+but notes it in debug.txt, as a debug build does before it stops: each
+place's first failure, then its 10th, 100th, 1000th and so on with the
+count, so that one failing every frame does not flood the file */
+void release_assert_failed(
+	char const *information,
+	char const *file,
+	long line,
+	boolean fatal)
+{
+	static struct
+	{
+		char const *file;
+		long line;
+		unsigned long count;
+	} places[512];
+	static volatile long places_lock;
+	unsigned long index = ((unsigned long)(size_t)file + (unsigned long)line * 2654435761UL) % NUMBEROF(places);
+	unsigned long count = 0;
+	unsigned long probe;
+
+	while (__sync_lock_test_and_set(&places_lock, 1))
+		;
+	for (probe = 0; probe < NUMBEROF(places); probe++)
+	{
+		if (!places[index].file)
+		{
+			places[index].file = file;
+			places[index].line = line;
+		}
+		if (places[index].file == file && places[index].line == line)
+		{
+			count = ++places[index].count;
+			break;
+		}
+		index = (index + 1) % NUMBEROF(places);
+	}
+	__sync_lock_release(&places_lock);
+
+	/* (a place the full table has no room for: every time) */
+	if (count > 1)
+	{
+		unsigned long power = 10;
+
+		while (power < count && power < 1000000000UL)
+			power *= 10;
+		if (power != count)
+			return;
+	}
+	if (count > 1)
+	{
+		error(_error_log, "EXCEPTION %s in %s,#%ld: %s (release build, failed %lu times)", fatal ? "assert" : "warn",
+			file, line, information ? information : "<no reason given>", count);
+	}
+	else
+	{
+		error(_error_log, "EXCEPTION %s in %s,#%ld: %s (release build)", fatal ? "assert" : "warn",
+			file, line, information ? information : "<no reason given>");
+	}
+}
 #endif
 
 #ifndef HALO_N3DS /* Native assertion reporting lives in runtime.c. */
@@ -367,11 +433,32 @@ void display_assert(
 	boolean fatal)
 {
 #ifdef HALO_RELEASE
-	/* release builds skip assertions (cseries.h), including the ones
-	written out as display_assert followed by system_exit(-1), which then
-	returns (cseries_windows.c) */
+	#ifdef HALO_BROWSER
+	if (fatal)
+	{
+		fprintf(stderr, "halo-web assertion in %s,#%ld: %s\n",
+			file ? file : "<unknown>", line,
+			information ? information : "<no reason given>");
+	}
+	#endif
+	/* release builds carry on past assertions (cseries.h), including the
+	ones written out as display_assert followed by system_exit(-1), which
+	then returns (cseries_windows.c); noted in debug.txt all the same (a
+	halt, which does stop, too) */
+	release_assert_failed(information, file, line, fatal);
 	display_assert_skipped = fatal;
 #else
+#ifdef HALO_3DS
+	/* port: the trace file has it, with the thread (a halt in another
+	thread than the main one draws the halt screen beside the game) */
+	{
+		unsigned long n3ds_thread_id(void);
+		void platform_log(const char *format, ...);
+
+		platform_log("EXCEPTION %s in thread %lu: %s,#%ld: %s", fatal ? "halt" : "warn", n3ds_thread_id(), file, line,
+			information ? information : "<no reason given>");
+	}
+#endif
 	if (fatal)
 	{
 		stack_walk(0);
@@ -419,9 +506,24 @@ char *csstrcat(
 	char *s1,
 	const char *s2)
 {
+	unsigned long length;
+	unsigned long append_length;
+
 	cseries_match_assert("c:\\halo\\SOURCE\\cseries\\cseries.c", 290, s1 && s2);
 
-	return strcat(s1, s2);
+	/* port: the result is no longer than the longest a string is
+	(MAXIMUM_STRING_SIZE, as csstrlen asserts): the rest of s2 is left
+	off. The caller's buffer's size isn't passed */
+	length = strlen(s1);
+	if (length >= MAXIMUM_STRING_SIZE-1)
+		return s1;
+	append_length = strlen(s2);
+	if (append_length > MAXIMUM_STRING_SIZE-1-length)
+		append_length = MAXIMUM_STRING_SIZE-1-length;
+	memmove(s1+length, s2, append_length);
+	s1[length+append_length] = 0;
+
+	return s1;
 }
 
 long csstrcmp(
@@ -492,12 +594,20 @@ char *csstrcpy(
 	const char *source)
 {
 	long source_size = strlen(source);
-	long destination_size = strlen(destination);
 	
 	cseries_match_assert("c:\\halo\\SOURCE\\cseries\\cseries.c", 371, source_size>=0 && source_size<MAXIMUM_STRING_SIZE);
 	cseries_match_assert("c:\\halo\\SOURCE\\cseries\\cseries.c", 372, source+source_size<destination || destination+source_size<source);
 	
-	return strcpy(destination, source);
+	/* port: no more is copied than the longest a string is
+	(MAXIMUM_STRING_SIZE, the assert above, which a release build only
+	logs), and copying over itself is a memmove. The destination isn't
+	measured first (it was, unused): it is often not yet a string */
+	if (source_size >= MAXIMUM_STRING_SIZE)
+		source_size = MAXIMUM_STRING_SIZE-1;
+	memmove(destination, source, source_size);
+	destination[source_size] = 0;
+
+	return destination;
 }
 
 void *csmemcpy(
@@ -554,7 +664,6 @@ not_equal:
 	return c1 > c2 ? 1 : -1;
 }
 
-#if defined(HALO_ANDROID) || defined(HALO_N3DS)
 char *stristr(
 	const char *haystack,
 	const char *needle)
@@ -574,71 +683,6 @@ char *stristr(
 	}
 	return NULL;
 }
-#else
-__declspec(naked) char *stristr(
-	const char *haystack,
-	const char *needle)
-{
-	/* parameters are addressed through the hand-built frame: clang rejects
-	named parameter references inside naked functions */
-	__asm
-	{
-		push ebp
-		mov ebp, esp
-		push ebx
-		push esi
-		push edi
-		mov edi, dword ptr [ebp+12] /* needle */
-		mov bl, byte ptr [edi]
-		inc edi
-		test bl, bl
-		je empty_needle
-		push edi
-		call csstrlen
-		mov esi, dword ptr [ebp+8] /* haystack */
-		add esp, 4
-		mov dword ptr [ebp+12], eax /* needle */
-		nop
-	search:
-		mov al, byte ptr [esi]
-		inc esi
-		test al, al
-		je no_match
-		cmp al, bl
-		jne search
-		mov eax, dword ptr [ebp+12] /* needle */
-		push eax
-		push edi
-		push esi
-		call _strnicmp
-		add esp, 12
-		test eax, eax
-		jne search
-		dec esi
-		pop edi
-		mov eax, esi
-		pop esi
-		pop ebx
-		pop ebp
-		ret
-	no_match:
-		pop edi
-		pop esi
-		xor eax, eax
-		pop ebx
-		pop ebp
-		ret
-	empty_needle:
-		mov esi, dword ptr [ebp+8] /* haystack */
-		pop edi
-		mov eax, esi
-		pop esi
-		pop ebx
-		pop ebp
-		ret
-	}
-}
-#endif
 
 unsigned long string_hash(
 	const char *string)
