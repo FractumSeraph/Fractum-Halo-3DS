@@ -269,7 +269,7 @@ void texture_cache_idle(void)
 static int sampled_raw_texture(const byte *source, unsigned int source_bytes,
     int format, unsigned int width, unsigned int height,
     unsigned int target_width, unsigned int target_height,
-    unsigned int *output, unsigned int output_bytes)
+    unsigned int *output, unsigned int output_bytes, int rows)
 {
     static const unsigned int spread[8]={0,1,4,5,16,17,20,21};
     unsigned int xs[512],ys[512],x,y,stride;
@@ -281,19 +281,20 @@ static int sampled_raw_texture(const byte *source, unsigned int source_bytes,
     if(source_bytes<width*height*stride || output_bytes<target_width*target_height*4) return 0;
     for(x=0;x<target_width;++x) {
         long swizzled[2]; bitmap_swizzle_vector2d(width,height,x*width/target_width,0,swizzled);
-        xs[x]=swizzled[0];
+        /* (a Halo PC map's rows: N3DS_BITMAP_PC_LAYOUT_FLAG) */
+        xs[x]=rows?x*width/target_width:(unsigned int)swizzled[0];
     }
     for(y=0;y<target_height;++y) {
         long swizzled[2]; bitmap_swizzle_vector2d(width,height,0,y*height/target_height,swizzled);
-        ys[y]=swizzled[1];
+        ys[y]=rows?(y*height/target_height)*width:(unsigned int)swizzled[1];
     }
     for(y=0;y<target_height;++y) for(x=0;x<target_width;++x) {
         unsigned int native_y=target_height-1-y;
         unsigned int offset=((native_y/8)*(target_width/8)+x/8)*64+spread[x&7]+2*spread[native_y&7];
         if(format==17) {
-            unsigned int argb=global_vector_palette[source[xs[x]|ys[y]]];
+            unsigned int argb=global_vector_palette[source[xs[x]+ys[y]]];
             output[offset]=(argb<<8)|(argb>>24);
-        } else output[offset]=n3ds_bitmap_decode_pixel(source+((xs[x]|ys[y])*stride),format);
+        } else output[offset]=n3ds_bitmap_decode_pixel(source+((xs[x]+ys[y])*stride),format);
     }
     return 1;
 }
@@ -333,13 +334,13 @@ int n3ds_engine_sampled_texture_tests(void)
                 expected[offset]=(unsigned)p[0]<<24|(unsigned)p[1]<<16|(unsigned)p[2]<<8|p[3];
             }
             memset(actual,0x5a,TEST_BYTES+8);
-            if(!sampled_raw_texture(source,width*height*stride,formats[f],width,height,tw,th,actual+1,tw*th*4) ||
+            if(!sampled_raw_texture(source,width*height*stride,formats[f],width,height,tw,th,actual+1,tw*th*4,0) ||
                memcmp(actual+1,expected,tw*th*4) || actual[0]!=0x5a5a5a5aU || actual[tw*th+1]!=0x5a5a5a5aU) goto done;
             ++cases;
         }
     }
     memset(actual,0x5a,TEST_BYTES+8);
-#define REJECT(s,b,f,w,h,tw,th,o,ob) do { if(sampled_raw_texture(s,b,f,w,h,tw,th,o,ob)) goto done; ++rejected; } while(0)
+#define REJECT(s,b,f,w,h,tw,th,o,ob) do { if(sampled_raw_texture(s,b,f,w,h,tw,th,o,ob,0)) goto done; ++rejected; } while(0)
     REJECT(NULL,256,11,8,8,8,8,actual,256);
     REJECT(source,256,11,8,8,8,8,NULL,256);
     REJECT(source,256,7,8,8,8,8,actual,256);
@@ -424,7 +425,8 @@ static int cube_layout(const struct bitmap_data *b,unsigned int limit,struct nat
         if(level==(unsigned int)b->mipmap_count || side==(raw?1u:4u)) break;
         side>>=1;++level;
     }
-    r.stride=(skip+127)&~127u;r.total=r.stride*6;r.target=MAX(8,MIN(r.side,limit));
+    /* (a Halo PC map's faces are not padded: N3DS_BITMAP_PC_LAYOUT_FLAG) */
+    r.stride=(b->flags&N3DS_BITMAP_PC_LAYOUT_FLAG)?skip:(skip+127)&~127u;r.total=r.stride*6;r.target=MAX(8,MIN(r.side,limit));
     if(r.total>(unsigned int)b->pixels_size || (unsigned int)b->pixels_offset>0x7fffffffu-r.total) return 0;
     *out=r;return 1;
 }
@@ -444,13 +446,14 @@ static void *load_cube_now(struct bitmap_data *bitmap)
     for(unsigned int face=0;face<6;++face) {
         /* Cached Xbox payload is already hardware +X,-X,+Y,-Y,+Z,-Z order.
          * Each face has a full mip chain, padded independently to128bytes. */
-        if(!n3ds_engine_cache_read(bitmap->pixels_offset+face*layout.stride+layout.skip,layout.bytes,source)) goto done;
+        if(!n3ds_engine_bitmap_read(bitmap,bitmap->pixels_offset+face*layout.stride+layout.skip,layout.bytes,source)) goto done;
         unsigned int last_block=~0u;byte block_rgba[64];
         for(unsigned int y=0;y<layout.target;++y) for(unsigned int x=0;x<layout.target;++x) {
             unsigned int sx=x*layout.side/layout.target,sy=y*layout.side/layout.target;
             byte *out=rgba+((face*layout.target+y)*layout.target+x)*4;
             if(raw) {
                 long swizzled[2];bitmap_swizzle_vector2d(layout.side,layout.side,sx,sy,swizzled);
+                if(bitmap->flags&N3DS_BITMAP_PC_LAYOUT_FLAG) {swizzled[0]=sx;swizzled[1]=sy*layout.side;}
                 unsigned int color=n3ds_bitmap_decode_pixel(source+(swizzled[0]|swizzled[1])*pixel,bitmap->format);
                 out[0]=color>>24;out[1]=color>>16;out[2]=color>>8;out[3]=color;
             } else {
@@ -642,15 +645,17 @@ static void *load_bitmap_now(struct bitmap_data *bitmap, boolean block, boolean 
     compressed=texture_scratch(bytes,&compressed_linear);
     if(!raw && !sampled) rgba=texture_scratch(width*height*4,&rgba_linear);
     if (!compressed || (!raw && !sampled && !rgba) || !tiled) goto done;
-    if (!n3ds_engine_cache_read(bitmap->pixels_offset+skip, bytes, compressed)) goto done;
+    if (!n3ds_engine_bitmap_read(bitmap, bitmap->pixels_offset+skip, bytes, compressed)) goto done;
     next=n3ds_engine_ticks();idle_ticks[2]+=next-stamp;stamp=next;
     if(raw) {
         if(lightmap) {
             boolean distance_linear;unsigned short *distance=texture_scratch(target_width*target_height*sizeof(*distance),&distance_linear);
             if(!distance) goto done;
-            int ok=lightmap_reduce(compressed,bytes,width,height,target_width,target_height,tiled,distance);
+            int ok=lightmap_reduce_layout(compressed,bytes,width,height,target_width,target_height,tiled,distance,
+                !!(bitmap->flags&N3DS_BITMAP_PC_LAYOUT_FLAG));
             texture_scratch_free(distance,distance_linear);if(!ok) goto done;
-        } else if(!sampled_raw_texture(compressed,bytes,bitmap->format,width,height,target_width,target_height,tiled,output_bytes)) goto done;
+        } else if(!sampled_raw_texture(compressed,bytes,bitmap->format,width,height,target_width,target_height,tiled,output_bytes,
+            !!(bitmap->flags&N3DS_BITMAP_PC_LAYOUT_FLAG))) goto done;
     } else if(sampled) {
         if(!sampled_dxt_texture(compressed,bytes,bitmap->format,width,height,target_width,target_height,tiled)) goto done;
     } else if(halo_s3tc_decode(bitmap->format == 14 ? 0x0c : bitmap->format == 15 ? 0x0e : 0x0f,

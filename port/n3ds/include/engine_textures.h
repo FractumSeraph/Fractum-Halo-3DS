@@ -17,6 +17,10 @@ int n3ds_engine_bitmap_resource_tests(void);
 /* Authored dimensions, independent of decoded mip and hardware profile. */
 int n3ds_engine_bitmap_dimensions(int group_index,int index,int size[2]);
 struct bitmap_data;
+/* A Halo PC map's bitmap (engine_ce_cache.inl): its pixels as Halo PC lays
+ * them out, a raw image's rows not swizzled (its swizzled flag set only to
+ * pass the Xbox's checks) and a cube map's faces not padded. */
+#define N3DS_BITMAP_PC_LAYOUT_FLAG 0x4000
 /* Map-owned metadata, valid only until its tag data unloads. No GPU handle is
  * retained: normal bitmap binding still resolves/loads the current resource. */
 const struct bitmap_data *n3ds_engine_bitmap_metadata(int group_index,int index);

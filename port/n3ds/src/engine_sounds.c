@@ -120,7 +120,7 @@ static boolean load(struct sound_entry *entry)
         if(!oldest) { release(entry); return FALSE; }
         release(oldest);
     }
-    if (!n3ds_engine_cache_read(entry->sound->samples.file_offset,size,data)) { free(data); release(entry); return FALSE; }
+    if (!n3ds_engine_sound_read(entry->sound,entry->sound->samples.file_offset,size,data)) { free(data); release(entry); return FALSE; }
     entry->data=data; entry->bytes=size; used_bytes+=size;
     entry->sound->unknown1=(unsigned long)data;
     return TRUE;

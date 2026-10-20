@@ -136,6 +136,50 @@ static __inline__ __attribute__((always_inline)) unsigned int xbox_address(void 
 
 #endif /* HALO_3DS */
 
+#elif defined(HALO_N3DS) && defined(HALO_CUSTOM_EDITION)
+
+/* port: (the 3DS, Halo3DS's frontend) pointers are native, but a Halo PC
+map's are linked to its tag cache at 0x40440000, which a 3DS program cannot
+map: that space is a block of the console's memory (port/n3ds/src/
+engine_ce_cache.inl), and the fork's Custom Edition code, which reads and
+writes the map's addresses with these, has them translated there. Once the
+map is converted its pointers are made native (engine_ce_relocate.c): an
+address in the space is then left as it is, and only xbox_pointer translates
+(a native pointer is never in that range: the 3DS's user space ends at
+0x40000000); xbox_address gives the map's addresses back only while its
+conversion runs (n3ds_ce_space_converting). */
+extern unsigned char *n3ds_ce_space_native;
+extern unsigned long n3ds_ce_space_size;
+extern int n3ds_ce_space_converting;
+#define N3DS_CE_SPACE_BASE 0x40440000UL
+/* (the space's range, as the fork's 3DS code checks its tag cache's: its
+tag cache and the conversion room above it, port/linux/game/ce_resources.c) */
+#define XBOX_CE_BASE 0x40440000U
+#define XBOX_CE_SIZE ((unsigned long)n3ds_ce_space_size)
+
+static __inline__ __attribute__((always_inline)) void *n3ds_xbox_pointer(unsigned long address)
+{
+	if (n3ds_ce_space_native && address - N3DS_CE_SPACE_BASE < n3ds_ce_space_size)
+		return n3ds_ce_space_native + (address - N3DS_CE_SPACE_BASE);
+	return (void *)address;
+}
+
+static __inline__ __attribute__((always_inline)) void *n3ds_xbox_address(const void *pointer)
+{
+	unsigned long value = (unsigned long)pointer;
+	unsigned long native = (unsigned long)n3ds_ce_space_native;
+
+	if (n3ds_ce_space_converting && native && value - native < n3ds_ce_space_size)
+		return (void *)(N3DS_CE_SPACE_BASE + (value - native));
+	return (void *)pointer;
+}
+
+#define XPTR(type) type *
+#define XBOX_NULL NULL
+#define xbox_pointer(address) n3ds_xbox_pointer((unsigned long)(address))
+#define xbox_address(pointer) n3ds_xbox_address((const void *)(pointer))
+#define POINTER_BITS(pointer) ((unsigned long)(pointer))
+
 #else
 
 #define XPTR(type) type *

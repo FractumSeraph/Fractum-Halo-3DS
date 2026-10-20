@@ -461,11 +461,14 @@ int halo_model_detail_stock(void)
    has its own system layer), over the C library, for the fork's bots */
 void *system_malloc(long size)
 {
-	return malloc((size_t)size);
+	/* port: the C library's own (cseries.h's malloc asserts): NULL when it
+	   cannot be had, which the fork's callers check (ce_hud.c's ui.map
+	   inflation wants 32 MB, more than a New 3DS has left with a map loaded) */
+	return (malloc)((size_t)size);
 }
 void system_free(void *pointer)
 {
-	free(pointer);
+	(free)(pointer);
 }
 /* port/linux/include/halo_keyboard.h */
 int halo_chat_touch_layout(void)

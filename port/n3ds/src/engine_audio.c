@@ -26,6 +26,9 @@ struct sound_platform_definition {
 _Static_assert(sizeof(struct sound_platform_definition)==60,"Sound platform ABI");
 struct native_voice {struct sound_permutation *playing,*queued;struct platform_sound_channel_properties properties;struct sound_location location;float obstruction,occlusion;int spatial;};
 static struct native_voice voice[24];static int live;static unsigned int queued_count;
+/* Each voice's channel type's flags (sound_preferences.c): 2 stereo, 4 44.1 kHz,
+ * 8 Xbox ADPCM (else 16-bit PCM, a Halo PC map's decoded Ogg Vorbis). */
+static short voice_flags[24];
 void n3ds_log(const char *);
 static void refresh(short i)
 {
@@ -44,8 +47,18 @@ static void flush(void) {if(live) for(short i=0;i<24;++i) stop(i);}
 static void dispose(void) {flush();n3ds_audio_dispose();live=0;}
 static boolean initialize(struct sound_preferences *p)
 {
+#ifdef HALO_CUSTOM_EDITION
+    /* port: and the 16-bit PCM types' (sound_preferences.h), within the 24 */
+    static const short counts[8]={4,10,2,2,2,2,1,1};
+#else
     static const short counts[4]={4,14,4,2};
-    for(int i=0;i<4;++i) p->actual_channel_counts[i]=p->virtual_channel_counts[i]=counts[i];
+#endif
+    int v=0;
+    for(int i=0;i<(int)NUMBEROF(counts);++i) {
+        p->actual_channel_counts[i]=p->virtual_channel_counts[i]=counts[i];
+        for(int c=0;c<counts[i];++c) voice_flags[v++]=sound_channel_type_flags[i];
+    }
+    assert(v==24);
     memset(voice,0,sizeof(voice));queued_count=0;live=n3ds_audio_initialize(24);
     return live;
 }
@@ -53,7 +66,7 @@ static void properties_apply(short i)
 {
     struct native_voice *v=voice+i;
     float gain=MAX(0.f,v->properties.gain),pan=0;
-    int rate=i>=22?44100:22050;
+    int rate=voice_flags[i]&4?44100:22050;
     if(v->spatial) {
         const real_point3d *p=&v->location.position;
         float distance=sqrtf(p->x*p->x+p->y*p->y+p->z*p->z),minimum=MAX(v->properties.minimum_distance,.001f);
@@ -78,7 +91,7 @@ static void queue(short i,struct sound_permutation *p)
     /* Do not refresh mid-manager transaction: queued/playing transitions are
      * observed together at scene begin, before its own state polling. */
     struct native_voice *v=voice+i;
-    int channels=i>=18?2:1;
+    int channels=voice_flags[i]&2?2:1;
     sound_cache_sound_hardware_lock(p);
     if(!n3ds_audio_queue(i,(void *)p->unknown1,p->samples.size,channels,p->compression)) {
         sound_cache_sound_hardware_unlock(p);n3ds_log("AUDIO ERROR: sample format rejected");return;

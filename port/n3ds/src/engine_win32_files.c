@@ -74,7 +74,7 @@ struct n3ds_win32_handle
 
 /* a path, its backslashes slashes; an Xbox drive's (d:\\, the game's data;
  * any other letter, its folder there) the SD card's data folder's */
-static void n3ds_win32_path(const char *in, char *out, size_t size)
+void n3ds_xbox_path(const char *in, char *out, size_t size)
 {
 	size_t i = 0, j;
 
@@ -86,7 +86,14 @@ static void n3ds_win32_path(const char *in, char *out, size_t size)
 		if (letter == 'd')
 			i = (size_t)snprintf(out, size, "sdmc:/halo-source/");
 		else
+		{
+			/* (made the first time: the Xbox's scratch drives, z:\ the fork's
+			   decoded Custom Edition sounds) */
+			i = (size_t)snprintf(out, size, "sdmc:/halo-source/%c", letter);
+			if (i < size)
+				mkdir(out, 0777);
 			i = (size_t)snprintf(out, size, "sdmc:/halo-source/%c/", letter);
+		}
 		in += 3;
 		if (i >= size)
 			i = size - 1;
@@ -139,7 +146,7 @@ HANDLE WINAPI CreateFileA(LPCSTR name, DWORD access, DWORD share, LPSECURITY_ATT
 	(void)attributes;
 	(void)flags;
 	(void)template_file;
-	n3ds_win32_path(name, path, sizeof(path));
+	n3ds_xbox_path(name, path, sizeof(path));
 	exists = stat(path, &status) == 0;
 	if (exists && S_ISDIR(status.st_mode))
 		return INVALID_HANDLE_VALUE;
@@ -235,6 +242,17 @@ DWORD WINAPI SetFilePointer(HANDLE handle, LONG distance, PLONG distance_high, D
 	return (DWORD)position;
 }
 
+/* bytes at offset of a file the fork's code opened (a Custom Edition
+ * map's resource map: engine_ce_cache.inl), its position moved; nonzero if
+ * all were read. The caller serializes (n3ds_files_lock) */
+int n3ds_win32_read_at(HANDLE handle, unsigned long offset, unsigned long bytes, void *destination)
+{
+	struct n3ds_win32_handle *h = n3ds_win32_file(handle);
+
+	return h && offset <= 0x7fffffffUL && !fseek(h->file, (long)offset, SEEK_SET) &&
+		fread(destination, 1, bytes, h->file) == bytes;
+}
+
 DWORD WINAPI GetFileSize(HANDLE handle, LPDWORD size_high)
 {
 	struct n3ds_win32_handle *h = n3ds_win32_file(handle);
@@ -279,7 +297,7 @@ HANDLE WINAPI FindFirstFileA(LPCSTR pattern, LPWIN32_FIND_DATAA data)
 	char *slash;
 	struct n3ds_win32_handle *h;
 
-	n3ds_win32_path(pattern, path, sizeof(path));
+	n3ds_xbox_path(pattern, path, sizeof(path));
 	h = calloc(1, sizeof(*h));
 	if (!h || !data)
 	{
@@ -341,7 +359,7 @@ BOOL WINAPI CreateDirectoryA(LPCSTR name, LPSECURITY_ATTRIBUTES attributes)
 	char path[260];
 
 	(void)attributes;
-	n3ds_win32_path(name, path, sizeof(path));
+	n3ds_xbox_path(name, path, sizeof(path));
 	return mkdir(path, 0777) == 0;
 }
 
@@ -349,7 +367,7 @@ BOOL WINAPI DeleteFileA(LPCSTR name)
 {
 	char path[260];
 
-	n3ds_win32_path(name, path, sizeof(path));
+	n3ds_xbox_path(name, path, sizeof(path));
 	return remove(path) == 0;
 }
 
@@ -357,8 +375,8 @@ BOOL WINAPI MoveFileA(LPCSTR from, LPCSTR to)
 {
 	char a[260], b[260];
 
-	n3ds_win32_path(from, a, sizeof(a));
-	n3ds_win32_path(to, b, sizeof(b));
+	n3ds_xbox_path(from, a, sizeof(a));
+	n3ds_xbox_path(to, b, sizeof(b));
 	return rename(a, b) == 0;
 }
 
@@ -385,4 +403,12 @@ BOOL WINAPI GetFileTime(HANDLE handle, struct n3ds_win32_filetime *created, stru
 	if (written)
 		*written = time;
 	return TRUE;
+}
+
+/* the last Win32 error, which the fork's map families ask after a failed
+ * open: the C library's, as a Win32 code where one fits (2 not found,
+ * 5 denied), else 31 (the device's) */
+DWORD WINAPI GetLastError(void)
+{
+	return errno == ENOENT ? 2 : errno == EACCES ? 5 : errno ? 31 : 0;
 }

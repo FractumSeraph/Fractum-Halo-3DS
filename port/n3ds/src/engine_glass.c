@@ -73,7 +73,7 @@ const byte *n3ds_cube_load(long tag,short permutation)
     byte *encoded=malloc(bytes),*decoded=malloc(side*side*4);assert(encoded && decoded);
     byte *destination=cubes[cube_count].rgba;
     for(unsigned int face=0;face<6;++face) {
-        assert(n3ds_engine_cache_read(b->pixels_offset+face*face_stride+skip,bytes,encoded));
+        assert(n3ds_engine_bitmap_read(b,b->pixels_offset+face*face_stride+skip,bytes,encoded));
         if(raw) {
             for(unsigned int y=0;y<side;++y) for(unsigned int x=0;x<side;++x) {
                 long address[2];bitmap_swizzle_vector2d(side,side,x,y,address);

@@ -58,7 +58,7 @@ static const struct plasma_volume *volume_load(long tag,short permutation,const 
     }
     bytes=v->size[0]*v->size[1]*v->size[2]*v->stride;
     assert(b->pixels_offset>=2048 && b->pixels_size>0 && skip+bytes<=(unsigned long)b->pixels_size);
-    assert(n3ds_engine_cache_read(b->pixels_offset+skip,bytes,v->pixels));
+    assert(n3ds_engine_bitmap_read(b,b->pixels_offset+skip,bytes,v->pixels));
     for(int c=0;c<3;++c) for(int i=0;i<v->size[c];++i) {
         long xyz[3]={0},address[3];xyz[c]=i;
         bitmap_swizzle_vector3d(v->size[0],v->size[1],v->size[2],xyz[0],xyz[1],xyz[2],address);

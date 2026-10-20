@@ -57,7 +57,8 @@ def main():
         if name in index:
             out.write('\t{ 0x%08XU, %d }, /* %s */\n' % (int(group), index[name], name))
     out.write('};\n')
-    for special in ('ScenarioStructureBSP', 'ScenarioStructureBSPCompiledHeader'):
+    for special in ('ScenarioStructureBSP', 'ScenarioStructureBSPCompiledHeader', 'ModelGeometryPart',
+                    'ScenarioStructureBSPMaterial'):
         out.write('#define CE_SCHEMA_%s %d\n' % (special.upper(), index[special]))
 
 

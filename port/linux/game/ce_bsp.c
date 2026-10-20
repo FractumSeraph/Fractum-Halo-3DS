@@ -290,7 +290,7 @@ void ce_bsp_loaded(
 			{
 				continue;
 			}
-#ifdef HALO_3DS
+#if defined(HALO_3DS) || defined(HALO_N3DS) /* port: the New 3DS too (its renderer reads them in the space) */
 			/* (the 3DS: in the map's tag cache, given back with the BSP's
 			room when it unloads (ce_bsp_free_mark): the window has no room
 			for them, xbox_address.h) */

@@ -168,6 +168,47 @@ static int ce_walk(struct n3ds_ce_space *space, short type, unsigned long at, in
 			break;
 		}
 	}
+	/* the Xbox's geometry, as the fork's conversion of a gbxmodel or a BSP
+	   leaves it (ce_models.c, ce_bsp.c) and Halo3DS's renderer reads it
+	   (its setup's walk: Relocation.cs): a part's or a lightmap material's
+	   Direct3D buffers (a descriptor whose second word is the data), and the
+	   vertex buffer's base address the data itself */
+	if (type == CE_SCHEMA_MODELGEOMETRYPART)
+	{
+		long descriptor;
+
+		ce_pointer(space, at + 76, 1);
+		descriptor = ce_pointer(space, at + 80, 12);
+		if (descriptor >= 0)
+			ce_pointer(space, (unsigned long)descriptor + 4, 1);
+		descriptor = ce_pointer(space, at + 100, 12);
+		if (descriptor >= 0)
+		{
+			ce_pointer(space, (unsigned long)descriptor + 4, 1);
+			memcpy(space->native + at + 96, space->native + descriptor + 4, 4);
+		}
+	}
+	else if (type == CE_SCHEMA_SCENARIOSTRUCTUREBSPMATERIAL)
+	{
+		static const unsigned short buffers[2] = { 176, 196 };
+		int b;
+
+		for (b = 0; b < 2; b++)
+		{
+			unsigned long buffer = at + buffers[b];
+			long descriptor;
+
+			if (!ce_u32(space->native + buffer + 4))
+				continue;
+			ce_pointer(space, buffer + 12, 1);
+			descriptor = ce_pointer(space, buffer + 16, 12);
+			if (descriptor >= 0)
+			{
+				ce_pointer(space, (unsigned long)descriptor + 4, 1);
+				memcpy(space->native + buffer + 12, space->native + descriptor + 4, 4);
+			}
+		}
+	}
 	return 1;
 }
 
@@ -222,21 +263,22 @@ int n3ds_ce_relocate_tags(struct n3ds_ce_space *space, unsigned long tag_bytes, 
 		unsigned long entry = (unsigned long)table + i * CE_TAG_INSTANCE_SIZE;
 		unsigned int group = ce_u32(space->native + entry);
 		unsigned int indexed = ce_u32(space->native + entry + 24);
+
 		short root;
 		long body;
 
 		ce_pointer(space, entry + 16, 1);
-		/* (an indexed tag's data is a resource map's, found by its index:
-		   ce_resources.c; but an indexed sound's header stays in the map, its
-		   pointer rewritten and nothing in it walked, the rest of it being
-		   sounds.map's. A BSP's data is streamed: n3ds_ce_relocate_bsp) */
-		if (indexed)
-		{
-			ce_pointer(space, entry + 20, 1);
-			continue;
-		}
+		/* (an indexed tag's data is a resource map's, found by its index,
+		   until the fork's code copies it into the space (ce_resources.c):
+		   walked if it is there now, else left; a BSP's is streamed:
+		   n3ds_ce_relocate_bsp) */
 		if (group == CE_GROUP_SBSP)
 			continue;
+		if (indexed && ce_offset(space, ce_u32(space->native + entry + 20), 1) < 0)
+		{
+			space->indexed_left++;
+			continue;
+		}
 		root = ce_root(group);
 		if (root < 0)
 		{

@@ -186,7 +186,7 @@ static unsigned long ce_part_vertices(
 
 	if (!buffer_address || count <= 0)
 		return 0;
-#ifdef HALO_3DS
+#if defined(HALO_3DS) || defined(HALO_N3DS) /* port: the New 3DS too (its renderer reads them in the space) */
 	/* (the 3DS: in the map's tag cache, after its tags, where they last as
 	long as the map: the window has no room for them, xbox_address.h) */
 	{

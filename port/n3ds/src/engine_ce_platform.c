@@ -9,7 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* (xbox_memory.c's; set by engine_ce_cache.c) */
+/* (xbox_memory.c's; set on a New 3DS at start-up: engine_main.c) */
 int platform_ce_tag_cache_ready = 0;
 char platform_ce_tag_cache_error[160] = "Halo PC maps need a New 3DS";
 unsigned int platform_ce_conversion_room = 0;

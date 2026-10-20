@@ -12,6 +12,16 @@ void n3ds_engine_tags_unload(void);
 boolean n3ds_engine_bsp_load(struct scenario_structure_bsp_reference *reference);
 void n3ds_engine_bsp_unload(struct scenario_structure_bsp_reference *reference);
 boolean n3ds_engine_cache_read(unsigned long offset, unsigned long bytes, void *destination);
+/* A bitmap's pixels: the map's, or (a Halo PC map's) the resource map its
+ * tag's are in (bitmaps.map). */
+struct bitmap_data;
+struct sound_permutation;
+/* ... and a sound's samples, the same way (sounds.map, or the decoded
+ * Ogg Vorbis sounds' file). */
+boolean n3ds_engine_sound_read(const struct sound_permutation *permutation, unsigned long offset,
+    unsigned long bytes, void *destination);
+boolean n3ds_engine_bitmap_read(const struct bitmap_data *bitmap, unsigned long offset, unsigned long bytes,
+    void *destination);
 int n3ds_engine_cache_stream_tests(void);
 int n3ds_engine_cache_stream_live(void);
 /* Read-only diagnostics for bounds/lifetime verification. */

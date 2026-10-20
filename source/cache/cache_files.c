@@ -569,8 +569,99 @@ void cache_files_bind_native(const struct cache_file_header *header, struct cach
 	{
 		memset(&cache_file_globals, 0, sizeof(cache_file_globals));
 		global_tag_instances = NULL;
+#ifdef HALO_CUSTOM_EDITION
+		cache_file_is_ce = FALSE;
+#endif
 	}
 }
+#ifdef HALO_CUSTOM_EDITION
+/* port: (the 3DS) a Halo PC map's tags, read into its space as its tag
+cache (port/n3ds/src/engine_ce_cache.inl, which has its addresses
+translated there while this runs: cseries/xbox_address.h), bound and
+converted as the fork's load does them (scenario_tags_load, below): its
+indexed tags from the resource maps, its repairs, its gbxmodels made models
+from its model data, its functions and shaders, its HUD; then its tags'
+names copied out. Its pointers are made native after (engine_ce_relocate.c).
+The scenario's tag index, or NONE if its resources could not be loaded */
+long cache_files_bind_native_ce(
+	struct cache_file_header const *header,
+	void *tags,
+	byte const *model_data)
+{
+	struct cache_file_ce_tag_header *ce_header = tags;
+	boolean resources;
+
+	assert(!cache_file_globals.tags_loaded && ce_header->signature == CACHE_FILE_TAG_HEADER_SIGNATURE);
+	cache_file_globals.header = *header;
+	cache_file_globals.tag_header = tags;
+	global_tag_instances = xbox_pointer(ce_header->tag_instances);
+	cache_file_globals.tags_loaded = TRUE;
+	cache_file_is_ce = TRUE;
+	error(_error_silent, "Custom Edition map %s: %ld tags, %ld model parts (%ld bytes of model data)",
+		header->name, ce_header->tag_count, ce_header->model_part_count, ce_header->model_data_size);
+	{
+		extern boolean ce_resources_tags_loaded(void *tag_instances, long tag_count, unsigned long first_free,
+			unsigned long end_free);
+		extern void ce_repairs_tags_loaded(void *tag_instances, long tag_count, unsigned long scenario_tag_index);
+		extern long ce_map_cache_version;
+		struct cache_file_tag_instance *scenario = &global_tag_instances[ce_header->scenario_tag_index & 0xffff];
+		byte *scenario_data = xbox_pointer(scenario->base_address);
+		long bsp_count = *(long *)(scenario_data + 0x5A4);
+		struct scenario_structure_bsp_reference *bsps = xbox_pointer(*(unsigned long *)(scenario_data + 0x5A8));
+		unsigned long end_free = CE_TAG_CACHE_BASE + CE_TAG_CACHE_SIZE;
+		long bsp_index;
+
+		for (bsp_index = 0; bsp_index < bsp_count; bsp_index++)
+		{
+			unsigned long bsp_base = (unsigned long)xbox_address(xbox_pointer(bsps[bsp_index].base_address));
+
+			if (bsp_base > CE_TAG_CACHE_BASE && bsp_base < end_free)
+				end_free = bsp_base;
+		}
+		ce_map_cache_version = header->version;
+		resources = ce_resources_tags_loaded(global_tag_instances, ce_header->tag_count,
+			CE_TAG_CACHE_BASE + header->tag_data_size, end_free);
+		if (!resources)
+			error(_error_silent, "Custom Edition map %s: its resources could not be loaded", header->name);
+		ce_repairs_tags_loaded(global_tag_instances, ce_header->tag_count, ce_header->scenario_tag_index);
+	}
+	if (model_data)
+	{
+		extern boolean ce_models_tags_loaded(void *tag_instances, long tag_count, byte const *model_data,
+			unsigned long vertex_data_size);
+		extern void ce_functions_tags_loaded(void *tag_instances, long tag_count);
+		extern void ce_shaders_tags_loaded(void *tag_instances, long tag_count);
+
+		if (!ce_models_tags_loaded(global_tag_instances, ce_header->tag_count, model_data, ce_header->vertex_data_size))
+			error(_error_silent, "Custom Edition map %s: its models could not all be made", header->name);
+		ce_functions_tags_loaded(global_tag_instances, ce_header->tag_count);
+		ce_shaders_tags_loaded(global_tag_instances, ce_header->tag_count);
+	}
+	{
+		extern void ce_hud_map_identity(char const *name, long name_size, unsigned long tags_checksum);
+		extern void ce_hud_tags_loaded(void *tag_instances, long tag_count);
+		extern void ce_resources_tag_names_copy(void *tag_instances, long tag_count);
+
+		ce_hud_map_identity(header->name, sizeof(header->name), ce_header->checksum);
+		ce_hud_tags_loaded(global_tag_instances, ce_header->tag_count);
+		ce_resources_tag_names_copy(global_tag_instances, ce_header->tag_count);
+	}
+	return resources ? ce_header->scenario_tag_index : NONE;
+}
+
+/* ... and a structure BSP of one, read into the space at its address:
+its vertices compressed and its clusters' predicted resources repaired, as
+the fork's BSP load does (scenario_structure_bsp_load, below) */
+void cache_files_ce_bsp_loaded(
+	struct cache_file_structure_bsp_header *bsp)
+{
+	extern void ce_bsp_loaded(struct structure_bsp *structure);
+	extern void ce_repairs_bsp_loaded(struct structure_bsp *structure);
+
+	ce_bsp_loaded(xbox_pointer(bsp->base_address));
+	ce_repairs_bsp_loaded(xbox_pointer(bsp->base_address));
+}
+#endif
 void cache_files_bind_native_bsp(struct cache_file_structure_bsp_header *bsp, long tag_index)
 {
 	struct cache_file_tag_instance *instance = cache_get_tag_instance(tag_index);

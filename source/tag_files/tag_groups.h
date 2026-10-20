@@ -160,7 +160,14 @@ void *tag_block_get_element_with_size(struct tag_block const *block, long index,
 static inline void *n3ds_tag_block_element(const struct tag_block *block,long index,long size)
 {
     if(block && block->count>=0 && (unsigned long)index<(unsigned long)block->count &&
-       !block->definition && block->address)
+       !block->definition && block->address
+#ifdef HALO_CUSTOM_EDITION
+       /* port: not while a Halo PC map is converted: its addresses are still
+          its tag cache's then, which the call below translates
+          (cseries/xbox_address.h) */
+       && !n3ds_ce_space_converting
+#endif
+       )
         return (byte *)block->address+index*size;
     return tag_block_get_element_with_size(block,index,size);
 }

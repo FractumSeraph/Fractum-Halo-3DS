@@ -81,6 +81,13 @@ int main(void)
     /* Retain capacity for two A10 corridor views and their effects, while
      * keeping every draw and the live command-capacity checks. */
     n3ds_parallel_initialize();
+    /* Halo PC maps (Custom Edition's) need the New 3DS's memory: their tag
+     * cache's space and its conversion take about 40 MB (engine_ce_cache.inl). */
+    {
+        extern int platform_ce_tag_cache_ready;
+        extern char platform_ce_tag_cache_error[160];
+        if (new_model) {platform_ce_tag_cache_ready=1;platform_ce_tag_cache_error[0]=0;}
+    }
     /* The console's socket service, for system link and internet play (the
      * fork's Winsock layer, port/linux/src/xnet.c). Without it the game runs
      * offline: the transport reports no network. */

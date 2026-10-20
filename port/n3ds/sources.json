@@ -3414,6 +3414,10 @@
     {
       "source": "port/linux/game/map_share_maps.c",
       "compiler": "clang"
+    },
+    {
+      "source": "port/n3ds/src/engine_ce_relocate.c",
+      "compiler": "gcc"
     }
   ],
   "runtime": [

@@ -840,6 +840,21 @@ void *ce_tags_pointer(
 	{
 		return xbox_pointer(address);
 	}
+#if defined(HALO_N3DS)
+	/* port: (the 3DS) or already made native, in the space the map's tag
+	cache is read into (cseries/xbox_address.h, port/n3ds/src/engine_ce_cache.inl) */
+	{
+		extern unsigned char *n3ds_ce_space_native;
+		extern unsigned long n3ds_ce_space_size;
+		unsigned long native = (unsigned long)n3ds_ce_space_native;
+
+		if (native && size > 0 && address >= native && address - native <= n3ds_ce_space_size &&
+			(unsigned long)size <= n3ds_ce_space_size - (address - native))
+		{
+			return (void *)address;
+		}
+	}
+#endif
 	/* (or the mods' tags', played over the map's and made outside its tag
 	cache: port/linux/game/mods.c) */
 	if (mods_memory_contains(address, size))

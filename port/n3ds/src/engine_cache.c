@@ -12,6 +12,8 @@
 #include "structure_bsp_definitions.h"
 #include "collision_bsp_definitions.h"
 #include "collision_bsp.h"
+#include "bitmaps/bitmap_group.h"
+#include "sound/sound_definitions.h"
 
 void n3ds_log(const char *message);
 void n3ds_cache_progress(const char *stage,unsigned long done,unsigned long total)
@@ -277,6 +279,9 @@ fail:
     return 1;
 }
 
+/* (Halo PC maps: Custom Edition's, HaloMD's) */
+#include "engine_ce_cache.inl"
+
 /* Listing must not deserialize every level while a menu is opening. Check
  * the small header pair and extents here; actual selection/loading retains
  * the complete tag CRC, relocation and scenario validation below. */
@@ -287,6 +292,10 @@ boolean n3ds_engine_map_installed(const char *name)
     const char *base=name,*scan;
     char path[128];FILE *file;long size;
     if(!name) return FALSE;
+#ifdef HALO_CUSTOM_EDITION
+    /* port: a Halo PC map (its name's family: <file>@ce, @md) */
+    if(map_family_parse(name,NULL,0)!=_map_family_xbox) return n3ds_engine_ce_map_installed(name);
+#endif
     for(scan=name;*scan;++scan) if(*scan=='/' || *scan=='\\') base=scan+1;
     if(!*base || strlen(base)>=32) return FALSE;
     for(scan=base;*scan;++scan) if(!((*scan>='a' && *scan<='z') || (*scan>='A' && *scan<='Z') || (*scan>='0' && *scan<='9') || *scan=='_')) return FALSE;
@@ -325,6 +334,10 @@ long n3ds_engine_tags_load(const char *name)
 {
     struct n3ds_cache_view candidate={0};
     char path[128],base[32];
+#ifdef HALO_CUSTOM_EDITION
+    /* port: a Halo PC map: engine_ce_cache.inl */
+    if(!native_tags.tags && name && map_family_parse(name,NULL,0)!=_map_family_xbox) return ce_tags_load(name);
+#endif
     if(native_tags.tags || load_tag_candidate(name,&candidate,path,base)) return NONE;
     native_tags = candidate;
     cache_generation_advance();++native_tag_generation;
@@ -356,6 +369,9 @@ boolean n3ds_engine_bsp_load(struct scenario_structure_bsp_reference *reference)
     if (index == count) return FALSE;
     instance = n3ds_cache_tag(&native_tags, reference->structure_bsp.index, 'sbsp');
     if (!instance || instance->base_address) return FALSE;
+#ifdef HALO_CUSTOM_EDITION
+    if (native_is_ce) return ce_bsp_load(reference, index);
+#endif
     bsp_arena_prepare(references,count);
     snprintf(sidecar, sizeof(sidecar), "sdmc:/halo-source/%s-bsp%ld.nrl", native_name, index);
     if (load_bsp(&candidate, &native_tags, reference, native_map, sidecar)) goto fail;
@@ -382,6 +398,9 @@ void n3ds_engine_bsp_unload(struct scenario_structure_bsp_reference *reference)
     cache_files_bind_native_bsp(NULL, reference->structure_bsp.index);
     native_reference = NULL;
     cache_generation_advance();
+#ifdef HALO_CUSTOM_EDITION
+    if (native_is_ce) {ce_bsp_unload();return;}
+#endif
     bsp_close(&native_bsp);
 }
 
@@ -409,6 +428,9 @@ void n3ds_engine_tags_unload(void)
         char message[160];snprintf(message,sizeof(message),"MAP READ STREAM: opens=%u reads=%u bytes=%u closed=%d",native_stream_opens,native_stream_reads,native_stream_bytes,closed);n3ds_log(message);
     }
     if (native_tags.tags) {++native_tag_generation;cache_generation_advance();cache_files_bind_native(NULL, NULL);}
+#ifdef HALO_CUSTOM_EDITION
+    if (native_is_ce) ce_tags_unload(); else
+#endif
     n3ds_cache_close(&native_tags);
     native_map[0] = native_name[0] = 0;
     n3ds_files_unlock();
@@ -452,6 +474,34 @@ boolean n3ds_engine_cache_read(unsigned long offset, unsigned long bytes, void *
 done:
     n3ds_files_unlock();
     return result;
+}
+
+boolean n3ds_engine_bitmap_read(const struct bitmap_data *bitmap, unsigned long offset, unsigned long bytes,
+    void *destination)
+{
+#ifdef HALO_CUSTOM_EDITION
+    /* port: a Halo PC map's from its resource map (engine_ce_cache.inl) */
+    if (native_is_ce && bitmap) {
+        int read = ce_pixels_read(bitmap->tag_index, offset, bytes, destination);
+        if (read >= 0) return read != 0;
+    }
+#endif
+    (void)bitmap;
+    return n3ds_engine_cache_read(offset, bytes, destination);
+}
+
+boolean n3ds_engine_sound_read(const struct sound_permutation *permutation, unsigned long offset,
+    unsigned long bytes, void *destination)
+{
+#ifdef HALO_CUSTOM_EDITION
+    /* port: (the sound's tag: ce_sounds_ready) */
+    if (native_is_ce && permutation) {
+        int read = ce_pixels_read((long)permutation->unknown3, offset, bytes, destination);
+        if (read >= 0) return read != 0;
+    }
+#endif
+    (void)permutation;
+    return n3ds_engine_cache_read(offset, bytes, destination);
 }
 
 int n3ds_engine_cache_stream_live(void)
