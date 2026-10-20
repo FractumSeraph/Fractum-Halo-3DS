@@ -48,8 +48,13 @@ versions 11 to 33):
   punching and its tunnel; no WebRTC or UPnP on the 3DS).
 - **Online Games**, under Multiplayer, is the server browser: every game on
   the community game list (OpenCE's and ChupathingyCE's servers), with its
-  map, game type, players and ping. Up and down pick a game, left and right
-  turn the page, **A** joins it, **X** refreshes, **B** goes back. Games on
+  map, game type, players and ping. Up and down (or a tap on the bottom
+  screen) pick a game, left and right turn the page, **A** joins it, **X**
+  refreshes, **B** goes back. **SELECT** opens the keyboard to join a game
+  by its invite (a `halo://join/` link or its 64 digits).
+- **Hosting**: **Y** in Online Games creates a game on the internet. Its
+  invite is shown on the bottom screen for friends to join; a public game
+  (the default, `network.host_public`) is also listed in everyone's browser. Games on
   Custom Edition maps are listed but can't be joined yet, and map downloads
   are still to come; [the plan](docs/MULTIPLAYER-PLAN.md) says where each
   stands.
@@ -66,8 +71,7 @@ the game runs; under `[network]`:
 
 The game list is reached over HTTPS. The game knows Let's Encrypt's root
 certificates; for others, put a certificate bundle at
-`halo-source/cacert.pem`. A game can also be joined by its invite: put
-`network_test = "invite:<the invite's 64 hex digits>"` under `[debug]`.
+`halo-source/cacert.pem`.
 
 ## Updating
 

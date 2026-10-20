@@ -148,10 +148,17 @@ servers and joined the empty dedicated "[C] Slayer" from the list and played
 - **HTTPS.** Mbed TLS (the fork's copy and defines; entropy from the PS
   service; `engine_mbedtls_net.c` for its sockets and clock), Let's
   Encrypt's ISRG roots built in after `sdmc:/halo-source/cacert.pem`.
-- **Not yet.** Touch on the browser (the fork's pointer is stand-ins);
-  Custom Edition games (listed, not joinable until Phase 4); creating an
-  internet game from the browser's Y (untested); memory on an Original 3DS
-  (Mbed TLS and the larger text buffer, 512 KB of linear memory).
+- **Touch, invites, hosting** (cc9e9da). The bottom screen is the menus'
+  pointer (the fork's `touch_menu.c`: tap to click, drag to scroll; its
+  320x240 is the menus' 640x480). SELECT in Online Games opens the system's
+  keyboard for an invite, joined as a picked game is. A game hosted on the
+  internet (Y) shows its invite on the bottom screen. Tested in Azahar: the
+  fork's latest Windows game (network 32, built from fork/main in
+  `build/opence-v32`) joined a private 3DS-hosted game by that invite and
+  played; a typed invite joined a public server. (Azahar's keyboard needs
+  its built-in applets: `lle_applets=false`.)
+- **Not yet.** Custom Edition games (listed, not joinable until Phase 4).
+  The New 3DS is the target; the Original 3DS is not checked for now.
 
 ## Phases
 
