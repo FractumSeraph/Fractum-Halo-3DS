@@ -620,46 +620,6 @@ static hs_inspection_procedure hs_type_inspectors[NUMBER_OF_HS_TYPES] =
 	NULL,
 	NULL,
 };
-#ifdef HALO_N3DS
-/* The script stack contains raw 32-bit values. ARM callbacks must agree with
- * the table's long(long) signature; unions and shorts are not interchangeable
- * function types even when their Xbox register representations coincide. */
-#define HS_CAST_UNION_ADAPTER(name) \
-static long n3ds_##name(long bits) \
-{ \
-    union hs_conversion_result value; \
-    value.long_integer = bits; \
-    value = name(value); \
-    return value.long_integer; \
-}
-#define HS_CAST_LONG_ADAPTER(name) \
-static long n3ds_##name(long bits) \
-{ \
-    union hs_conversion_result value; \
-    value.long_integer = bits; \
-    return name(value); \
-}
-HS_CAST_UNION_ADAPTER(hs_data_to_void)
-HS_CAST_UNION_ADAPTER(hs_enum_to_real)
-HS_CAST_UNION_ADAPTER(hs_long_to_boolean)
-HS_CAST_UNION_ADAPTER(hs_long_to_real)
-HS_CAST_UNION_ADAPTER(hs_real_to_short)
-HS_CAST_UNION_ADAPTER(hs_short_to_boolean)
-HS_CAST_UNION_ADAPTER(hs_short_to_real)
-HS_CAST_UNION_ADAPTER(hs_string_to_boolean)
-HS_CAST_LONG_ADAPTER(hs_real_to_long)
-HS_CAST_LONG_ADAPTER(hs_long_to_short)
-static long n3ds_hs_object_name_to_object_list(long bits)
-{
-    return hs_object_name_to_object_list((short)bits);
-}
-#undef HS_CAST_UNION_ADAPTER
-#undef HS_CAST_LONG_ADAPTER
-#define HS_CAST_CALLBACK(name) n3ds_##name
-#else
-#define HS_CAST_CALLBACK(name) name
-#endif
-
 hs_typecasting_procedure typecasting_procedures[NUMBER_OF_HS_TYPES][NUMBER_OF_HS_TYPES] =
 {
 	{ NULL }, /* unparsed */
@@ -669,52 +629,52 @@ hs_typecasting_procedure typecasting_procedures[NUMBER_OF_HS_TYPES][NUMBER_OF_HS
 	{ /* void */
 		NULL, NULL, NULL, NULL,
 		NULL,
-		HS_CAST_CALLBACK(hs_data_to_void), HS_CAST_CALLBACK(hs_data_to_void), HS_CAST_CALLBACK(hs_data_to_void), HS_CAST_CALLBACK(hs_data_to_void),
-		HS_CAST_CALLBACK(hs_data_to_void), HS_CAST_CALLBACK(hs_data_to_void), HS_CAST_CALLBACK(hs_data_to_void), HS_CAST_CALLBACK(hs_data_to_void),
-		HS_CAST_CALLBACK(hs_data_to_void), HS_CAST_CALLBACK(hs_data_to_void), HS_CAST_CALLBACK(hs_data_to_void), HS_CAST_CALLBACK(hs_data_to_void),
-		HS_CAST_CALLBACK(hs_data_to_void), HS_CAST_CALLBACK(hs_data_to_void), HS_CAST_CALLBACK(hs_data_to_void), HS_CAST_CALLBACK(hs_data_to_void),
-		HS_CAST_CALLBACK(hs_data_to_void), HS_CAST_CALLBACK(hs_data_to_void), HS_CAST_CALLBACK(hs_data_to_void), HS_CAST_CALLBACK(hs_data_to_void),
-		HS_CAST_CALLBACK(hs_data_to_void), HS_CAST_CALLBACK(hs_data_to_void), HS_CAST_CALLBACK(hs_data_to_void), HS_CAST_CALLBACK(hs_data_to_void),
-		HS_CAST_CALLBACK(hs_data_to_void), HS_CAST_CALLBACK(hs_data_to_void), HS_CAST_CALLBACK(hs_data_to_void), HS_CAST_CALLBACK(hs_data_to_void),
-		HS_CAST_CALLBACK(hs_data_to_void), HS_CAST_CALLBACK(hs_data_to_void), HS_CAST_CALLBACK(hs_data_to_void), HS_CAST_CALLBACK(hs_data_to_void),
-		HS_CAST_CALLBACK(hs_data_to_void), HS_CAST_CALLBACK(hs_data_to_void), HS_CAST_CALLBACK(hs_data_to_void), HS_CAST_CALLBACK(hs_data_to_void),
-		HS_CAST_CALLBACK(hs_data_to_void), HS_CAST_CALLBACK(hs_data_to_void), HS_CAST_CALLBACK(hs_data_to_void), HS_CAST_CALLBACK(hs_data_to_void),
-		HS_CAST_CALLBACK(hs_data_to_void), HS_CAST_CALLBACK(hs_data_to_void), HS_CAST_CALLBACK(hs_data_to_void), HS_CAST_CALLBACK(hs_data_to_void),
+		hs_data_to_void, hs_data_to_void, hs_data_to_void, hs_data_to_void,
+		hs_data_to_void, hs_data_to_void, hs_data_to_void, hs_data_to_void,
+		hs_data_to_void, hs_data_to_void, hs_data_to_void, hs_data_to_void,
+		hs_data_to_void, hs_data_to_void, hs_data_to_void, hs_data_to_void,
+		hs_data_to_void, hs_data_to_void, hs_data_to_void, hs_data_to_void,
+		hs_data_to_void, hs_data_to_void, hs_data_to_void, hs_data_to_void,
+		hs_data_to_void, hs_data_to_void, hs_data_to_void, hs_data_to_void,
+		hs_data_to_void, hs_data_to_void, hs_data_to_void, hs_data_to_void,
+		hs_data_to_void, hs_data_to_void, hs_data_to_void, hs_data_to_void,
+		hs_data_to_void, hs_data_to_void, hs_data_to_void, hs_data_to_void,
+		hs_data_to_void, hs_data_to_void, hs_data_to_void, hs_data_to_void,
 	},
 	{ /* boolean */
 		NULL, NULL, NULL, NULL,
 		NULL, NULL,
-		HS_CAST_CALLBACK(hs_long_to_boolean),
-		HS_CAST_CALLBACK(hs_short_to_boolean),
-		HS_CAST_CALLBACK(hs_long_to_boolean),
-		HS_CAST_CALLBACK(hs_string_to_boolean),
+		hs_long_to_boolean,
+		hs_short_to_boolean,
+		hs_long_to_boolean,
+		hs_string_to_boolean,
 	},
 	{ /* real */
 		NULL, NULL, NULL, NULL,
 		NULL, NULL, NULL,
-		HS_CAST_CALLBACK(hs_short_to_real),
-		HS_CAST_CALLBACK(hs_long_to_real),
+		hs_short_to_real,
+		hs_long_to_real,
 		NULL, NULL, NULL, NULL,
 		NULL, NULL, NULL, NULL,
 		NULL, NULL, NULL, NULL,
 		NULL, NULL, NULL, NULL,
 		NULL, NULL, NULL, NULL,
 		NULL,
-		HS_CAST_CALLBACK(hs_enum_to_real), HS_CAST_CALLBACK(hs_enum_to_real), HS_CAST_CALLBACK(hs_enum_to_real), HS_CAST_CALLBACK(hs_enum_to_real),
+		hs_enum_to_real, hs_enum_to_real, hs_enum_to_real, hs_enum_to_real,
 	},
 	{ /* short_integer */
 		NULL, NULL, NULL, NULL,
 		NULL, NULL,
-		HS_CAST_CALLBACK(hs_real_to_short),
+		hs_real_to_short,
 		NULL,
-		HS_CAST_CALLBACK(hs_long_to_short),
+		hs_long_to_short,
 	},
 	{ /* long_integer */
 		NULL, NULL, NULL, NULL,
 		NULL, NULL,
-		HS_CAST_CALLBACK(hs_real_to_long),
+		hs_real_to_long,
 		NULL,
-		HS_CAST_CALLBACK(hs_long_to_short),
+		hs_long_to_short,
 	},
 	{ NULL }, /* string */
 	{ NULL }, /* script */
@@ -743,17 +703,11 @@ hs_typecasting_procedure typecasting_procedures[NUMBER_OF_HS_TYPES][NUMBER_OF_HS
 		NULL,
 		hs_object_to_object_list, hs_object_to_object_list, hs_object_to_object_list, hs_object_to_object_list,
 		hs_object_to_object_list,
-		HS_CAST_CALLBACK(hs_object_name_to_object_list), HS_CAST_CALLBACK(hs_object_name_to_object_list), HS_CAST_CALLBACK(hs_object_name_to_object_list), HS_CAST_CALLBACK(hs_object_name_to_object_list),
-		HS_CAST_CALLBACK(hs_object_name_to_object_list), HS_CAST_CALLBACK(hs_object_name_to_object_list),
+		hs_object_name_to_object_list, hs_object_name_to_object_list, hs_object_name_to_object_list, hs_object_name_to_object_list,
+		hs_object_name_to_object_list, hs_object_name_to_object_list,
 	},
 };
-#undef HS_CAST_CALLBACK
-
 static struct hs_runtime_globals hs_runtime_globals;
-#if defined(HALO_N3DS) && !defined(HALO_N3DS_MENU_CAMERA_BASELINE)
-static unsigned int native_menu_start_sleeps;
-void n3ds_scripted_camera_menu_begin(void);
-#endif
 
 /* per-type fallbacks used when an external global has no backing address */
 extern boolean const _hs_type_boolean_default;
@@ -835,16 +789,22 @@ void hs_runtime_initialize(
 	return;
 }
 
+#if defined(HALO_N3DS) && !defined(HALO_N3DS_MENU_CAMERA_BASELINE)
+/* port: (Halo3DS) the main menu's camera starts on its first moving leg */
+static unsigned int native_menu_start_sleeps;
+void n3ds_scripted_camera_menu_begin(void);
+#endif
+
 void hs_runtime_initialize_for_new_map(
 	void)
 {
 	long internal_thread_index;
-
 #if defined(HALO_N3DS) && !defined(HALO_N3DS_MENU_CAMERA_BASELINE)
 	native_menu_start_sleeps=(global_scenario_index!=NONE &&
 		global_scenario_get()->type==_scenario_type_main_menu)?1:0;
 	if(native_menu_start_sleeps)n3ds_scripted_camera_menu_begin();
 #endif
+
 	data_make_valid(hs_thread_data);
 	hs_runtime_globals.initialized = TRUE;
 	hs_runtime_globals.executing_thread_index = NONE;
@@ -1297,7 +1257,6 @@ void hs_runtime_update(
 
 	return;
 }
-
 #ifdef HALO_N3DS
 /* Read-only integration diagnostics use the actual private runtime layout. */
 void n3ds_hs_trace_state(long time)
@@ -2065,7 +2024,7 @@ long *hs_macro_function_evaluate(
 	long thread_index,
 	boolean initialize)
 {
-	struct hs_function_definition const *function = hs_function_get(function_index);
+	struct hs_function_definition *function = hs_function_get(function_index);
 
 	return hs_arguments_evaluate(
 		thread_index,
@@ -2923,7 +2882,7 @@ static void hs_thread_main(
 		}
 		else if (!TEST_FLAG(expression->flags, _hs_syntax_node_script_bit))
 		{
-			struct hs_function_definition const *function = hs_function_get(expression->index);
+			struct hs_function_definition *function = hs_function_get(expression->index);
 
 			match_assert("c:\\halo\\SOURCE\\hs\\hs_runtime.c", 0x2d8, function->evaluate);
 
@@ -3049,19 +3008,10 @@ static void *hs_stack_allocate(
 	struct hs_stack_frame *frame = thread->stack;
 	void *result;
 	long offset = frame->size;
-#ifdef HALO_N3DS_HS_TRACE
-	if((byte *)frame-thread->stack_data+offset+size>470) {
-		extern void n3ds_log(const char *);char line[180];
-		snprintf(line,sizeof(line),"HS STACK TRACE: script=%s used=%ld request=%ld",hs_thread_format(thread_index),(long)((byte *)frame-thread->stack_data)+offset,size);n3ds_log(line);
-		struct hs_stack_frame *f=frame;
-		for(int i=0;f && i<32;++i,f=f->previous) {
-			snprintf(line,sizeof(line),"HS STACK FRAME: offset=%ld size=%d expression=%08lx",(long)((byte *)f-thread->stack_data),f->size,f->expression_index);n3ds_log(line);
-		}
-	}
-#endif
 #ifdef HALO_N3DS
-	/* data starts 14 bytes into the original frame. Align the absolute address,
-	 * including on re-entry, rather than just rounding the requested size. */
+	/* port: (Halo3DS) data starts 14 bytes into the original frame. Align the
+	 * absolute address, including on re-entry, rather than just rounding the
+	 * requested size: an unaligned value faulted on the 3DS's hardware */
 	offset += (-(unsigned long)(frame->data+offset))&3UL;
 #endif
 
@@ -3070,12 +3020,11 @@ static void *hs_stack_allocate(
 	match_hs_assert("c:\\halo\\SOURCE\\hs\\hs_runtime.c", 0x37e, thread_index,
 		size, "attempt to allocate zero space from the stack.");
 	match_hs_assert("c:\\halo\\SOURCE\\hs\\hs_runtime.c", 0x37f, thread_index,
-		frame->data+offset+size<=thread->stack_data+HS_THREAD_STACK_SIZE,
+		frame->data+frame->size+size<=thread->stack_data+HS_THREAD_STACK_SIZE,
 		"stack overflow.");
 
 	/* port: none past the thread's stack (hs_stack_overflow); the caller
-	returns on NULL. From offset: the frame's size, which the 3DS aligns
-	above (Halo3DS: an unaligned value there faulted on its hardware) */
+	returns on NULL */
 	if (size<0 ||
 		size>thread->stack_data+HS_THREAD_STACK_SIZE-(frame->data+offset) ||
 		TEST_FLAG(thread->flags, _hs_thread_stack_overflow_bit))
@@ -3698,9 +3647,7 @@ static boolean script_error(
 	return FALSE;
 }
 
-#ifdef HALO_N3DS_BOOTSTRAP_TESTS
-#include "engine_hs_validation.inl"
-#endif
 #ifdef HALO_N3DS
+/* port: (Halo3DS) its checkpoints' view of the script threads */
 #include "engine_checkpoint_hs.inl"
 #endif

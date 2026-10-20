@@ -12,7 +12,7 @@
 #include "tag_files/tag_groups.h"
 
 #include "rasterizer/rasterizer_debug_options.h"
-_Static_assert(offsetof(struct rasterizer_debug_options_definition, bump_mapping) == 0x29, "Original bump option offset");
+_Static_assert(offsetof(struct rasterizer_debug_options_definition, bump_mapping_enabled) == 0x29, "Original bump option offset");
 static point2d bitmap_dimensions;
 
 static struct bitmap_data *select_bitmap(long group_index, short index)
@@ -29,7 +29,7 @@ static struct bitmap_data *select_with_default(short type, short usage, long gro
 {
     struct bitmap_data *bitmap = NULL;
     assert(type >= 0 && type < 3 && usage >= 0 && usage < 4);
-    if (rasterizer_debug_options.bump_mapping || usage != 3)
+    if (rasterizer_debug_options.bump_mapping_enabled || usage != 3)
         bitmap = select_bitmap(group_index, index);
     if (bitmap && bitmap->type != type) bitmap = NULL;
     if (!bitmap && global_rasterizer_data && global_rasterizer_data->default_textures[type].index != NONE)

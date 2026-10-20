@@ -27,7 +27,6 @@ boolean ui_widget_event_handler_function_invoke(
 
 void reset_last_player1_profile_index(
 	void);
-
 #ifdef HALO_N3DS
 short n3ds_ui_multiplayer_map_original_index(short index);
 #endif

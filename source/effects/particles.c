@@ -197,14 +197,10 @@ static boolean particle_next_frame(
 	long particle_index);
 static boolean particle_update_frame_time(
 	long particle_index,
-	real dt,
-	struct particle_datum *particle,
-	struct particle_definition *definition);
+	real dt);
 static boolean particle_update_physics(
 	long particle_index,
-	real dt,
-	struct particle_datum *particle,
-	struct particle_definition *definition);
+	real dt);
 
 /* ---------- globals */
 
@@ -367,21 +363,15 @@ static boolean new_particle_is_visible(
 	return FALSE;
 }
 
-static real particle_radius_from_data(
-	struct particle_datum const *particle,
-	struct particle_definition const *definition)
-{
-	return ((definition->radius_upper_bound - definition->radius_lower_bound) *
-			(particle->age / particle->lifespan) + definition->radius_lower_bound) *
-		particle->radius;
-}
-
 real particle_get_radius(
 	long particle_index)
 {
 	struct particle_datum *particle = particle_get(particle_index);
 	struct particle_definition *definition = particle_definition_get(particle->definition_index);
-	return particle_radius_from_data(particle, definition);
+
+	return ((definition->radius_upper_bound - definition->radius_lower_bound) *
+			(particle->age / particle->lifespan) + definition->radius_lower_bound) *
+		particle->radius;
 }
 
 boolean valid_real_argb_color(
@@ -594,10 +584,10 @@ static boolean particle_next_frame(
 
 static boolean particle_update_frame_time(
 	long particle_index,
-	real dt,
-	struct particle_datum *particle,
-	struct particle_definition *definition)
+	real dt)
 {
+	struct particle_datum *particle = particle_get(particle_index);
+	struct particle_definition *definition = particle_definition_get(particle->definition_index);
 	boolean result = TRUE;
 
 	if (!TEST_FLAG(definition->flags, _particle_definition_animation_stops_at_rest_bit) ||
@@ -640,10 +630,11 @@ static boolean particle_update_frame_time(
 
 static boolean particle_update_physics(
 	long particle_index,
-	real dt,
-	struct particle_datum *particle,
-	struct particle_definition *definition)
+	real dt)
 {
+	struct particle_datum *particle = particle_get(particle_index);
+	struct particle_definition *definition = particle_definition_get(particle->definition_index);
+
 	if (!TEST_FLAG(particle->flags, _particle_datum_at_rest_bit))
 	{
 		boolean settled = FALSE;
@@ -665,7 +656,7 @@ static boolean particle_update_physics(
 				NULL,
 				&collision_normal,
 				&collision_material_type,
-				particle_radius_from_data(particle, definition),
+				particle_get_radius(particle_index),
 				dt);
 
 			if (TEST_FLAG(collision_flags, _point_physics_collided_with_structure_bit))
@@ -757,7 +748,7 @@ static boolean particle_update_physics(
 				return FALSE;
 			}
 
-			radius = particle_radius_from_data(particle, definition);
+			radius = particle_get_radius(particle_index);
 			friction = physics->air_friction * radius * radius;
 			mass = point_physics_definition_get_mass(physics, radius);
 
@@ -1009,7 +1000,6 @@ void particle_new(
 
 	return;
 }
-
 #ifdef HALO_N3DS
 /* Never budget particles that can spawn another effect, sound or material
  * response. Only detached long-lived decoration is eligible. */
@@ -1040,17 +1030,7 @@ void particles_update(
  unsigned int cosmetic_count=0,cosmetic_cap=n3ds_input_platform_original_model()?48:144;
  static unsigned int native_removed,native_updates;
 #endif
-#ifdef HALO_N3DS_PARTICLE_PROFILE
-	extern long long n3ds_engine_ticks(void);
-	extern long long n3ds_engine_tick_frequency(void);
-	extern void n3ds_log(const char *);
-	static long long animation_ticks, physics_ticks[3];
-	static unsigned int profile_frames, animated, physics_calls[3];
-#endif
 
-#ifdef HALO_N3DS_CROWD_PROFILE
- if(++native_updates%300==0){extern void n3ds_log(const char *);char t[128];snprintf(t,sizeof(t),"COSMETIC BUDGET: removed=%u cap=%u",native_removed,cosmetic_cap);n3ds_log(t);}
-#endif
 	profile_enter(particles_update_section);
 
 	{
@@ -1101,49 +1081,13 @@ void particles_update(
 			}
 			else
 			{
-#ifdef HALO_N3DS_PARTICLE_PROFILE
-				long long begin = n3ds_engine_ticks();
-				boolean alive = particle_update_frame_time(particle_index, dt, particle, definition);
-				animation_ticks += n3ds_engine_ticks() - begin;
-				++animated;
-				if (alive)
-				{
-					/* Frame animation can change state; classify only after it. */
-					unsigned int kind = TEST_FLAG(particle->flags, _particle_datum_at_rest_bit)
-						? 2 : (particle->object_index == NONE ? 0 : 1);
-					begin = n3ds_engine_ticks();
-					particle_update_physics(particle_index, dt, particle, definition);
-					physics_ticks[kind] += n3ds_engine_ticks() - begin;
-					++physics_calls[kind];
-				}
-#else
-				/* The validated datum and definition remain live through animation
-				 * when it returns TRUE. Avoid three repeated lookup pairs per
-				 * moving particle; retain original animation/physics ordering. */
-				if (particle_update_frame_time(particle_index, dt, particle, definition))
-					particle_update_physics(particle_index, dt, particle, definition);
-#endif
+				if (particle_update_frame_time(particle_index, dt))
+					particle_update_physics(particle_index, dt);
 			}
 		}
 	}
 
 	profile_exit(particles_update_section);
-#ifdef HALO_N3DS_PARTICLE_PROFILE
-	if (++profile_frames % 30 == 0)
-	{
-		char message[320];
-		double scale = 1000.0 / (30.0 * n3ds_engine_tick_frequency());
-		snprintf(message, sizeof(message), "PARTICLE UPDATE PROFILE: frame=%u animated=%u animation_ms=%.3f detached=%u detached_ms=%.3f attached=%u attached_ms=%.3f rest=%u rest_ms=%.3f",
-			profile_frames, animated, animation_ticks * scale,
-			physics_calls[0], physics_ticks[0] * scale,
-			physics_calls[1], physics_ticks[1] * scale,
-			physics_calls[2], physics_ticks[2] * scale);
-		n3ds_log(message);
-		animation_ticks = 0; animated = 0;
-		memset(physics_ticks, 0, sizeof(physics_ticks));
-		memset(physics_calls, 0, sizeof(physics_calls));
-	}
-#endif
 
 	return;
 }

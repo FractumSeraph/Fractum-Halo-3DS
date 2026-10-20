@@ -1,0 +1,1876 @@
+/*
+NETWORK_TEST.C
+
+Automated system link sessions for testing the netcode without the menus
+(debug.network_test in config.toml, HALO_NETWORK_TEST):
+
+- "host:<map>[:<variant>[,<variant>...]]" hosts a game on that
+  multiplayer map (bloodgulch, ...) with one of the built-in game variants
+  (slayer by default; game_engine_get_variant_by_name), as the pregame
+  screen's fast setup does, and starts it debug.network_test_start seconds
+  later; with more variants, once a game is over (debug.network_test_score
+  makes it short) the next, as the host's button on the scores does. A map
+  with a path is that level (custom_maps\a30, a Custom Edition map's), and
+  the variant "coop" makes the game network co-op on it, at normal
+  difficulty, as the Map screen does for a campaign level; a Halo PC map
+  may also be named as the menus name it (putput@ce). Maps joined by
+  "+" (bloodgulch+putput@ce) are the games' maps in turn, the
+  last for the games past them, as a dedicated server's playlist moves its
+  players to the next map;
+- "join" searches for games and joins the first it finds, as picking it in
+  the system link list does;
+- "invite:<invite>" joins the game of that invite (a halo://join link's
+  part after the last slash, or the game list's "invite"), as opening the
+  link does, and then as "join": for a machine with no clipboard or links
+  to open (the 3DS), and for one game of the list in particular;
+- "browse" joins the game with the most players that the server browser
+  lists after five seconds (internet play's public games: a host's with
+  debug.network_test_public), co-op ones last, as picking it there does,
+  and then as "join". It logs what it lists;
+- "watch" (a dedicated server's) logs the game each second and plays the
+  scripted bomb carry (debug.network_test_bomb), setting nothing up;
+- "download:<name>[:<checksum>]" downloads the Custom Edition map <name>
+  from the community map repositories once the main menu is up, as the
+  Online Games screen does when a game needs it (map_download.c; the host's
+  checksum, in hex, when given, is the version it must be), logs the result
+  ("network test: map download ..."), and quits;
+- "find:<name>" looks for the Custom Edition map <name> as a game on it
+  does (map_family_find: a hashed name's map by its base name too), logs
+  the file found ("network test: find ...") once the main menu is up, and
+  quits;
+- "offer:<name>[:<checksum>]" shows the Online Games screen's offer of that
+  map over the main menu, as a join left for want of it does
+  (browser_screen_map_missing), for its panel to be seen and driven;
+- "browse" opens the Online Games screen once the main menu is up, as the
+  Multiplayer menu's ONLINE GAMES does, and logs each listed game's ping
+  every few seconds (measured or estimated, never an address), for the
+  pings before joining to be seen.
+
+Once the game runs, every second each machine logs where every player's
+unit is, so the machines' views of the game can be compared.
+
+Scripted play for the netcode's parts the bots' wandering does not reach:
+debug.network_test_kill (the host kills the last player every so often),
+debug.network_test_shoot (every so often each machine's player hits the
+next with their weapon's projectile: a client's through its report to the
+host, which, not aimed, a host refuses as silent aim unless its
+network.fair_play is "log": network_fairplay.c) and debug.network_test_vehicle (the host seats the last player as a
+vehicle's driver that many seconds in, takes them out 15 seconds on, and 5
+seconds later stands them at a vehicle's driver's entrance, where a joining
+machine's player holds the action button, as getting in does)
+and debug.network_test_pickup (the last player stands on a weapon lying
+about that many seconds in, and a joining machine's player holds the action
+button a second later, to pick it up), and debug.network_test_bomb (in a
+Bomb game, the last player stands on the bomb that many seconds in, and
+three seconds later in the goal its team attacks, which scores; again each
+time that long after: every machine logs the teams' scores and the round
+each second, "network test: bomb ..."), and debug.network_test_fall (the
+last player lifted 10 world units, for a landing that kills, each time
+that many seconds pass); debug.network_test_bomb_in_goal has the host lay
+the bomb in that goal first, so the pickup is the score, and
+debug.network_test_bomb_throw has the joining machine's player hold the
+trigger through each try's first four seconds (picking the bomb up with the
+trigger down, throwing it down and picking it up again), and
+debug.network_test_bomb_keep leaves the carrier where it picked the bomb
+up (with debug.network_test_melee: blows at a carrier), and
+debug.network_test_bomb_save has the host stand a defender on the bomb
+planted in its goal as it arms, which saves it.
+debug.network_test_team_change has each machine's player ask to change
+teams every so often (team_change.c).
+
+Called from the main loop every frame (main.c).
+*/
+
+#include "cseries.h"
+#include "main/main.h"
+#include "bink/bink_playback.h"
+#include "interface/player_ui.h"
+#include "interface/ui_widget.h"
+#include "networking/network_game_globals.h"
+#include "networking/network_client_manager.h"
+#include "networking/network_server_manager.h"
+#include "game/game.h"
+#include "game/game_engine.h"
+#include "game/players.h"
+#include "objects/objects.h"
+#include "units/units.h"
+#include "units/unit_definitions.h"
+#include "items/weapons.h"
+#include "items/weapon_definitions.h"
+#include "items/projectile_definitions.h"
+#include "items/items.h"
+#include "objects/damage.h"
+#include "scenario/scenario.h"
+#include "tag_files/tag_files.h"
+#include "camera/observer.h"
+#include "cache/cache_files.h"
+#include "halo_map_families.h"
+#include "../src/map_download.h"
+#ifdef HALO_GAME_BROWSER
+#include "../src/browser.h"
+#endif
+
+#include "../src/p2p.h" /* port: port/linux/src/p2p.c, p2p_lobby.c */
+#ifdef HALO_GAME_BROWSER
+/* (this fork: debug.network_test_watch) */
+#include "../src/delta_moderation.h"
+#include "sightjack.h"
+#endif
+
+#include <math.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+/* players.c's (not in players.h) */
+boolean player_handle_powerup(long player_index, short powerup_type, short duration);
+#include <string.h>
+
+/* the platform layer's (port/linux/src/port_config.c) */
+const char *config_string(char const *name);
+int config_boolean(char const *name);
+double config_real(char const *name);
+long config_integer(char const *name);
+int config_boolean(char const *name);
+void platform_log(char const *format, ...);
+/* damage.c's */
+void damage_kill_object_for_player(long object_index, long player_index);
+/* network_distributed.c's */
+void network_distributed_statistics(long *sent, long *received, long *corrections);
+void network_distributed_item_statistics(long *creates, long *deletes, long *failures, long *removed);
+void network_damage_statistics(long *sent_reports, long *dealt_reports, long *rejected_reports, long *replayed_events);
+/* xinput_sdl.c's */
+void test_input_hold_action(int hold);
+void test_input_hold_melee(int hold);
+void test_input_hold_fire(int hold);
+
+enum
+{
+	_network_test_off,
+	_network_test_host,
+	_network_test_join,
+	_network_test_browse,
+	_network_test_invite,
+	_network_test_download,
+	_network_test_offer,
+	_network_test_find,
+	/* a host the test doesn't set up (the dedicated server): it only logs,
+	and plays the scripted parts that need no host's menus (the bomb's) */
+	_network_test_watch,
+};
+
+static struct
+{
+	boolean checked;
+	short mode;
+	char map_name[64];
+	char variant_name[64];
+	/* "invite:<invite>"'s */
+	char invite[160];
+	/* ... the variant of this game, of variant_name's list; and the seconds
+	the last game's scores have been shown */
+	short variant_index;
+	real postgame_seconds;
+	boolean game_over;
+	real start_delay;
+	real menu_seconds;
+	boolean set_up;
+	real setup_seconds;
+	boolean started;
+	boolean joined;
+	boolean map_set;
+	boolean player_added;
+	/* debug.network_test_local_players: the host's players on this machine
+	(2 or more: split screen), and how many it has added */
+	short local_players;
+	short local_players_added;
+	/* a game has run (a held start is asked again only before the first) */
+	boolean played;
+	real joined_seconds;
+	boolean team_set;
+	real kill_interval;
+	real shoot_interval;
+	/* (this fork) debug.network_test_aim, and debug.network_test_watch: signed
+	in, and watching */
+	boolean aim;
+	/* (this fork) debug.network_test_cheat: "teleport" or "fly" */
+	char cheat[16];
+	real cheat_height;
+	long cheat_time;
+	boolean watch;
+	boolean watch_signed_in;
+	boolean watch_started;
+	real vehicle_time;
+	real pickup_time;
+	real bomb_interval;
+	boolean bomb_in_goal;
+	boolean bomb_throw;
+	boolean bomb_keep;
+	boolean bomb_save;
+	real fall_interval;
+	real melee_interval;
+	real team_change_interval;
+	/* debug.network_test_pause: the pause menu opened then, once */
+	real pause_time;
+	boolean paused;
+	char pickup_weapon[64];
+	long score_to_win;
+	long logged_time;
+	boolean public_game;
+	boolean browsing;
+	boolean browse_listed;
+	float browse_seconds;
+	/* download: the host's checksum, and the download started */
+	unsigned long download_version;
+	boolean download_started;
+} network_test;
+
+/* the map of the game at the index (of map_name's maps joined by "+", the
+last for the games past them), copied to name */
+static void network_test_map(
+	short index,
+	char *name,
+	size_t size)
+{
+	char const *map = network_test.map_name;
+	char const *next;
+
+	for (; index > 0 && (next = strchr(map, '+')) != NULL; index--)
+		map = next + 1;
+	snprintf(name, size, "%.*s", (int)strcspn(map, "+"), map);
+}
+
+/* the variant at the index of the list (copied to name), FALSE past its end */
+static boolean network_test_variant(
+	short index,
+	char *name,
+	size_t size)
+{
+	char const *variant = network_test.variant_name;
+
+	for (; index > 0 && variant; index--)
+	{
+		variant = strchr(variant, ',');
+		if (variant)
+			variant++;
+	}
+	if (!variant || !*variant)
+		return FALSE;
+	if (name)
+	{
+		size_t length = strcspn(variant, ",");
+
+		snprintf(name, size, "%.*s", (int)length, variant);
+	}
+	return TRUE;
+}
+
+static void network_test_read_settings(
+	void)
+{
+	char const *setting = config_string("debug.network_test");
+
+	network_test.checked = TRUE;
+	if (!strncmp(setting, "host:", 5) && setting[5])
+	{
+		char *colon;
+
+		network_test.mode = _network_test_host;
+		snprintf(network_test.map_name, sizeof(network_test.map_name), "%s", setting + 5);
+		snprintf(network_test.variant_name, sizeof(network_test.variant_name), "slayer");
+		colon = strchr(network_test.map_name, ':');
+		if (colon)
+		{
+			*colon = 0;
+			snprintf(network_test.variant_name, sizeof(network_test.variant_name), "%s", colon + 1);
+		}
+	}
+	else if (!strcmp(setting, "join"))
+	{
+		network_test.mode = _network_test_join;
+	}
+	else if (!strcmp(setting, "browse"))
+	{
+		network_test.mode = _network_test_browse;
+	}
+	else if (!strncmp(setting, "invite:", 7) && setting[7])
+	{
+		network_test.mode = _network_test_invite;
+		snprintf(network_test.invite, sizeof(network_test.invite), "%s", setting + 7);
+	}
+	else if (!strcmp(setting, "watch"))
+	{
+		network_test.mode = _network_test_watch;
+	}
+	else if (!strncmp(setting, "find:", 5) && setting[5])
+	{
+		network_test.mode = _network_test_find;
+		snprintf(network_test.map_name, sizeof(network_test.map_name), "%s", setting + 5);
+	}
+	else if ((!strncmp(setting, "download:", 9) && setting[9]) || (!strncmp(setting, "offer:", 6) && setting[6]))
+	{
+		char *colon;
+
+		network_test.mode = setting[0] == 'd' ? _network_test_download : _network_test_offer;
+		snprintf(network_test.map_name, sizeof(network_test.map_name), "%s", strchr(setting, ':') + 1);
+		colon = strchr(network_test.map_name, ':');
+		if (colon)
+		{
+			*colon = 0;
+			network_test.download_version = strtoul(colon + 1, NULL, 16);
+		}
+	}
+	network_test.public_game = config_boolean("debug.network_test_public") != 0;
+	network_test.start_delay = (real)config_real("debug.network_test_start");
+	network_test.kill_interval = (real)config_real("debug.network_test_kill");
+	network_test.shoot_interval = (real)config_real("debug.network_test_shoot");
+	network_test.aim = config_boolean("debug.network_test_aim") != 0;
+	network_test.watch = config_boolean("debug.network_test_watch") != 0;
+	snprintf(network_test.cheat, sizeof(network_test.cheat), "%s", config_string("debug.network_test_cheat"));
+	network_test.vehicle_time = (real)config_real("debug.network_test_vehicle");
+	network_test.pickup_time = (real)config_real("debug.network_test_pickup");
+	network_test.bomb_interval = (real)config_real("debug.network_test_bomb");
+	network_test.bomb_in_goal = config_boolean("debug.network_test_bomb_in_goal");
+	network_test.bomb_throw = config_boolean("debug.network_test_bomb_throw");
+	network_test.bomb_keep = config_boolean("debug.network_test_bomb_keep");
+	network_test.bomb_save = config_boolean("debug.network_test_bomb_save");
+	network_test.fall_interval = (real)config_real("debug.network_test_fall");
+	network_test.melee_interval = (real)config_real("debug.network_test_melee");
+	network_test.local_players = (short)PIN(config_integer("debug.network_test_local_players"), 1, 4);
+	network_test.team_change_interval = (real)config_real("debug.network_test_team_change");
+	network_test.pause_time = (real)config_real("debug.network_test_pause");
+	snprintf(network_test.pickup_weapon, sizeof(network_test.pickup_weapon), "%s",
+		config_string("debug.network_test_pickup_weapon"));
+	network_test.score_to_win = (long)config_integer("debug.network_test_score");
+	if (network_test.mode != _network_test_off)
+		platform_log("network test: %s", setting);
+}
+
+/* download: the map downloaded once the main menu is up, the result logged,
+and the game quit */
+static void network_test_download(
+	boolean main_menu_loaded)
+{
+	struct map_download_progress progress;
+
+	if (!main_menu_loaded)
+		return;
+	if (!network_test.download_started)
+	{
+		network_test.download_started = TRUE;
+		if (!map_download_start(network_test.map_name, (unsigned int)network_test.download_version))
+		{
+			platform_log("network test: map download %s could not start", network_test.map_name);
+			exit(1);
+		}
+		return;
+	}
+	map_download_get(&progress);
+	if (progress.state == MAP_DOWNLOAD_RUNNING)
+		return;
+	if (progress.state == MAP_DOWNLOAD_DONE)
+	{
+		char path[256], map_name[80];
+
+		snprintf(map_name, sizeof(map_name), "%s@ce", network_test.map_name);
+		platform_log("network test: map download %s done; found in its family's folders: %s; downloaded: %s",
+			network_test.map_name, map_family_find(_map_family_custom_edition, network_test.map_name, path,
+			sizeof(path)) ? path : "no", map_is_downloaded(map_name) ? "yes" : "no");
+		exit(0);
+	}
+	platform_log("network test: map download %s failed: %s", network_test.map_name, progress.message);
+	exit(1);
+}
+
+/* appends to a line, cut short when it is full */
+static void network_test_append(
+	char *line,
+	int size,
+	int *length,
+	char const *format,
+	...)
+{
+	va_list arguments;
+	int written;
+
+	if (*length >= size - 1)
+		return;
+	va_start(arguments, format);
+	written = vsnprintf(line + *length, (size_t)(size - *length), format, arguments);
+	va_end(arguments);
+	if (written > 0)
+		*length = MIN(*length + written, size - 1);
+}
+
+/* every player's unit, as this machine sees it */
+static void network_test_log_players(
+	void)
+{
+	struct data_iterator iterator;
+	struct player_datum *player;
+	char line[4096];
+	int length = 0;
+
+	line[0] = 0;
+	/* (each player's name, once a game: for tests that name a player, such
+	as the host's ban command) */
+	{
+		static wchar_t named[HALO_PORT_MAXIMUM_NETWORK_PLAYERS][12];
+
+		if (game_time_get() < 2 * TICKS_PER_SECOND)
+			csmemset(named, 0, sizeof(named));
+		data_iterator_new(&iterator, player_data);
+		while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+		{
+			long absolute_index = DATUM_INDEX_TO_ABSOLUTE_INDEX(iterator.datum_index);
+			char name[13];
+			short index;
+
+			if (absolute_index >= HALO_PORT_MAXIMUM_NETWORK_PLAYERS ||
+				!csmemcmp(named[absolute_index], player->name, sizeof(named[absolute_index])))
+			{
+				continue;
+			}
+			csmemcpy(named[absolute_index], player->name, sizeof(named[absolute_index]));
+			for (index = 0; index < 12 && player->name[index]; index++)
+				name[index] = player->name[index] >= 32 && player->name[index] < 127 ? (char)player->name[index] : '?';
+			name[index] = 0;
+			platform_log("network test: player %ld is named %s", absolute_index, name);
+		}
+	}
+	data_iterator_new(&iterator, player_data);
+	while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+	{
+		if (player->unit_index != NONE)
+		{
+			struct object_datum *object = object_get(player->unit_index);
+			struct unit_datum *unit = unit_get(player->unit_index);
+			short slot;
+
+			/* (riding: where its vehicle is) */
+			struct object_datum *placed = object->object.parent_object_index != NONE ?
+				object_get(object->object.parent_object_index) : object;
+
+			network_test_append(line, (int)sizeof(line), &length, " player %ld: (%.3f %.3f %.3f) h%.2f/%.2f%s%s g%d/%d w",
+				(long)DATUM_INDEX_TO_ABSOLUTE_INDEX(iterator.datum_index), placed->object.position.x,
+				placed->object.position.y, placed->object.position.z, object->object.body_vitality,
+				object->object.shield_vitality, placed != object ? " riding" : "",
+				TEST_FLAG(unit->unit.flags, _unit_active_camouflaged_bit) ? " camo" : "",
+				unit->unit.grenade_counts[0], unit->unit.grenade_counts[1]);
+			/* where it aims (yaw and pitch, degrees), its animation state and
+			how hard it is moving */
+			network_test_append(line, (int)sizeof(line), &length, " a%.0f/%.0f f%.0f l%.0f/%.0f as%d/%d st%d thr%.2f",
+				atan2(unit->unit.aiming_vector.j, unit->unit.aiming_vector.i) * 57.29578,
+				asin(PIN(unit->unit.aiming_vector.k, -1.0f, 1.0f)) * 57.29578,
+				atan2(object->object.forward.j, object->object.forward.i) * 57.29578,
+				atan2(unit->unit.looking_vector.j, unit->unit.looking_vector.i) * 57.29578,
+				asin(PIN(unit->unit.looking_vector.k, -1.0f, 1.0f)) * 57.29578,
+				(int)unit->unit.animation.aiming_screen_index, (int)unit->unit.animation.looking_screen_index,
+				(int)unit->unit.animation.state,
+				sqrt(unit->unit.throttle.i * unit->unit.throttle.i + unit->unit.throttle.j * unit->unit.throttle.j));
+			for (slot = 0; slot < MAXIMUM_WEAPONS_PER_UNIT; slot++)
+			{
+				long weapon_index = unit->unit.weapon_object_indices[slot];
+
+				if (weapon_index != NONE)
+				{
+					struct weapon_datum *weapon = weapon_get(weapon_index);
+
+					network_test_append(line, (int)sizeof(line), &length, " %lx:%d",
+						(unsigned long)weapon->definition_index & 0xFFFF, weapon->weapon.magazines[0].rounds_total +
+						weapon->weapon.magazines[0].rounds_loaded);
+				}
+			}
+		}
+		else
+		{
+			network_test_append(line, (int)sizeof(line), &length, " player %ld: dead",
+				(long)DATUM_INDEX_TO_ABSOLUTE_INDEX(iterator.datum_index));
+		}
+		/* the game type's score and the kills and deaths */
+		network_test_append(line, (int)sizeof(line), &length, " s%ld k%d d%d f%d t%ld m%d",
+			game_engine && game_engine->get_player_score ?
+				game_engine->get_player_score(iterator.datum_index, _get_score_individual) : -1L,
+			player->statistics.kills[0], player->statistics.deaths, player->statistics.friendly_fire_kills, (long)player->team_index,
+			(int)player->network_player_data.machine_index);
+	}
+	{
+		long sent, received, corrections;
+
+		struct object_iterator objects;
+		long ground_items = 0;
+
+		object_iterator_new(&objects, _object_mask_weapon | _object_mask_equipment, 0);
+		while (object_iterator_next(&objects))
+		{
+			struct item_datum *item = item_get(objects.index);
+
+			if (item->object.parent_object_index == NONE &&
+				TEST_FLAG(item->object.flags, _object_connected_to_map_bit) &&
+				!TEST_FLAG(item->item.flags, _item_attached_to_unit_bit))
+			{
+				ground_items++;
+			}
+		}
+		network_distributed_statistics(&sent, &received, &corrections);
+		long creates, deletes, failures, removed;
+
+		long sent_reports, dealt_reports, rejected_reports, replayed_events;
+
+		network_distributed_item_statistics(&creates, &deletes, &failures, &removed);
+		network_damage_statistics(&sent_reports, &dealt_reports, &rejected_reports, &replayed_events);
+		/* this machine's player and where its camera is (a player that never
+		spawns leaves it where it began) */
+		long local_player_index = local_player_get_player_index(0);
+		struct observer_result const *camera = observer_get_camera(0);
+
+		platform_log("network test: tick %ld%s | items %ld (+%ld -%ld !%ld x%ld) | %s to %ld | sent %ld received %ld corrected %ld"
+			" | hits %ld dealt %ld rejected %ld replayed %ld | local %ld camera (%.1f %.1f %.1f) respawn %ld",
+			game_time_get(), line, ground_items, creates, deletes, failures, removed,
+			game_engine_can_score() ? "playing" : "game over",
+			game_engine_running() ? (long)game_engine_get_variant()->universal_variant.score_to_win : 0L,
+			sent, received, corrections,
+			sent_reports, dealt_reports, rejected_reports, replayed_events,
+			local_player_index == NONE ? -1L : (long)DATUM_INDEX_TO_ABSOLUTE_INDEX(local_player_index),
+			camera ? camera->position.x : 0.0f, camera ? camera->position.y : 0.0f, camera ? camera->position.z : 0.0f,
+			local_player_index == NONE ? 0L : (long)player_get(local_player_index)->respawn_timer);
+	}
+}
+
+/* each of this machine's players hits the next player with their weapon's
+projectile, as its impact would, when it is within the projectile's reach
+(as a real shot is: the host checks it) */
+static void network_test_shoot(
+	void)
+{
+	struct data_iterator iterator;
+	struct player_datum *player;
+
+	data_iterator_new(&iterator, player_data);
+	while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+	{
+		struct data_iterator targets;
+		struct player_datum *target = NULL;
+		struct player_datum *candidate;
+		struct unit_datum *unit;
+		long weapon_index;
+		struct weapon_definition *weapon;
+		struct weapon_trigger_definition *trigger;
+		long damage_index = NONE;
+		real reach = 0.0f;
+		boolean melee;
+		struct damage_data damage;
+		struct object_datum *target_object;
+		real_vector3d direction;
+
+		if (player->local_player_index == NONE || player->unit_index == NONE)
+			continue;
+		data_iterator_new(&targets, player_data);
+		while ((candidate = (struct player_datum *)data_iterator_next(&targets)) != NULL)
+		{
+			if (candidate != player && candidate->unit_index != NONE)
+			{
+				target = candidate;
+				break;
+			}
+		}
+		unit = unit_get(player->unit_index);
+		if (!target || unit->unit.current_weapon_index == NONE ||
+			TEST_FLAG(object_get(target->unit_index)->object.damage_flags, _object_dead_bit))
+		{
+			continue;
+		}
+		weapon_index = unit->unit.weapon_object_indices[unit->unit.current_weapon_index];
+		if (weapon_index == NONE)
+			continue;
+		weapon = weapon_definition_get(object_get(weapon_index)->definition_index);
+		if (weapon->weapon.triggers.count > 0)
+		{
+			trigger = TAG_BLOCK_GET_ELEMENT(&weapon->weapon.triggers, 0, struct weapon_trigger_definition);
+			if (trigger->projectile.index != NONE)
+			{
+				struct projectile_definition *projectile = projectile_definition_get(trigger->projectile.index);
+
+				damage_index = projectile->projectile.impact_damage.index;
+				/* (how far it flies: its range, or at its speed for as long as
+				its timer runs; none for no bound, network_damage.c) */
+				if (projectile->projectile.maximum_range > 0.0f)
+					reach = projectile->projectile.maximum_range;
+				else if (projectile->projectile.detonation_timer_starts == 0)
+				{
+					reach = projectile->projectile.timer_upper_bound * TICKS_PER_SECOND *
+						MAX(projectile->projectile.initial_velocity, projectile->projectile.final_velocity);
+				}
+			}
+		}
+		/* (else its melee: a blow's epicenter is its striker's, as
+		unit_cause_player_melee_damage has it) */
+		melee = damage_index == NONE;
+		if (melee)
+			damage_index = weapon->weapon.melee_attack_damage.index;
+		if (damage_index == NONE)
+			continue;
+		target_object = object_get(target->unit_index);
+		/* (a blow reaches only a target at hand, as the host checks) */
+		if (melee)
+		{
+			real dx = target_object->object.position.x - unit->object.position.x;
+			real dy = target_object->object.position.y - unit->object.position.y;
+			real dz = target_object->object.position.z - unit->object.position.z;
+
+			if (dx * dx + dy * dy + dz * dz > 1.5f * 1.5f)
+				continue;
+		}
+		/* (a shot reaches no further than its projectile flies, with a margin
+		for how far the target is from where the shot started) */
+		else if (reach > 0.0f)
+		{
+			real dx = target_object->object.position.x - unit->object.position.x;
+			real dy = target_object->object.position.y - unit->object.position.y;
+			real dz = target_object->object.position.z - unit->object.position.z;
+
+			if (dx * dx + dy * dy + dz * dz > 0.9f * reach * 0.9f * reach)
+				continue;
+		}
+		damage_data_new(&damage, damage_index);
+		damage.owner_player_index = iterator.datum_index;
+		damage.owner_object_index = player->unit_index;
+		damage.owner_team_index = unit->object.owner_team_index;
+		/* (this fork: aimed, at the body's centre, where the aim is) */
+		damage.origin = melee ? unit->object.bounding_sphere_center : network_test.aim ?
+			target_object->object.bounding_sphere_center : target_object->object.position;
+		damage.epicenter = damage.origin;
+		direction.i = target_object->object.position.x - unit->object.position.x;
+		direction.j = target_object->object.position.y - unit->object.position.y;
+		direction.k = target_object->object.position.z - unit->object.position.z;
+		normalize3d(&direction);
+		damage.direction = direction;
+		damage.scale = 1.0f;
+		scenario_location_from_point(&damage.location, &damage.epicenter);
+		object_cause_damage(&damage, target->unit_index, NONE, NONE, NONE, NULL);
+		platform_log("network test: player %ld shoots player %ld",
+			(long)DATUM_INDEX_TO_ABSOLUTE_INDEX(iterator.datum_index), (long)(target - (struct player_datum *)xbox_pointer(player_data->data)));
+	}
+}
+
+/* (this fork) debug.network_test_aim: each of this machine's players aims
+at the next living player (from their eyes at their body's centre, where
+network_test_shoot's hit then lands) and holds the trigger, as a player
+shooting them does: their hits, scripted or fired, aimed, which a host's
+fair play checks (network_fairplay.c) must deal */
+static void network_test_aim(
+	void)
+{
+	struct data_iterator iterator;
+	struct player_datum *player;
+	boolean firing = FALSE;
+
+	data_iterator_new(&iterator, player_data);
+	while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+	{
+		struct data_iterator targets;
+		struct player_datum *candidate;
+		struct player_datum *target = NULL;
+		real_point3d eye;
+		real_vector3d direction;
+
+		if (player->local_player_index == NONE || player->unit_index == NONE)
+			continue;
+		data_iterator_new(&targets, player_data);
+		while ((candidate = (struct player_datum *)data_iterator_next(&targets)) != NULL)
+		{
+			if (candidate != player && candidate->unit_index != NONE)
+			{
+				target = candidate;
+				break;
+			}
+		}
+		if (!target)
+			continue;
+		unit_get_camera_position(player->unit_index, &eye);
+		vector_from_points3d(&eye, &object_get(target->unit_index)->object.bounding_sphere_center, &direction);
+		if (normalize3d(&direction) == 0.0f)
+			continue;
+		player_control_set_facing(player->local_player_index, &direction);
+		/* (and the weapon kept loaded: the test's players may have none left) */
+		{
+			struct unit_datum *unit = unit_get(player->unit_index);
+			long weapon_index = unit->unit.current_weapon_index != NONE ?
+				unit->unit.weapon_object_indices[unit->unit.current_weapon_index] : NONE;
+
+			if (weapon_index != NONE && weapon_get(weapon_index)->weapon.magazines[0].rounds_loaded < 4)
+				weapon_get(weapon_index)->weapon.magazines[0].rounds_loaded = 32;
+		}
+		firing = TRUE;
+	}
+	test_input_hold_fire(firing);
+}
+
+/* (this fork) debug.network_test_watch: this machine's player signs in to
+the host's moderation (once it offers it), and once the host gives their key
+a role, watches the first other player (sightjack.c), as the Moderation
+screen's Watch does: nothing the host does not allow */
+static void network_test_watch(
+	void)
+{
+#ifdef HALO_GAME_BROWSER
+	struct delta_peer_game_moderation moderation;
+	struct data_iterator iterator;
+	struct player_datum *player;
+
+	if (network_test.watch_started)
+		return;
+	delta_peer_game_client_moderation(&moderation);
+	if (!moderation.available)
+		return;
+	if (!moderation.signed_in && !network_test.watch_signed_in)
+	{
+		network_test.watch_signed_in = delta_peer_game_moderation_sign_in() != 0;
+		if (network_test.watch_signed_in)
+			platform_log("network test: signed in to the host's moderation");
+		return;
+	}
+	if (!sightjack_allowed())
+		return;
+	data_iterator_new(&iterator, player_data);
+	while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+	{
+		if (player->local_player_index == NONE)
+		{
+			sightjack_watch(player->network_player_data.machine_index);
+			network_test.watch_started = TRUE;
+			platform_log("network test: watching player %ld", (long)DATUM_INDEX_TO_ABSOLUTE_INDEX(iterator.datum_index));
+			return;
+		}
+	}
+#endif
+}
+
+/* (this fork) debug.network_test_cheat: this machine's player moves as a
+cheat's game would have it, for the host's fair play checks to see
+(network_fairplay.c): "teleport", 6 world units ahead every 5 seconds;
+"fly", 3 above where it was for 4 seconds of every 10, neither rising nor
+falling. The host refuses their game's word on both (network_distributed.c) */
+static void network_test_cheat(
+	void)
+{
+	struct data_iterator iterator;
+	struct player_datum *player;
+	long now = game_time_get();
+
+	/* (once a tick: a frame is drawn more often) */
+	if (now == network_test.cheat_time)
+		return;
+	network_test.cheat_time = now;
+	data_iterator_new(&iterator, player_data);
+	while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+	{
+		struct object_datum *unit;
+		real_point3d position;
+
+		if (player->local_player_index == NONE || player->unit_index == NONE)
+			continue;
+		unit = object_get(player->unit_index);
+		if (unit->object.parent_object_index != NONE)
+			continue;
+		position = unit->object.position;
+		if (!strcmp(network_test.cheat, "teleport") && now % (5 * TICKS_PER_SECOND) == 0)
+		{
+			position.x += 6.0f * unit->object.forward.i;
+			position.y += 6.0f * unit->object.forward.j;
+			object_set_position(player->unit_index, &position, NULL, NULL);
+			platform_log("network test: cheat: teleport");
+		}
+		else if (!strcmp(network_test.cheat, "fly"))
+		{
+			long phase = now % (10 * TICKS_PER_SECOND);
+
+			/* (from where it stands, up: the next 4 seconds held there) */
+			if (phase == 0)
+			{
+				network_test.cheat_height = position.z + 3.0f;
+				platform_log("network test: cheat: fly");
+			}
+			if (phase < 4 * TICKS_PER_SECOND && network_test.cheat_height != 0.0f)
+			{
+				position.z = network_test.cheat_height;
+				unit->object.translational_velocity.i = 0.0f;
+				unit->object.translational_velocity.j = 0.0f;
+				unit->object.translational_velocity.k = 0.0f;
+				object_set_position(player->unit_index, &position, NULL, NULL);
+			}
+		}
+	}
+}
+
+/* the host seats the last player as the nearest vehicle's driver, or out */
+/* the host brings the players far from the first (on foot) near it, so
+that they are within their weapons' reach (network_test_shoot shoots only
+so near, as a player does); the host moving a client's player, as a
+teleporter does */
+static void network_test_gather(
+	boolean leave_last)
+{
+	struct data_iterator iterator;
+	struct player_datum *player;
+	struct player_datum *first = NULL;
+	struct player_datum *last = NULL;
+	short count = 0;
+
+	data_iterator_new(&iterator, player_data);
+	while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+	{
+		if (!first)
+			first = player;
+		last = player;
+	}
+	if (!first || first->unit_index == NONE)
+		return;
+	data_iterator_new(&iterator, player_data);
+	while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+	{
+		struct object_datum const *center = object_get(first->unit_index);
+		struct object_datum *unit;
+		real_point3d position;
+		real dx, dy, dz;
+
+		if (player == first || player->unit_index == NONE || (leave_last && player == last))
+			continue;
+		count++;
+		unit = object_get(player->unit_index);
+		if (unit->object.parent_object_index != NONE || TEST_FLAG(unit->object.damage_flags, _object_dead_bit))
+			continue;
+		dx = unit->object.position.x - center->object.position.x;
+		dy = unit->object.position.y - center->object.position.y;
+		dz = unit->object.position.z - center->object.position.z;
+		if (dx * dx + dy * dy + dz * dz <= 20.0f * 20.0f)
+			continue;
+		/* (beside it, where the map is open: at its feet and its head) */
+		{
+			static real const offsets[][2] = { { 1.5f, 0.0f }, { -1.5f, 0.0f }, { 0.0f, 1.5f }, { 0.0f, -1.5f },
+				{ 1.5f, 1.5f }, { -1.5f, -1.5f }, { 1.5f, -1.5f }, { -1.5f, 1.5f } };
+			short try_index;
+
+			for (try_index = 0; try_index < (short)NUMBEROF(offsets); try_index++)
+			{
+				short index = (short)((count + try_index) % (short)NUMBEROF(offsets));
+				struct location feet, head;
+				real_point3d above;
+
+				position = center->object.position;
+				position.x += offsets[index][0];
+				position.y += offsets[index][1];
+				position.z += 0.2f;
+				above = position;
+				above.z += 0.7f;
+				scenario_location_from_point(&feet, &position);
+				scenario_location_from_point(&head, &above);
+				if (feet.cluster_index != NONE && head.cluster_index != NONE)
+					break;
+			}
+			if (try_index >= (short)NUMBEROF(offsets))
+				continue;
+		}
+		object_set_position(player->unit_index, &position, NULL, NULL);
+		platform_log("network test: the host brings player %ld near the first",
+			(long)(player - (struct player_datum *)xbox_pointer(player_data->data)));
+	}
+}
+
+static void network_test_vehicle(
+	boolean enter)
+{
+	struct data_iterator iterator;
+	struct player_datum *player;
+	struct player_datum *last = NULL;
+
+	data_iterator_new(&iterator, player_data);
+	while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+		last = player;
+	if (!last || last->unit_index == NONE)
+		return;
+	if (!enter)
+	{
+		if (object_get(last->unit_index)->object.parent_object_index != NONE)
+		{
+			unit_exit_seat_end(last->unit_index);
+			platform_log("network test: the last player leaves the vehicle");
+		}
+		return;
+	}
+	{
+		struct object_iterator vehicles;
+		long nearest_index = NONE;
+		real nearest_distance = 0.0f;
+		real_point3d const *position = &object_get(last->unit_index)->object.position;
+		short seat_index;
+
+		object_iterator_new(&vehicles, _object_mask_vehicle, 0);
+		while (object_iterator_next(&vehicles))
+		{
+			real_point3d const *vehicle_position = &object_get(vehicles.index)->object.position;
+			real distance = distance_squared3d(position, vehicle_position);
+
+			if (nearest_index == NONE || distance < nearest_distance)
+			{
+				nearest_index = vehicles.index;
+				nearest_distance = distance;
+			}
+		}
+		if (nearest_index == NONE)
+		{
+			platform_log("network test: no vehicle");
+			return;
+		}
+		for (seat_index = 0; seat_index < unit_definition_get(object_get(nearest_index)->definition_index)->unit.seats.count; seat_index++)
+		{
+			if (unit_seat_is_driver(nearest_index, seat_index) &&
+				unit_enter_seat(last->unit_index, nearest_index, seat_index))
+			{
+				platform_log("network test: the last player drives vehicle %lx", nearest_index);
+				return;
+			}
+		}
+		platform_log("network test: the last player cannot drive vehicle %lx", nearest_index);
+	}
+}
+
+/* both machines stand the last player at the driver's entrance of the
+nearest vehicle no one rides (a joining machine's player then holds the
+action button, as a player getting in does) */
+static void network_test_vehicle_approach(
+	void)
+{
+	struct data_iterator iterator;
+	struct player_datum *player;
+	struct player_datum *last = NULL;
+	struct object_iterator vehicles;
+	long nearest_index = NONE;
+	real nearest_distance = 0.0f;
+
+	data_iterator_new(&iterator, player_data);
+	while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+		last = player;
+	if (!last || last->unit_index == NONE || object_get(last->unit_index)->object.parent_object_index != NONE)
+		return;
+	object_iterator_new(&vehicles, _object_mask_vehicle, 0);
+	while (object_iterator_next(&vehicles))
+	{
+		struct unit_datum *vehicle = unit_get(vehicles.index);
+		/* (the same vehicle on every machine: the lowest index) */
+		real distance = (real)DATUM_INDEX_TO_ABSOLUTE_INDEX(vehicles.index);
+
+		if (vehicle->unit.driver_object_index != NONE || TEST_FLAG(vehicle->object.damage_flags, _object_dead_bit))
+			continue;
+		if (nearest_index == NONE || distance < nearest_distance)
+		{
+			nearest_index = vehicles.index;
+			nearest_distance = distance;
+		}
+	}
+	if (nearest_index != NONE)
+	{
+		short seat_index;
+
+		for (seat_index = 0; seat_index < unit_definition_get(object_get(nearest_index)->definition_index)->unit.seats.count;
+			seat_index++)
+		{
+			real_point3d entrance;
+			real_point3d seat;
+
+			if (unit_seat_is_driver(nearest_index, seat_index) &&
+				unit_get_seat_entrance_point(last->unit_index, nearest_index, seat_index, &entrance, &seat, NULL))
+			{
+				object_set_position(last->unit_index, &entrance, NULL, NULL);
+				platform_log("network test: the last player stands at vehicle %lx's driver's entrance (%.2f %.2f %.2f)",
+					nearest_index, entrance.x, entrance.y, entrance.z);
+				return;
+			}
+		}
+	}
+	platform_log("network test: no vehicle to get into");
+}
+
+/* the host gives the last player a second weapon, lying about */
+static void network_test_second_weapon(
+	void)
+{
+	struct data_iterator iterator;
+	struct player_datum *player;
+	struct player_datum *last = NULL;
+	struct object_iterator weapons;
+
+	data_iterator_new(&iterator, player_data);
+	while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+		last = player;
+	if (!last || last->unit_index == NONE)
+		return;
+	object_iterator_new(&weapons, _object_mask_weapon, 0);
+	while (object_iterator_next(&weapons))
+	{
+		struct object_datum *weapon = object_get(weapons.index);
+		struct unit_datum *unit = unit_get(last->unit_index);
+		long current_index = unit->unit.weapon_object_indices[0];
+
+		if (weapon->object.parent_object_index == NONE && TEST_FLAG(weapon->object.flags, _object_connected_to_map_bit) &&
+			(current_index == NONE || object_get(current_index)->definition_index != weapon->definition_index) &&
+			unit_add_weapon_to_inventory(last->unit_index, weapons.index, TRUE))
+		{
+			platform_log("network test: the last player takes a second weapon (%lx)", weapon->definition_index);
+			/* (and camouflage, as a powerup gives) */
+			player_handle_powerup(DATUM_INDEX_NEW(last - (struct player_datum *)xbox_pointer(player_data->data), last->identifier),
+				_player_powerup_active_camouflage, 10 * TICKS_PER_SECOND);
+			return;
+		}
+	}
+}
+
+/* both machines stand the last player on the first weapon lying about that
+it does not carry (the same object on both: a client's own player is where
+it has it, within a tolerance) */
+static void network_test_pickup(
+	void)
+{
+	struct data_iterator iterator;
+	struct player_datum *player;
+	struct player_datum *last = NULL;
+	struct object_iterator weapons;
+	long nearest_index = NONE;
+	real nearest_distance = 0.0f;
+	struct unit_datum *unit;
+
+	data_iterator_new(&iterator, player_data);
+	while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+		last = player;
+	if (!last || last->unit_index == NONE)
+		return;
+	unit = unit_get(last->unit_index);
+	object_iterator_new(&weapons, _object_mask_weapon, 0);
+	while (object_iterator_next(&weapons))
+	{
+		struct object_datum *weapon = object_get(weapons.index);
+		short slot;
+		boolean carried = FALSE;
+		real distance;
+
+		if (weapon->object.parent_object_index != NONE ||
+			!TEST_FLAG(weapon->object.flags, _object_connected_to_map_bit))
+		{
+			continue;
+		}
+		for (slot = 0; slot < MAXIMUM_WEAPONS_PER_UNIT; slot++)
+		{
+			long carried_index = unit->unit.weapon_object_indices[slot];
+
+			carried |= carried_index != NONE && object_get(carried_index)->definition_index == weapon->definition_index;
+		}
+		if (network_test.pickup_weapon[0] && !strstr(tag_get_name(weapon->definition_index), network_test.pickup_weapon))
+			continue;
+		distance = (real)DATUM_INDEX_TO_ABSOLUTE_INDEX(weapons.index);
+		if (!carried && (nearest_index == NONE || distance < nearest_distance))
+		{
+			nearest_index = weapons.index;
+			nearest_distance = distance;
+		}
+	}
+	if (nearest_index != NONE)
+	{
+		real_point3d position = object_get(nearest_index)->object.position;
+
+		position.z += 0.1f;
+		object_set_position(last->unit_index, &position, NULL, NULL);
+		platform_log("network test: the last player stands on weapon %lx (%lx)", nearest_index,
+			object_get(nearest_index)->definition_index);
+	}
+}
+
+#ifdef HALO_GAME_BROWSER
+/* debug.network_test_bomb: both machines stand the last player on the bomb
+(the host's object: the same on both; a client's own player is where it
+has it), and three seconds later in the goal its team attacks, where the
+host scores it */
+static void network_test_bomb(
+	boolean to_goal)
+{
+	struct data_iterator iterator;
+	struct player_datum *player;
+	struct player_datum *last = NULL;
+	long bomb_index = game_engine_bomb_weapon();
+	real_point3d position;
+
+	data_iterator_new(&iterator, player_data);
+	while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+		last = player;
+	if (!last || last->unit_index == NONE || bomb_index == NONE)
+		return;
+	if (to_goal)
+	{
+		if (!unit_has_weapon(last->unit_index, bomb_index) ||
+			!game_engine_bomb_goal((last->team_index + 1) % 2, &position))
+		{
+			platform_log("network test: bomb: the last player has no bomb to carry");
+			return;
+		}
+		position.z += 0.1f;
+		object_set_position(last->unit_index, &position, NULL, NULL);
+		platform_log("network test: bomb: the last player carries it into the goal of team %ld (weapon in hand: %s)",
+			(long)((last->team_index + 1) % 2),
+			unit_inventory_get_weapon(last->unit_index, unit_get(last->unit_index)->unit.current_weapon_index) == bomb_index ?
+				"the bomb" : "another");
+		return;
+	}
+	if (object_get(bomb_index)->object.parent_object_index != NONE)
+	{
+		platform_log("network test: bomb: someone carries it already");
+		return;
+	}
+	/* (debug.network_test_bomb_in_goal: the host's bomb first lying in the
+	goal the player's team attacks, as one thrown down there and picked up
+	again: the pickup scores, while the player still holds its own weapon) */
+	if (network_test.bomb_in_goal && network_test.mode == _network_test_host &&
+		game_engine_bomb_goal((last->team_index + 1) % 2, &position))
+	{
+		game_engine_flag_reset(bomb_index, &position);
+		platform_log("network test: bomb: the bomb lies in the goal of team %ld", (long)((last->team_index + 1) % 2));
+	}
+	position = object_get(bomb_index)->object.position;
+	position.z += 0.1f;
+	object_set_position(last->unit_index, &position, NULL, NULL);
+	platform_log("network test: bomb: the last player stands on it (%.2f %.2f %.2f)", position.x, position.y,
+		position.z);
+}
+
+/* debug.network_test_bomb_save: the host stands a living player of the
+goal's team on the bomb planted there, arming */
+static void network_test_bomb_save(
+	void)
+{
+	struct data_iterator iterator;
+	struct player_datum *player;
+	long goal_team = game_engine_bomb_planted_goal();
+	long bomb_index = game_engine_bomb_weapon();
+	real_point3d position;
+
+	if (goal_team == NONE || bomb_index == NONE)
+		return;
+	data_iterator_new(&iterator, player_data);
+	while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+	{
+		if (player->team_index != goal_team || player->unit_index == NONE)
+			continue;
+		position = object_get(bomb_index)->object.position;
+		position.z += 0.1f;
+		object_set_position(player->unit_index, &position, NULL, NULL);
+		platform_log("network test: bomb: a player of team %ld stands on the planted bomb", goal_team);
+		return;
+	}
+}
+#endif
+
+/* debug.network_test_fall: both machines lift the last player this high
+over where it stands (as the bomb's test moves it: a client's own player is
+where it has it), for a fall a landing's damage kills (Blood Gulch's
+globals: 6 world units and more), short of falling for too long (16.5) */
+#define NETWORK_TEST_FALL_HEIGHT 10.0f
+
+static void network_test_fall(
+	void)
+{
+	struct data_iterator iterator;
+	struct player_datum *player;
+	struct player_datum *last = NULL;
+	real_point3d position;
+
+	data_iterator_new(&iterator, player_data);
+	while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+		last = player;
+	if (!last || last->unit_index == NONE || object_get(last->unit_index)->object.parent_object_index != NONE)
+		return;
+	position = object_get(last->unit_index)->object.position;
+	position.z += NETWORK_TEST_FALL_HEIGHT;
+	object_set_position(last->unit_index, &position, NULL, NULL);
+	platform_log("network test: fall: the last player lifted to (%.2f %.2f %.2f)", position.x, position.y, position.z);
+}
+
+
+/* debug.network_test_melee: in each interval's first second the host brings
+its last player a step in front of its first; from its second to its fifth
+the striking machine's player (the host's in even intervals, the joining
+machine's in odd ones) faces the other and holds the melee button, as a
+player does */
+static void network_test_melee(
+	void)
+{
+	long interval = MAX(TICKS_PER_SECOND * 6, (long)(network_test.melee_interval * TICKS_PER_SECOND));
+	long phase = game_time_get() % interval;
+	boolean host_strikes = (game_time_get() / interval) % 2 == 0;
+	boolean window = phase >= 2 * TICKS_PER_SECOND && phase < 5 * TICKS_PER_SECOND;
+	boolean striking = window && host_strikes == (network_test.mode == _network_test_host);
+	long local_player_index = local_player_get_player_index(0);
+	struct data_iterator iterator;
+	struct player_datum *player;
+	struct player_datum *first = NULL;
+	struct player_datum *last = NULL;
+	struct player_datum *target = NULL;
+	static boolean logged;
+
+	data_iterator_new(&iterator, player_data);
+	while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+	{
+		if (!first)
+			first = player;
+		last = player;
+		if (iterator.datum_index != local_player_index && player->unit_index != NONE && !target)
+			target = player;
+	}
+	if (network_test.mode == _network_test_host && phase < TICKS_PER_SECOND && first && last != first &&
+		first->unit_index != NONE && last->unit_index != NONE)
+	{
+		struct object_datum *center = object_get(first->unit_index);
+		real_point3d position = center->object.position;
+
+		position.x += center->object.forward.i * 0.8f;
+		position.y += center->object.forward.j * 0.8f;
+		position.z += 0.1f;
+		object_set_position(last->unit_index, &position, NULL, NULL);
+	}
+	/* (the struck player faces the blow too) */
+	if (window && target && local_player_index != NONE && player_get(local_player_index)->unit_index != NONE)
+	{
+		struct object_datum *unit = object_get(player_get(local_player_index)->unit_index);
+		struct object_datum *target_object = object_get(target->unit_index);
+		real_vector3d direction;
+
+		direction.i = target_object->object.bounding_sphere_center.x - unit->object.bounding_sphere_center.x;
+		direction.j = target_object->object.bounding_sphere_center.y - unit->object.bounding_sphere_center.y;
+		direction.k = target_object->object.bounding_sphere_center.z - unit->object.bounding_sphere_center.z;
+		if (normalize3d(&direction) > 0.0f)
+			player_control_set_facing(0, &direction);
+		if (!striking)
+		{
+			logged = FALSE;
+			test_input_hold_melee(FALSE);
+			return;
+		}
+		if (!logged)
+			platform_log("network test: melee: player %ld strikes player %ld",
+				(long)DATUM_INDEX_TO_ABSOLUTE_INDEX(local_player_index),
+				(long)(target - (struct player_datum *)xbox_pointer(player_data->data)));
+		logged = TRUE;
+		test_input_hold_melee(TRUE);
+	}
+	else
+	{
+		logged = FALSE;
+		test_input_hold_melee(FALSE);
+	}
+}
+
+void network_test_update(
+	boolean main_menu_loaded,
+	real seconds)
+{
+	if (!network_test.checked)
+		network_test_read_settings();
+	if (network_test.mode == _network_test_off)
+		return;
+	if (network_test.mode == _network_test_download)
+	{
+		network_test_download(main_menu_loaded);
+		return;
+	}
+	if (network_test.mode == _network_test_find)
+	{
+		if (main_menu_loaded)
+		{
+			char path[256], map_name[80];
+
+			snprintf(map_name, sizeof(map_name), "%s@ce", network_test.map_name);
+			platform_log("network test: find %s: %s (version %08lx)", network_test.map_name,
+				map_family_find(_map_family_custom_edition, network_test.map_name, path, sizeof(path)) ? path : "no",
+				cache_files_map_version(map_name));
+			exit(0);
+		}
+		return;
+	}
+	if (network_test.mode == _network_test_browse)
+	{
+#ifdef HALO_GAME_BROWSER
+		if (main_menu_loaded)
+		{
+			void browser_screen_open(void);
+			boolean browser_screen_active(void);
+
+			network_test.menu_seconds += seconds;
+			if (!network_test.download_started && network_test.menu_seconds > 3.0f)
+			{
+				network_test.download_started = TRUE;
+				browser_screen_open();
+				platform_log("network test: browse: Online Games open");
+			}
+			/* (each game's ping, every 5 seconds: its name and number only) */
+			else if (network_test.download_started && browser_screen_active() &&
+				(long)(network_test.menu_seconds / 5.0f) != (long)((network_test.menu_seconds - seconds) / 5.0f))
+			{
+				struct browser_game games[16];
+				int count = browser_get_games(games, 16);
+				int index;
+
+				for (index = 0; index < count; index++)
+				{
+					char name[BROWSER_NAME_LENGTH + 1];
+					int character;
+
+					for (character = 0; character < BROWSER_NAME_LENGTH && games[index].name[character]; character++)
+						name[character] = games[index].name[character] < 127 ? (char)games[index].name[character] : '?';
+					name[character] = 0;
+					platform_log("network test: browse: %s ping %s%d", name, games[index].ping_estimated ? "~" : "",
+						games[index].ping);
+				}
+			}
+		}
+#endif
+		return;
+	}
+	if (network_test.mode == _network_test_offer)
+	{
+		/* (once, a few seconds after the main menu is up) */
+#ifdef HALO_GAME_BROWSER
+		if (main_menu_loaded && !network_test.download_started)
+		{
+			network_test.menu_seconds += seconds;
+			if (network_test.menu_seconds > 3.0f)
+			{
+				void browser_screen_map_missing(char const *file, unsigned long version);
+				boolean browser_screen_open_map_offer(void);
+
+				network_test.download_started = TRUE;
+				browser_screen_map_missing(network_test.map_name, network_test.download_version);
+				platform_log("network test: offer %s: %s", network_test.map_name,
+					browser_screen_open_map_offer() ? "shown" : "not shown");
+			}
+		}
+#endif
+		return;
+	}
+
+	/* the game running: report (from the start of each game: the next
+	game's time starts over) */
+	if (game_engine_running() && !main_menu_loaded)
+		network_test.played = TRUE;
+	if (game_in_progress() && game_time_get() < network_test.logged_time)
+		network_test.logged_time = 0;
+	/* (this fork) */
+	if (network_test.aim && game_in_progress() && !main_menu_loaded)
+		network_test_aim();
+	if (network_test.watch && game_in_progress() && !main_menu_loaded)
+		network_test_watch();
+	if (network_test.cheat[0] && game_in_progress() && !main_menu_loaded)
+		network_test_cheat();
+#ifdef HALO_GAME_BROWSER
+	/* (each frame: the planted bomb arms for a second) */
+	if (network_test.bomb_save && network_test.mode == _network_test_host && game_in_progress() && !main_menu_loaded)
+		network_test_bomb_save();
+#endif
+	if (network_test.melee_interval > 0.0f && game_in_progress() && !main_menu_loaded)
+		network_test_melee();
+	if (game_in_progress() && !main_menu_loaded && game_time_get() - network_test.logged_time >= TICKS_PER_SECOND)
+	{
+		network_test.logged_time = game_time_get();
+		network_test_log_players();
+		if (network_test.shoot_interval > 0.0f &&
+			game_time_get() % MAX(1, (long)(network_test.shoot_interval * TICKS_PER_SECOND)) < TICKS_PER_SECOND)
+		{
+			network_test_shoot();
+		}
+		/* (the host brings the players near a second before they shoot;
+		not the last while the vehicle test has it) */
+		if (network_test.mode == _network_test_host && network_test.shoot_interval > 0.0f &&
+			(game_time_get() + TICKS_PER_SECOND) % MAX(1, (long)(network_test.shoot_interval * TICKS_PER_SECOND)) <
+				TICKS_PER_SECOND)
+		{
+			long vehicle_time = (long)(network_test.vehicle_time * TICKS_PER_SECOND);
+
+			network_test_gather(network_test.vehicle_time > 0.0f && game_time_get() >= vehicle_time - 2 * TICKS_PER_SECOND);
+		}
+		if (network_test.pickup_time > 0.0f)
+		{
+			long pickup_time = (long)(network_test.pickup_time * TICKS_PER_SECOND);
+
+			/* (two weapons first: picking up a third swaps) */
+			if (network_test.mode == _network_test_host && game_time_get() >= pickup_time - 3 * TICKS_PER_SECOND &&
+				game_time_get() - (pickup_time - 3 * TICKS_PER_SECOND) < TICKS_PER_SECOND)
+			{
+				network_test_second_weapon();
+			}
+
+			if (game_time_get() >= pickup_time && game_time_get() - pickup_time < TICKS_PER_SECOND)
+			{
+				network_test_pickup();
+			}
+			/* (standing there for four seconds, the button held from a second
+			on) */
+			if (network_test.mode == _network_test_join)
+			{
+				boolean hold = game_time_get() >= pickup_time &&
+					game_time_get() < pickup_time + 4 * TICKS_PER_SECOND;
+
+				test_input_hold_action(hold);
+			}
+		}
+#ifdef HALO_GAME_BROWSER
+		/* (the teams' scores in a Bomb game, as each machine has them) */
+		if (game_engine_bomb_round() > 0)
+		{
+			long bomb_index = game_engine_bomb_weapon();
+			long carrier = NONE;
+			struct data_iterator iterator;
+			struct player_datum *player;
+
+			data_iterator_new(&iterator, player_data);
+			while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+			{
+				if (bomb_index != NONE && player->unit_index != NONE && unit_has_weapon(player->unit_index, bomb_index))
+					carrier = DATUM_INDEX_TO_ABSOLUTE_INDEX(iterator.datum_index);
+			}
+			platform_log("network test: bomb: tick %ld red %ld blue %ld round %ld carrier %ld", game_time_get(),
+				game_engine_bomb_team_score(0), game_engine_bomb_team_score(1), game_engine_bomb_round(), carrier);
+		}
+		/* (debug.network_test_bomb_throw: the joining machine's player, the
+		last, holds the trigger through each interval's first four seconds:
+		the bomb it stands on is picked up with the trigger down, thrown
+		down, picked up again) */
+		if (network_test.bomb_throw && network_test.bomb_interval > 0.0f && network_test.mode == _network_test_join)
+		{
+			long interval = MAX(TICKS_PER_SECOND * 5, (long)(network_test.bomb_interval * TICKS_PER_SECOND));
+			long phase = game_time_get() % interval;
+			boolean hold = game_time_get() >= interval && phase < 4 * TICKS_PER_SECOND;
+
+			test_input_hold_fire(hold);
+			if (hold)
+				platform_log("network test: bomb: the last player holds the trigger");
+		}
+		if (network_test.bomb_interval > 0.0f && game_engine_bomb_round() > 0)
+		{
+			long interval = MAX(TICKS_PER_SECOND * 5, (long)(network_test.bomb_interval * TICKS_PER_SECOND));
+			long phase = game_time_get() % interval;
+
+			if (game_time_get() >= interval && phase < TICKS_PER_SECOND)
+				network_test_bomb(FALSE);
+			if (!network_test.bomb_keep && game_time_get() >= interval && phase >= 3 * TICKS_PER_SECOND &&
+				phase < 4 * TICKS_PER_SECOND)
+			{
+				network_test_bomb(TRUE);
+			}
+		}
+#endif
+		if (network_test.fall_interval > 0.0f)
+		{
+			long interval = MAX(TICKS_PER_SECOND * 5, (long)(network_test.fall_interval * TICKS_PER_SECOND));
+
+			if (game_time_get() >= interval && game_time_get() % interval < TICKS_PER_SECOND)
+				network_test_fall();
+		}
+		if (network_test.mode == _network_test_host && network_test.vehicle_time > 0.0f)
+		{
+			long enter_time = (long)(network_test.vehicle_time * TICKS_PER_SECOND);
+
+			if (game_time_get() >= enter_time && game_time_get() - enter_time < TICKS_PER_SECOND)
+				network_test_vehicle(TRUE);
+			if (game_time_get() >= enter_time + 15 * TICKS_PER_SECOND &&
+				game_time_get() - enter_time - 15 * TICKS_PER_SECOND < TICKS_PER_SECOND)
+			{
+				network_test_vehicle(FALSE);
+			}
+		}
+		/* ... and 20 seconds on, the last player getting in as a player does:
+		at the entrance, the button held for three seconds */
+		if (network_test.vehicle_time > 0.0f)
+		{
+			long approach_time = (long)(network_test.vehicle_time * TICKS_PER_SECOND) + 20 * TICKS_PER_SECOND;
+
+			if (game_time_get() >= approach_time && game_time_get() - approach_time < TICKS_PER_SECOND)
+				network_test_vehicle_approach();
+			if (network_test.mode == _network_test_join && network_test.pickup_time <= 0.0f)
+			{
+				test_input_hold_action(game_time_get() >= approach_time + TICKS_PER_SECOND &&
+					game_time_get() < approach_time + 4 * TICKS_PER_SECOND);
+			}
+		}
+		/* debug.network_test_pause: the first player's pause menu opened
+		that many seconds in, as START opens it (to see it) */
+		if (network_test.pause_time > 0.0f && !network_test.paused &&
+			game_time_get() >= (long)(network_test.pause_time * TICKS_PER_SECOND))
+		{
+			network_test.paused = TRUE;
+			platform_log("network test: the pause menu opens");
+			ui_widget_load_by_name_or_tag(network_test.local_players > 1 ?
+				"ui\\shell\\multiplayer_game\\pause_game\\2p_pause_game" :
+				"ui\\shell\\multiplayer_game\\pause_game\\1p_pause_game", NONE, NULL, 0, NONE, NONE, NONE);
+		}
+		/* debug.network_test_team_change: every so often a player of each
+		machine asks to change teams, as the pause menu's CHANGE TEAMS does
+		(team_change.c); the joining machine's half an interval later */
+		if (network_test.team_change_interval > 0.0f && game_engine_can_score())
+		{
+			static long asked_period = 0;
+			long interval = MAX(1, (long)(network_test.team_change_interval * TICKS_PER_SECOND));
+			long offset = network_test.mode == _network_test_join ? interval / 2 : 0;
+			long period = MAX(0, game_time_get() - offset) / interval;
+
+			if (period < asked_period)
+				asked_period = period;
+			if (period > asked_period)
+			{
+				asked_period = period;
+				extern boolean team_change_ask(short local_player_index);
+
+				/* (split screen: each player in turn) */
+				platform_log("network test: player %d asks to change teams",
+					(int)(period % network_test.local_players) + 1);
+				team_change_ask((short)(period % network_test.local_players));
+			}
+		}
+		/* debug.network_test_kill: the host kills the last player every so
+		often, to test deaths and respawns reaching the clients */
+		if (network_test.mode == _network_test_host && network_test.kill_interval > 0.0f &&
+			game_time_get() % MAX(1, (long)(network_test.kill_interval * TICKS_PER_SECOND)) < TICKS_PER_SECOND)
+		{
+			struct data_iterator iterator;
+			struct player_datum *player;
+			struct player_datum *last = NULL;
+
+			struct player_datum *first = NULL;
+			long first_index = NONE;
+
+			data_iterator_new(&iterator, player_data);
+			while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+			{
+				if (!first)
+				{
+					first = player;
+					first_index = iterator.datum_index;
+				}
+				last = player;
+			}
+			if (last && last != first && last->unit_index != NONE && first->unit_index != NONE)
+			{
+				/* killed by the first player: a kill that scores */
+				platform_log("network test: the first player kills the last");
+				damage_kill_object_for_player(last->unit_index, first_index);
+				/* and picks up a weapon lying about, and two grenades of each kind */
+				{
+					struct object_iterator objects;
+					struct unit_datum *unit = unit_get(first->unit_index);
+					long held_index = unit->unit.weapon_object_indices[0];
+					long held_definition_index = held_index != NONE ? weapon_get(held_index)->definition_index : NONE;
+
+					object_iterator_new(&objects, _object_mask_weapon, 0);
+					while (object_iterator_next(&objects))
+					{
+						struct weapon_datum *weapon = weapon_get(objects.index);
+
+						if (weapon->object.parent_object_index == NONE &&
+							weapon->definition_index != held_definition_index)
+						{
+							if (unit_add_weapon_to_inventory(first->unit_index, objects.index, TRUE))
+								platform_log("network test: the first player picks up a weapon");
+							break;
+						}
+					}
+					unit->unit.grenade_counts[0] = 2;
+					unit->unit.grenade_counts[1] = 2;
+				}
+			}
+		}
+	}
+
+	/* the next game of the list: once the scores have been shown a while,
+	the host's button (the bots may press it first) */
+	if (network_test.mode == _network_test_host && network_test.started && game_engine_running() &&
+		!main_menu_loaded && !game_engine_can_score())
+	{
+		network_test.game_over = TRUE;
+		if (game_engine_showing_postgame() && global_network_game_server_get())
+		{
+			network_test.postgame_seconds += seconds;
+			if (network_test.postgame_seconds >= 3.0f && network_test_variant(network_test.variant_index + 1, NULL, 0))
+			{
+				network_test.postgame_seconds = 0.0f;
+				network_game_server_reset_to_pregame(global_network_game_server_get());
+			}
+		}
+	}
+	/* (a joining machine's player: the other team again in the next game's
+	lobby, whose variant may have teams where the last had none) */
+	if (network_test.mode == _network_test_join && network_test.team_set && game_engine_running() &&
+		!main_menu_loaded && !game_engine_can_score())
+	{
+		network_test.game_over = TRUE;
+	}
+	if (network_test.mode == _network_test_join && network_test.game_over && main_menu_loaded)
+	{
+		network_test.game_over = FALSE;
+		network_test.team_set = FALSE;
+		network_test.joined_seconds = 0.0f;
+	}
+	/* ... back in the lobby, set up as the first was */
+	if (network_test.mode == _network_test_host && network_test.game_over && main_menu_loaded)
+	{
+		network_test.game_over = FALSE;
+		network_test.postgame_seconds = 0.0f;
+		if (network_test_variant(network_test.variant_index + 1, NULL, 0))
+		{
+			network_test.variant_index++;
+			network_test.started = FALSE;
+			network_test.map_set = FALSE;
+			network_test.setup_seconds = 0.0f;
+			network_test.menu_seconds = 0.0f;
+			/* (as picking the next game's map does: the scores' map choice
+			holds the countdown) */
+			if (global_network_game_server_get())
+				network_game_server_pause_countdown(global_network_game_server_get(), FALSE);
+			/* a join that arrived as the last game ended would refuse every
+			later one, the server holding it behind the queued player */
+			network_game_server_port_clear_queued_players(global_network_game_server_get());
+			platform_log("network test: the next game");
+		}
+	}
+
+	if (!main_menu_loaded)
+		return;
+	/* the intro movie skipped first, as a button press does: the movie
+	holds the texture cache's spare memory, which starting the map
+	takes too (texture_cache_steal_memory's assertion) */
+	if (bink_playback_in_progress())
+	{
+		bink_playback_stop();
+		network_test.menu_seconds = 0.0f;
+		platform_log("network test: skipped the movie");
+		return;
+	}
+	network_test.menu_seconds += seconds;
+	/* (the main menu settling first) */
+	if (network_test.menu_seconds < 2.0f)
+		return;
+
+	switch (network_test.mode)
+	{
+	case _network_test_browse:
+	{
+		struct p2p_listing listed[8], games[8];
+		int listed_count, count = 0, pass, index;
+
+		if (!network_test.browsing)
+		{
+			network_test.browsing = TRUE;
+			p2p_lobby_browse(TRUE);
+			platform_log("network test: browsing the public games");
+		}
+		/* (listings arriving meanwhile from every broker) */
+		network_test.browse_seconds += seconds;
+		listed_count = p2p_lobby_games(listed, NUMBEROF(listed));
+		if (!listed_count || network_test.browse_seconds < 5.0f)
+			break;
+		/* those that can be joined (no password, not failed): the list has
+		the most players first; co-op, the game with no game engine, last */
+		for (pass = 0; pass < 2; pass++)
+		{
+			for (index = 0; index < listed_count; index++)
+			{
+				if (listed[index].invite[0] && !listed[index].failed && !listed[index].engine_type == pass)
+					games[count++] = listed[index];
+			}
+		}
+		if (!network_test.browse_listed)
+		{
+			network_test.browse_listed = TRUE;
+			for (index = 0; index < listed_count; index++)
+			{
+				platform_log("network test: listed %s's game (%s, %s) %d/%d players%s%s", listed[index].name,
+					listed[index].map, listed[index].gametype, listed[index].player_count,
+					listed[index].maximum_player_count, listed[index].engine_type ? "" : ", co-op",
+					listed[index].invite[0] ? "" : ", locked");
+			}
+		}
+		if (count > 0 && p2p_join_invite(games[0].invite))
+		{
+			p2p_lobby_browse(FALSE);
+			platform_log("network test: joining %s's game (%s) from the server browser", games[0].name, games[0].map);
+			network_test.mode = _network_test_join;
+		}
+		break;
+	}
+	case _network_test_invite:
+		/* (once the main menu's file system checks are done, as for a join) */
+		if (filesystem_check_thread_is_active())
+			break;
+		if (p2p_join_invite(network_test.invite))
+		{
+			platform_log("network test: joining the game of invite %.12s...", network_test.invite);
+			network_test.mode = _network_test_join;
+		}
+		else
+		{
+			platform_log("network test: the invite %.12s... could not be joined", network_test.invite);
+			network_test.mode = _network_test_off;
+		}
+		break;
+	case _network_test_host:
+		/* (once the main menu's file system checks are done: their thread
+		reads the menus' tags, which a map load replaces; the 3DS takes a
+		while over them) */
+		if (filesystem_check_thread_is_active())
+		{
+			network_test.setup_seconds = 0.0f;
+			break;
+		}
+		if (!network_test.set_up)
+		{
+			char map[64];
+
+			network_test.set_up = TRUE;
+			network_test_map(0, map, sizeof(map));
+			main_set_multiplayer_map_name(map);
+			player_ui_fast_setup_network_server();
+			platform_log("network test: hosting %s", map);
+			/* (in the server browser, as Create Game > Internet's PUBLIC) */
+			if (network_test.public_game)
+				p2p_set_hosting_public(TRUE);
+		}
+		else if (!network_test.started)
+		{
+			network_test.setup_seconds += seconds;
+			/* the map (fast setup clears it), and a player for controller 1, as
+			pressing A in the lobby adds one */
+			if (!network_test.map_set && network_test.setup_seconds >= 1.0f && global_network_game_server_get())
+			{
+				char path[128];
+				char map[64];
+				char variant_name[64];
+				struct game_variant variant;
+
+				/* (a level of its own path, else a multiplayer map's name) */
+				network_test_map(network_test.variant_index, map, sizeof(map));
+				if (strchr(map, '\\') || strchr(map, '@'))
+					snprintf(path, sizeof(path), "%s", map);
+				else
+					snprintf(path, sizeof(path), "levels\\test\\%s\\%s", map, map);
+				network_test_variant(network_test.variant_index, variant_name, sizeof(variant_name));
+				if (!strcmp(variant_name, "coop"))
+				{
+					/* (the Map screen's co-op: menu_functions.c) */
+					extern boolean ui_widget_port_cooperative_level_choose(char const *map_name, short difficulty);
+
+					if (!ui_widget_port_cooperative_level_choose(path, _game_difficulty_level_normal))
+						platform_log("network test: %s is not a campaign level, for co-op", path);
+					platform_log("network test: game %d, co-op", network_test.variant_index + 1);
+				}
+				else
+				{
+					network_game_server_change_map_name(global_network_game_server_get(), path);
+					/* the variant, as picking the game settings does */
+					variant = *game_engine_get_variant_by_name(&variant, variant_name);
+					platform_log("network test: game %d, %s", network_test.variant_index + 1, variant_name);
+					/* debug.network_test_score: a short game, to test the next */
+					if (network_test.score_to_win > 0)
+						variant.universal_variant.score_to_win = network_test.score_to_win;
+					player_ui_set_game_variant(&variant);
+					network_game_server_change_game_variant(global_network_game_server_get(), &variant);
+				}
+				network_test.map_set = TRUE;
+			}
+			if (!network_test.player_added && network_test.setup_seconds >= 2.0f && global_network_game_client_get())
+			{
+				network_test.player_added = network_game_client_add_player(global_network_game_client_get(), 0);
+				if (network_test.player_added)
+					network_test.local_players_added = 1;
+			}
+			/* (split screen: the other controllers' players, a second on in
+			turn, as pressing A on each does) */
+			if (network_test.player_added && network_test.local_players_added < network_test.local_players &&
+				network_test.setup_seconds >= 2.0f + network_test.local_players_added &&
+				global_network_game_client_get() &&
+				network_game_client_add_player(global_network_game_client_get(), network_test.local_players_added))
+			{
+				platform_log("network test: split screen player %d added", network_test.local_players_added + 1);
+				network_test.local_players_added++;
+			}
+			/* (a split screen: its players on both teams, for a team game) */
+			if (network_test.local_players > 1 && network_test.local_players_added == network_test.local_players &&
+				network_test.setup_seconds >= network_test.start_delay - 1.0f && !network_test.team_set)
+			{
+				network_test.team_set = network_game_client_split_teams();
+			}
+			if (network_test.setup_seconds >= network_test.start_delay)
+			{
+				network_test.started = TRUE;
+				network_test.setup_seconds = 0.0f;
+				network_game_client_request_immediate_start();
+				platform_log("network test: starting the game");
+			}
+		}
+		/* (a start the lobby held, as a Bomb game's does while a machine's
+		Delta handshake is under way, is asked again, as a player would
+		press it again) */
+		else if (!network_test.played && global_network_game_server_get())
+		{
+			network_test.setup_seconds += seconds;
+			if (network_test.setup_seconds >= 5.0f)
+			{
+				network_test.setup_seconds = 0.0f;
+				network_game_client_request_immediate_start();
+				platform_log("network test: starting the game again");
+			}
+		}
+		break;
+	case _network_test_join:
+		/* (once the main menu's file system checks are done, as for a host:
+		the game joined is loaded at once, over the tags their thread reads) */
+		if (filesystem_check_thread_is_active())
+			break;
+		if (!network_test.set_up)
+		{
+			network_test.set_up = TRUE;
+			dispose_global_network_game_client();
+			dispose_global_network_game_server();
+			if (create_global_network_game_client())
+			{
+				game_connection_set(_game_connection_network_client);
+				/* (the player joined to multiplayer first, as a player picking
+				their profile: the pregame screen then asks for them every
+				frame until they are in the settings) */
+				{
+					short controller;
+
+					for (controller = 0; controller < network_test.local_players; controller++)
+						player_ui_local_player_joined_multiplayer_game(controller);
+				}
+				platform_log("network test: searching for games");
+			}
+		}
+		else if (!network_test.joined && network_game_client_join_first_available_game())
+		{
+			network_test.joined = TRUE;
+			ui_widgets_close_all();
+			ui_widget_load_by_name_or_tag(
+				pc_menus_screen("ui\\shell\\main_menu\\multiplayer_type_select\\connected\\pregame\\connected_pregame_screen"),
+				NONE, NULL, NONE, NONE, NONE, NONE);
+			platform_log("network test: joining");
+		}
+		else if (network_test.joined && !network_test.player_added)
+		{
+			network_test.joined_seconds += seconds;
+			if (network_test.joined_seconds >= 3.0f && global_network_game_client_get())
+				network_test.player_added = TRUE;
+		}
+		/* (the other team from the host's player: a team game needs both) */
+		else if (network_test.player_added && !network_test.team_set)
+		{
+			network_test.joined_seconds += seconds;
+			if (network_test.joined_seconds >= 5.0f)
+				network_test.team_set = network_game_client_set_team(NONE);
+		}
+		break;
+	}
+}

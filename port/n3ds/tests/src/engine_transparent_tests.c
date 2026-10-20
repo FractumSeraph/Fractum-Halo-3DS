@@ -60,10 +60,10 @@ int halo_engine_transparent_tests(void)
 
     n3ds_transparent_begin_view();
     _rasterizer_models_begin(TRUE); rasterizer_model_begin(&begin,FALSE);
-    previous=rasterizer_debug_options.model_transparents; rasterizer_debug_options.model_transparents=FALSE;
+    previous=rasterizer_debug_options.draw_model_transparent_geometry; rasterizer_debug_options.draw_model_transparent_geometry=FALSE;
     CHECK(!_rasterizer_model_transparent_geometry_submit(&material.shader,0,NULL,NONE,0,NULL,NONE,&near_point,&sort));
     CHECK(sort.group_index==NONE && !sort.previous_group_presorted_index_reference);
-    rasterizer_debug_options.model_transparents=previous;
+    rasterizer_debug_options.draw_model_transparent_geometry=previous;
     material.flags=8;
     CHECK(!_rasterizer_model_transparent_geometry_submit(&material.shader,0,NULL,NONE,0,NULL,NONE,&near_point,NULL));
     material.flags=0;

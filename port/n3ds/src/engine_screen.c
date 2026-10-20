@@ -62,7 +62,7 @@ static void plasma_draw(const struct rasterizer_dynamic_screen_geometry_paramete
 void _rasterizer_psuedo_dynamic_screen_quad_draw(struct rasterizer_dynamic_screen_geometry_parameters *parameters,
     struct dynamic_screen_vertex *vertices)
 {
-    if(!rasterizer_debug_options.dynamic_screen_geometry || global_window_parameters.rasterizer_target!=0) return;
+    if(!rasterizer_debug_options.draw_dynamic_screen_geometry || global_window_parameters.rasterizer_target!=0) return;
     assert(n3ds_engine_window_active() && !n3ds_engine_text_active());
     if(!n3ds_engine_screen_quad_supported(parameters)) {
         char message[240];

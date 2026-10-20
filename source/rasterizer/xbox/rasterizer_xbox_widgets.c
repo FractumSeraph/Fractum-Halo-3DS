@@ -248,14 +248,13 @@ void rasterizer_widget_batch_sprites(
 
 /* ---------- public code */
 
-#ifndef HALO_N3DS
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code has this */
 void _rasterizer_widget_end(
 	void)
 {
 	rasterizer_widget_batch_sprites(FALSE); /* port: (widget_sprite_batch) */
 	return;
 }
-
 #endif
 
 long _rasterizer_widget_get_occlusion_test_result(
@@ -384,8 +383,7 @@ void _rasterizer_widget_submit(
 	return;
 }
 
-#ifndef HALO_N3DS
-/* Native sprite drawing is implemented by port/n3ds/src/engine_widgets.c. */
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code has this */
 void _rasterizer_widget_begin(
 	short type,
 	word flags)
@@ -623,7 +621,9 @@ void _rasterizer_widget_begin(
 
 	return;
 }
+#endif
 
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code has this */
 boolean _rasterizer_widget_set_texture(
 	short stage_index,
 	long bitmap_group_index,
@@ -680,7 +680,9 @@ boolean _rasterizer_widget_set_texture(
 
 	return success;
 }
+#endif
 
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code has this */
 void _rasterizer_widget_set_tint_factor(
 	real tint_factor)
 {
@@ -697,7 +699,9 @@ void _rasterizer_widget_set_tint_factor(
 
 	return;
 }
+#endif
 
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code has this */
 void _rasterizer_widget_set_zbuffer_enable(
 	boolean zbuffer_enable)
 {
@@ -710,7 +714,9 @@ void _rasterizer_widget_set_zbuffer_enable(
 
 	return;
 }
+#endif
 
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code has this */
 void _rasterizer_widget_draw_sprite2d(
 	real_point2d const *point,
 	real radius,
@@ -820,7 +826,9 @@ void _rasterizer_widget_draw_sprite2d(
 
 	return;
 }
+#endif
 
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code has this */
 void _rasterizer_widget_draw_sprite3d(
 	real_point3d const *point,
 	real radius,
@@ -969,7 +977,6 @@ void _rasterizer_widget_draw_sprite3d(
 
 	return;
 }
-
 #endif
 
 long _rasterizer_widget_submit_occlusion_test(

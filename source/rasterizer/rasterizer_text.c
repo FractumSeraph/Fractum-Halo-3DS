@@ -172,7 +172,10 @@ struct hardware_character_cache
 
 /* ---------- prototypes */
 
-static struct bitmap_data *hardware_character_cache_get_bitmap(
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code calls it */
+static
+#endif
+struct bitmap_data *hardware_character_cache_get_bitmap(
 	void);
 static void hardware_character_cache_get_origin(
 	short hardware_character_index,
@@ -185,7 +188,10 @@ static void flush_hardware_character(
 static void cache_hardware_format_character(
 	struct font_header *font,
 	struct font_character *font_character);
-static void rasterizer_draw_character(
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code calls it */
+static
+#endif
+void rasterizer_draw_character(
 	struct parse_string_state *state,
 	struct font_header *font,
 	struct font_character *font_character,
@@ -317,9 +323,9 @@ rasterizer_text_cache_initialize(
 		}
 		else
 		{
-			/* Native texture budgets can reject a valid CPU atlas. It has not
-			 * been published in hardware_character_cache, so free it here. */
 #if defined(HALO_N3DS)
+			/* port: (Halo3DS) native texture budgets can reject a valid CPU atlas,
+			 * not yet published in hardware_character_cache: freed here */
 			bitmap_delete(bitmap);
 #endif
 			error(_error_silent, "### ERROR failed to initialize hardware text cache");

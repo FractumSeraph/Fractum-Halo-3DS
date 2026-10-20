@@ -92,7 +92,7 @@ void halo_engine_text_fixture_draw(void)
     p.map[0]=atlas; p.map_texture_scale[0].i=1.f/atlas->width; p.map_texture_scale[0].j=1.f/atlas->height;
     p.map_scale[0].i=p.map_scale[0].j=1; p.point_sampled=TRUE;
     p.framebuffer_blend_function=0;
-    rasterizer_debug_options.dynamic_screen_geometry=TRUE;
+    rasterizer_debug_options.draw_dynamic_screen_geometry=TRUE;
     rasterizer_text_begin(&p);
     for(unsigned int i=0;i<glyph_count;++i) {
         struct font_character *c=glyphs[i];

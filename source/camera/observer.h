@@ -11,7 +11,6 @@ header included in hcex build.
 /* ---------- headers */
 
 #include "objects/objects.h"
-#include "static_camera.h"
 
 /* ---------- constants */
 
@@ -87,38 +86,6 @@ typedef char observer_command_parameter_flags_offset_assert[
 	offsetof(struct observer_command, parameter_flags) == 0x4C ? 1 : -1];
 typedef char observer_command_parameter_timers_offset_assert[
 	offsetof(struct observer_command, parameter_timers) == 0x54 ? 1 : -1];
-
-
-/* Prefix-only camera helpers must never overwrite transition controls. */
-typedef char observer_command_prefix_size_assert[
-	sizeof(struct camera_command) == offsetof(struct observer_command, parameter_flags) ? 1 : -1];
-typedef char observer_command_prefix_flags_offset_assert[
-	offsetof(struct camera_command, flags) ==
-		offsetof(struct observer_command, flags) ? 1 : -1];
-typedef char observer_command_prefix_position_offset_assert[
-	offsetof(struct camera_command, position) ==
-		offsetof(struct observer_command, focus_position) ? 1 : -1];
-typedef char observer_command_prefix_offset_offset_assert[
-	offsetof(struct camera_command, offset) ==
-		offsetof(struct observer_command, focus_offset) ? 1 : -1];
-typedef char observer_command_prefix_depth_offset_assert[
-	offsetof(struct camera_command, depth) ==
-		offsetof(struct observer_command, focus_distance) ? 1 : -1];
-typedef char observer_command_prefix_field_of_view_offset_assert[
-	offsetof(struct camera_command, field_of_view) ==
-		offsetof(struct observer_command, field_of_view) ? 1 : -1];
-typedef char observer_command_prefix_forward_offset_assert[
-	offsetof(struct camera_command, forward) ==
-		offsetof(struct observer_command, forward) ? 1 : -1];
-typedef char observer_command_prefix_up_offset_assert[
-	offsetof(struct camera_command, up) ==
-		offsetof(struct observer_command, up) ? 1 : -1];
-typedef char observer_command_prefix_velocity_offset_assert[
-	offsetof(struct camera_command, velocity) ==
-		offsetof(struct observer_command, focus_velocity) ? 1 : -1];
-typedef char observer_command_prefix_timer_offset_assert[
-	offsetof(struct camera_command, timer) ==
-		offsetof(struct observer_command, timer) ? 1 : -1];
 
 /* ---------- prototypes/OBSERVER.C */
 

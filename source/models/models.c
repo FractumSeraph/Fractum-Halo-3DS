@@ -277,59 +277,7 @@ static struct profile_section render_model_section = { "render_model", NONE, TRU
 
 /* ---------- private code */
 
-
-#ifdef HALO_N3DS
-extern unsigned int n3ds_engine_cache_generation(void);
-static int native_foliage_model(long index)
-{
- static struct {long index;unsigned int generation;int valid,foliage;} cache[64];
- unsigned int slot=(unsigned int)index&63,generation=n3ds_engine_cache_generation();
- if(cache[slot].valid && cache[slot].index==index && cache[slot].generation==generation)return cache[slot].foliage;
- const char *name=tag_get_name(index);
- int foliage=name && (strstr(name,"tree") || strstr(name,"bush") || strstr(name,"fern") || strstr(name,"plant") || strstr(name,"vine") || strstr(name,"lilypad"));
- cache[slot].index=index;cache[slot].generation=generation;cache[slot].valid=1;cache[slot].foliage=foliage;return foliage;
-}
-/* Map-owned geometry is immutable. Keep the selected region/LOD list once,
- * including hidden permutations; never reorder decals or transparency. */
-#define NATIVE_PARTS 96
-struct native_part {struct model_geometry_part *part;struct model_shader_reference *ref;struct shader *shader;short index,pass;};
-static struct native_part_list {
- const struct model *model;unsigned int generation;short lod,count;
- char permutations[MAXIMUM_REGIONS_PER_MODEL];struct native_part parts[NATIVE_PARTS];
-} native_part_lists[8];
-static unsigned int native_part_clock;
-static struct native_part_list *native_parts(const struct model *model,const char *perms,short lod)
-{
- unsigned int generation=n3ds_engine_cache_generation();
- if(model->regions.count>MAXIMUM_REGIONS_PER_MODEL)return NULL;
- for(unsigned int k=0;k<NUMBEROF(native_part_lists);++k) {
-  struct native_part_list *c=native_part_lists+k;
-  if(c->model==model && c->generation==generation && c->lod==lod && !memcmp(c->permutations,perms,model->regions.count))return c;
- }
- struct native_part_list *c=native_part_lists+(native_part_clock++%NUMBEROF(native_part_lists));c->model=NULL;c->count=0;
- for(short r=0;r<model->regions.count;++r) {
-  if(perms[r]==NONE)continue;
-  struct model_region *region=TAG_BLOCK_GET_ELEMENT(&model->regions,r,struct model_region);
-  struct model_region_permutation *perm=TAG_BLOCK_GET_ELEMENT(&region->permutations,perms[r],struct model_region_permutation);
-  short g=perm->geometry_indices[lod];if(g==NONE)continue;
-  struct model_geometry *geometry=TAG_BLOCK_GET_ELEMENT(&model->geometries,g,struct model_geometry);
-  for(short i=0;i<geometry->parts.count;++i) {
-   struct model_geometry_part *part=TAG_BLOCK_GET_ELEMENT(&geometry->parts,i,struct model_geometry_part);
-   struct model_shader_reference *ref=TAG_BLOCK_GET_ELEMENT(&model->shaders,part->shader_index,struct model_shader_reference);
-   struct shader *shader=shader_definition_get(ref->shader.index);
-   if(!shader_type_is_valid_for_model(shader->base.type) || TEST_FLAG(part->flags,_model_geometry_part_stripped_bit))continue;
-   if(c->count==NATIVE_PARTS)return NULL;
-   short pass=shader_type_is_transparent(shader->base.type)?_render_model_pass_transparent:
-    shader->base.type==_shader_type_model && TEST_FLAG(((struct shader_model_definition *)shader)->flags,_shader_model_alpha_blended_decal_bit)?_render_model_pass_decal:_render_model_pass_solid;
-   c->parts[c->count++]=(struct native_part){part,ref,shader,i,pass};
-  }
- }
- c->generation=generation;c->lod=lod;memcpy(c->permutations,perms,model->regions.count);c->model=model;return c;
-}
-
-extern int n3ds_model_draw_merged(struct shader *,short,const struct triangle_buffer *const *,const struct vertex_buffer *const *,unsigned int);
-#endif
-static void render_model_parts_uncached(
+static void render_model_parts(
 	struct model const *model,
 	char const *region_permutation_indices,
 	short region_permutation_count,
@@ -341,7 +289,7 @@ static void render_model_parts_uncached(
 {
 	boolean immediate = TEST_FLAG(flags, _render_model_immediate_bit);
 	short last_pass = TEST_FLAG(flags, _render_model_shadow_bit) ? _render_model_pass_solid : _render_model_pass_transparent;
-	struct render_sort_filth sort_filth[MAXIMUM_PARTS_PER_MODEL_GEOMETRY+1];
+	struct render_sort_filth sort_filth[MAXIMUM_PARTS_PER_MODEL_GEOMETRY];
 	real_point3d centroid;
 	short pass;
 
@@ -522,148 +470,6 @@ static void render_model_parts_uncached(
 		}
 	}
 
-	return;
-}
-
-static void render_model_parts(
-	struct model const *model,
-	char const *region_permutation_indices,
-	struct rasterizer_model_skinning const *skinning,
-	long object_index,
-	short geometry_detail_level_index,
-	short forced_shader_permutation_index,
-	long flags)
-{
-	boolean immediate = TEST_FLAG(flags, _render_model_immediate_bit);
-	short last_pass = TEST_FLAG(flags, _render_model_shadow_bit) ? _render_model_pass_solid : _render_model_pass_transparent;
-	struct render_sort_filth sort_filth[MAXIMUM_PARTS_PER_MODEL_GEOMETRY+1];
-	real_point3d centroid;
-	short pass;
-
-#ifndef HALO_N3DS
- render_model_parts_uncached(model,region_permutation_indices,skinning,object_index,geometry_detail_level_index,forced_shader_permutation_index,flags);return;
-#else
- if(render_model_no_geometry)return;
- struct native_part_list *list=native_parts(model,region_permutation_indices,geometry_detail_level_index);
- if(!list){render_model_parts_uncached(model,region_permutation_indices,skinning,object_index,geometry_detail_level_index,forced_shader_permutation_index,flags);return;}
- for(pass=_render_model_pass_solid;pass<=last_pass;++pass) {
-  short sort_filth_count=0,i,j;
-  for(short entry=0;entry<list->count;++entry) {
-   struct native_part *item=list->parts+entry;if(item->pass!=pass)continue;
-   struct model_geometry_part *part=item->part;
-   struct model_shader_reference *shader_reference=item->ref;struct shader *shader=item->shader;short part_index=item->index;
-   if(pass==_render_model_pass_solid && !TEST_FLAG(flags,_render_model_shadow_bit)) {
-    const struct triangle_buffer *tri[16];const struct vertex_buffer *vert[16];unsigned int n=1;
-    tri[0]=&part->triangle_buffer;vert[0]=&part->vertex_buffer;
-    while(n<16 && entry+n<list->count) {
-     struct native_part *next=list->parts+entry+n;
-     if(next->pass!=pass || next->shader!=shader || (!forced_shader_permutation_index && next->ref->permutation_index!=shader_reference->permutation_index))break;
-     tri[n]=&next->part->triangle_buffer;vert[n]=&next->part->vertex_buffer;++n;
-    }
-    if(n>1 && n3ds_model_draw_merged(shader,forced_shader_permutation_index?forced_shader_permutation_index:shader_reference->permutation_index,tri,vert,n)){entry+=n-1;continue;}
-   }
-						if (shader_type_is_valid_for_model(shader->base.type) &&
-							!TEST_FLAG(part->flags, _model_geometry_part_stripped_bit))
-						{
-							if (shader_type_is_transparent(shader->base.type))
-							{
-								if (pass==_render_model_pass_transparent)
-								{
-									match_assert("c:\\halo\\SOURCE\\models\\models.c", 442, !TEST_FLAG(flags, _render_model_shadow_bit));
-									match_assert(
-										"c:\\halo\\SOURCE\\models\\models.c",
-										445,
-										part->centroid_primary_node_index>=0 && part->centroid_primary_node_index<model->nodes.count);
-									match_assert(
-										"c:\\halo\\SOURCE\\models\\models.c",
-										446,
-										part->centroid_secondary_node_index>=0 && part->centroid_secondary_node_index<model->nodes.count);
-
-									matrix4x3_transform_point(
-										&skinning->node_matrices[part->centroid_primary_node_index],
-										&part->centroid,
-										&centroid);
-									rasterizer_model_transparent_geometry_submit(
-										shader,
-										forced_shader_permutation_index ? forced_shader_permutation_index : shader_reference->permutation_index,
-										&part->triangle_buffer,
-										NONE,
-										part->triangle_buffer.count,
-										&part->vertex_buffer,
-										NONE,
-										&centroid,
-										&sort_filth[sort_filth_count]);
-
-									if (sort_filth_count<MAXIMUM_PARTS_PER_MODEL_GEOMETRY &&
-										sort_filth[sort_filth_count].group_index!=NONE &&
-										!immediate &&
-										(part->next_part_index>0 || part->previous_part_index>0))
-									{
-										sort_filth[sort_filth_count].part_index = part_index;
-										sort_filth[sort_filth_count].next_part_index = part->next_part_index;
-										sort_filth_count++;
-									}
-								}
-							}
-							else if (shader->base.type==_shader_type_model &&
-								TEST_FLAG(((struct shader_model_definition *)shader_get_and_verify_type(shader, _shader_type_model))->flags, _shader_model_alpha_blended_decal_bit))
-							{
-								if (pass==_render_model_pass_decal)
-								{
-									match_assert("c:\\halo\\SOURCE\\models\\models.c", 491, !TEST_FLAG(flags, _render_model_shadow_bit));
-
-									rasterizer_model_draw(
-										shader,
-										forced_shader_permutation_index ? forced_shader_permutation_index : shader_reference->permutation_index,
-										&part->triangle_buffer,
-										NONE,
-										part->triangle_buffer.count,
-										&part->vertex_buffer,
-										NONE);
-								}
-							}
-							else if (pass==_render_model_pass_solid)
-							{
-								if (TEST_FLAG(flags, _render_model_shadow_bit))
-								{
-									rasterizer_environment_shadow_model_draw(
-										shader,
-										forced_shader_permutation_index ? forced_shader_permutation_index : shader_reference->permutation_index,
-										&part->triangle_buffer,
-										&part->vertex_buffer);
-								}
-								else
-								{
-									rasterizer_model_draw(
-										shader,
-										forced_shader_permutation_index ? forced_shader_permutation_index : shader_reference->permutation_index,
-										&part->triangle_buffer,
-										NONE,
-										part->triangle_buffer.count,
-										&part->vertex_buffer,
-										NONE);
-									rasterizer_debug_model_vertices(object_index, skinning, part);
-								}
-							}
-
-   }
-  }
-
-		for (i = 0; i<sort_filth_count; i++)
-		{
-			for (j = 0; j<sort_filth_count; j++)
-			{
-				if (sort_filth[i].next_part_index==sort_filth[j].part_index && sort_filth[i].next_part_index>0)
-				{
-					*sort_filth[i].next_group_presorted_index_reference = sort_filth[j].group_index;
-					*sort_filth[j].previous_group_presorted_index_reference = sort_filth[i].group_index;
-					break;
-				}
-			}
-		}
-	}
-
-#endif
 	return;
 }
 
@@ -1111,7 +917,6 @@ short model_find_node(
 
 	return NONE;
 }
-
 #ifdef HALO_N3DS
 extern unsigned int n3ds_engine_cache_generation(void);
 /* Markers are sampled by perception, lighting, sound and weapon attachments.
@@ -1231,9 +1036,7 @@ short model_get_marker_by_name(
 
 				object_marker = &markers[result++];
 				object_marker->node_index = marker_node_index;
-#ifndef HALO_N3DS
 				matrix4x3_from_point_and_quaternion(&object_marker->node_matrix, &instance->translation, &instance->rotation);
-#endif
 				match_assert(
 					"c:\\halo\\SOURCE\\models\\models.c",
 					785,
@@ -1615,28 +1418,6 @@ void render_model(
 		model_parameters.skinning.node_matrix_count = node_count;
 #endif
 		model_parameters.geometry_flags = 0;
-#ifdef HALO_N3DS
-        /* Native-only packet bits survive the transparent queue. Never apply
-         * scenery reductions to actors, first-person weapons or sky packets. */
-        if(TEST_FLAG(flags,_render_model_native_scenery_bit) && !TEST_FLAG(flags,_render_model_immediate_bit)) {
-            extern int n3ds_input_platform_original_model(void);
-            int foliage=native_foliage_model(model_index);
-            model_parameters.geometry_flags|=1u<<16;
-            if(foliage)model_parameters.geometry_flags|=1u<<17;
-#ifdef HALO_N3DS_RENDERER_TESTS
-            const char *name=tag_get_name(model_index);
-            static long seen_models[64];static unsigned int seen_count;unsigned int n;
-            for(n=0;n<seen_count && seen_models[n]!=model_index;++n){}
-            if(n==seen_count && seen_count<64){seen_models[seen_count++]=model_index;char text[256];extern void n3ds_log(const char *);
-             snprintf(text,sizeof(text),"SCENERY TAG: foliage=%d pixels=%.1f name=%.180s",foliage,level_of_detail_pixels,name);n3ds_log(text);}
-#endif
-
-            int old=n3ds_input_platform_original_model();
-            if(old || level_of_detail_pixels<128.f)model_parameters.geometry_flags|=1u<<18;
-            if(level_of_detail_pixels<(old?160.f:64.f))model_parameters.geometry_flags|=1u<<19;
-        }
-#endif
-
 		model_parameters.base_map_scale = model->base_map_scale;
 
 		if (TEST_FLAG(flags, _render_model_immediate_bit))

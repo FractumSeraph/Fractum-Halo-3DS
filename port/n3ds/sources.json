@@ -1247,6 +1247,14 @@
       "defines": [
         "HALO_N3DS_WORLD_SERVICES"
       ]
+    },
+    {
+      "source": "port/n3ds/src/engine_win32_timing.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/n3ds/src/engine_fork_stubs.c",
+      "compiler": "clang"
     }
   ],
   "runtime": [
@@ -1439,5 +1447,21 @@
     "source/units/unit_dialogue.c",
     "source/units/unit_scripting_commands.c",
     "source/units/vehicles.c"
+  ],
+  "after_include_dirs": [
+    "port/linux/include",
+    "port/linux/game",
+    "port/linux/src",
+    "port/n3ds/include/engine_shims",
+    "port/n3ds/include/engine_shims/ai",
+    "port/n3ds/include/engine_shims/bitmaps",
+    "port/n3ds/include/engine_shims/cache",
+    "port/n3ds/include/engine_shims/game",
+    "port/n3ds/include/engine_shims/main",
+    "port/n3ds/include/engine_shims/math",
+    "port/n3ds/include/engine_shims/models",
+    "port/n3ds/include/engine_shims/rasterizer",
+    "port/n3ds/include/engine_shims/render",
+    "port/n3ds/include/engine_shims/units"
   ]
 }

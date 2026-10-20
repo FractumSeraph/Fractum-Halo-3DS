@@ -545,12 +545,9 @@ void editor_camera_set_mode(
 
 void editor_camera_update(
 	struct flying_camera *camera,
-	struct camera_control const *controls,
-	struct observer_command *result)
+	struct flying_camera_action const *controls,
+	struct camera_command *result)
 {
-	struct flying_camera_action flying_controls;
-	struct camera_command prefix;
-
 	match_dassert(
 		"c:\\halo\\SOURCE\\camera\\editor_flying_camera.c",
 		340,
@@ -582,12 +579,7 @@ void editor_camera_update(
 		}
 	}
 
-	/* Older camera implementations consume the common packet prefixes.
-	   Copy through their declared types and preserve the transition tail. */
-	csmemcpy(&flying_controls, controls, sizeof(flying_controls));
-	csmemcpy(&prefix, result, sizeof(prefix));
-	update_funcs[camera_mode](camera, &flying_controls, &prefix);
-	csmemcpy(result, &prefix, sizeof(prefix));
+	update_funcs[camera_mode](camera, controls, result);
 	if (is_scripted)
 	{
 		long flags = result->flags;

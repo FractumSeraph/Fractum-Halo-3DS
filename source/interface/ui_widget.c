@@ -653,7 +653,6 @@ struct widget_instance;
 #include "interface/player_ui.h"
 #include "interface/progress_bar.h"
 #include "interface/ui_widget_game_data_input_functions.h"
-#include "interface/ui_widget_event_handler_functions.h"
 #include "interface/ui_widget_text_search_and_replace_functions.h"
 #include "interface/virtual_keyboard.h"
 #include "main/main.h"

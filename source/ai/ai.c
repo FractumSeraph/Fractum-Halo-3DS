@@ -1972,11 +1972,8 @@ void ai_update(
 #ifdef HALO_N3DS
             stamps[1]=n3ds_engine_ticks();
 #endif
-            encounters_update();
-#ifdef HALO_N3DS
-            stamps[2]=n3ds_engine_ticks();
-#endif
-            actors_update();
+			encounters_update();
+			actors_update();
 			ai_globals->ai_has_control_data = TRUE;
 		}
 		else if (ai_globals->ai_has_control_data)
@@ -1985,7 +1982,6 @@ void ai_update(
 			ai_globals->ai_has_control_data = FALSE;
 		}
 	}
-
 #ifdef HALO_N3DS
     stamps[3]=n3ds_engine_ticks();
     for(int i=0;i<3;++i) totals[i]+=stamps[i+1]-stamps[i];
@@ -1996,6 +1992,7 @@ void ai_update(
         memset(totals,0,sizeof(totals));
     }
 #endif
+
 	profile_exit(ai_update_section);
 
 	return;

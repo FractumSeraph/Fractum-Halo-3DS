@@ -179,7 +179,7 @@ boolean file_read_only(struct file_reference *file);
 boolean file_create(struct file_reference *file);
 boolean file_delete(struct file_reference *file);
 boolean file_exists(const struct file_reference *file);
-boolean file_rename(struct file_reference *file, const char *new_name);
+// file_rename
 boolean file_open(struct file_reference *file, unsigned long flags);
 boolean file_close(struct file_reference *file);
 unsigned long file_get_position(const struct file_reference *file);
@@ -198,7 +198,7 @@ boolean file_write_to_position(
 	unsigned long position,
 	unsigned long count,
 	void const *buffer);
-boolean file_get_last_modification_date(struct file_reference *file, struct file_last_modification_date *date);
+// file_get_last_modification_date
 boolean file_get_size(
 	struct file_reference const *file,
 	unsigned long *size);

@@ -17,8 +17,6 @@ header included in hcex build.
 
 /* ---------- structures */
 
-struct collision_bsp;
-
 struct collision_bsp_test_vector_result
 {
 	real t;

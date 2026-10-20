@@ -1807,6 +1807,7 @@ void main_movie_stop(
 	return;
 }
 
+#ifndef HALO_N3DS /* port: (Halo3DS) engine_system.c's on the 3DS */
 void main_crash(
 	char const *str)
 {
@@ -1816,6 +1817,7 @@ void main_crash(
 	*(char **)NULL = "chucky was here!  NULL belongs to me!!!!!";
 	return;
 }
+#endif
 
 /* port: the native build's identity (port/linux/src/build_identity.c), for
 the halt screen, with where the whole log is (OpenCE 48342f52) */

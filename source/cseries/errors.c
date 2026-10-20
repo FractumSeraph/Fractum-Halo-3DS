@@ -191,7 +191,8 @@ static void write_to_debug_file(
 	if (date || debug_file_port_repeat_count)
 	{
 #ifdef HALO_64BIT
-		/* (the host's time_t: 64 bits, which time() writes whole) */
+		/* (the host's time_t: 64 bits, which time() writes whole; newlib's on
+		the 3DS too) */
 		time_t timeptr;
 #else
 		long timeptr;

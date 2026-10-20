@@ -1,4 +1,3 @@
-#define HALO_N3DS_INLINE_DATUM 1
 /*
 COLLISIONS.C
 
@@ -141,9 +140,9 @@ boolean object_bounds_cache_out_of_reach(long object_index, real_point3d const *
 
 struct collision_usage_times
 {
-	collision_timestamp features;
-	collision_timestamp vector_objects;
-	collision_timestamp vector_structure;
+	LARGE_INTEGER features;
+	LARGE_INTEGER vector_objects;
+	LARGE_INTEGER vector_structure;
 };
 
 /* ---------- prototypes */

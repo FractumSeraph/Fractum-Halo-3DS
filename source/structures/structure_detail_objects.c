@@ -250,7 +250,6 @@ void structure_detail_objects_dispose(
 {
 	return;
 }
-
 #ifdef HALO_N3DS
 #include "engine_checkpoint.h"
 int n3ds_checkpoint_detail_visit(n3ds_checkpoint_visitor visit)

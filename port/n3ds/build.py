@@ -70,7 +70,8 @@ def main():
     overlay, semantics = prepare(ROOT, args.xdk, out)
     shaders = generate(PORT, out, args.picasso)
     digest = hashlib.sha256((PORT/'sources.json').read_bytes()+Path(__file__).read_bytes())
-    for folder in [ROOT/'source', PORT/'include', PORT/'compat', PORT/'tests', PORT/'vendor', overlay, PORT/'tools']:
+    for folder in [ROOT/'source', PORT/'include', PORT/'compat', PORT/'tests', PORT/'vendor', overlay, PORT/'tools',
+                   *[ROOT/f for f in manifest.get('after_include_dirs',[])]]:
         for path in sorted(folder.rglob('*')):
             if path.is_file() and path.suffix in ('.h','.inl','.inc','.py'):
                 digest.update(path.name.encode()); digest.update(path.read_bytes())
@@ -85,8 +86,13 @@ def main():
             *COMMON,'-std=gnu99','-D__STRICT_ANSI__','-DHALO_N3DS','-fsigned-char','-fshort-wchar',
             '-fms-extensions','-fcommon','-ffp-contract=off','-Werror=implicit-function-declaration',
             '-Werror=incompatible-pointer-types','-Wno-multichar','-Wno-pragma-pack',
-            '-Wno-ignored-attributes','-Wno-duplicate-decl-specifier']
+            '-Wno-ignored-attributes','-Wno-duplicate-decl-specifier',
+            # (the fork's engine passes const pointers on, as its other builds allow)
+            '-Wno-error=incompatible-pointer-types-discards-qualifiers']
     for folder in manifest['include_dirs']: game+=['-I',str(ROOT/folder)]
+    # (the FractumSeraph/OpenCE fork's port layer, after the system's headers:
+    # its C library stand-ins are for its desktop builds, not these)
+    for folder in manifest.get('after_include_dirs',[]): game+=['-idirafter',str(ROOT/folder)]
     shared = [*defines,'-I',str(out),'-I',str(PORT/'include'),'-I',str(PORT/'tests/include'),
               f'-ffile-prefix-map={ROOT}=Halo3DS',f'-ffile-prefix-map={out}=build']
     cache_path=out/'compile-cache.json'
@@ -103,6 +109,10 @@ def main():
             sdk=entry.get('sdk',True)
             command+=['-include',str(PORT/'include'/('engine_prefix.h' if sdk else 'platform.h')),'-I',str(PORT/'compat/include')]
             if sdk: command+=['-include',str(semantics),'-idirafter',str(overlay)]
+        if entry['source'].startswith('source/'):
+            # (the FractumSeraph/OpenCE fork's engine, as its other builds take it:
+            # its pointer type mismatches are warnings there, same-layout types)
+            command+=['-Wno-error=incompatible-pointer-types','-Wno-error=incompatible-function-pointer-types']
         command+=['-D'+d for d in entry.get('defines',[])]+['-MMD','-MF',str(obj.with_suffix('.d')),'-c',str(source),'-o',str(obj)]
         stamp=hashlib.sha256((digest.hexdigest()+json.dumps(command)).encode()).hexdigest()
         old=cache.get(entry['source'],{})
@@ -110,12 +120,20 @@ def main():
             run(command,out,'compile/'+entry['source'])
         return entry,obj,command,{'stamp':stamp,'sha256':sha(obj)}
 
+    # (every unit compiled before the failures are reported, all of them)
+    failures=[]
+    def compile_or_fail(entry):
+        try: return compile_entry(entry)
+        except RuntimeError as failure: failures.append(str(failure).split('\n')[0]); return None
     with ThreadPoolExecutor(max_workers=args.jobs) as workers:
-        for number,(entry,obj,command,record) in enumerate(workers.map(compile_entry,entries),1):
-            cache[entry['source']]=record; commands.append(command)
-            (archived if entry.get('archive') else objects).append(obj)
+        for number,result in enumerate(workers.map(compile_or_fail,entries),1):
+            if result:
+                entry,obj,command,record=result
+                cache[entry['source']]=record; commands.append(command)
+                (archived if entry.get('archive') else objects).append(obj)
             if number%40==0 or number==len(entries): print(f'Compiled {number}/{len(entries)}',flush=True)
     cache_path.write_text(json.dumps(cache,indent=2))
+    if failures: raise RuntimeError(f'{len(failures)} unit(s) failed:\n'+'\n'.join(failures))
     archive=out/'original-runtime.a'
     if archive.exists(): archive.unlink()  # Only this build's generated archive; no stale members.
     run([str(ar),'rcs',str(archive),*map(str,archived)],out,'archive')

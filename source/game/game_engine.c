@@ -8775,7 +8775,7 @@ static void game_engine_update_weapons(
 			match_assert(
 				"c:\\halo\\SOURCE\\game\\game_engine.c",
 				0x83E,
-				cache_file_tags_are_ce() ||
+				CACHE_FILE_TAGS_ARE_CE() ||
 				((item->object.scale >= 0.5f) &&
 					(item->object.scale <= 3.f)));
 		}

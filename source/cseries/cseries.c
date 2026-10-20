@@ -426,6 +426,7 @@ void release_assert_failed(
 #endif
 
 #ifndef HALO_N3DS /* Native assertion reporting lives in runtime.c. */
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code has this */
 void display_assert(
 	char *information,
 	char *file,
@@ -467,6 +468,7 @@ void display_assert(
 	error(_error_silent, "EXCEPTION %s in %s,#%d: %s", fatal ? "halt" : "warn", file, line, information ? information : "<no reason given>");
 #endif
 }
+#endif
 #endif
 
 long csmemcmp(

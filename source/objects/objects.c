@@ -4,7 +4,6 @@ OBJECTS.C
 
 /* ---------- headers */
 
-#define HALO_N3DS_INLINE_DATUM 1
 #include "cseries.h"
 #include "objects.h"
 
@@ -2470,7 +2469,6 @@ if (!valid_real_matrix4x3(matrix)) \
 	real_vector3d const *ocnm_up = &(*matrix).up; \
 	ocnm_parent_matrix_internal(file, line, matrix, string); \
 }
-
 #ifdef HALO_N3DS
 static boolean native_distant_pose(long index,const struct object_datum *object)
 {
@@ -2491,6 +2489,7 @@ static boolean native_distant_pose(long index,const struct object_datum *object)
  return found;
 }
 #endif
+
 void object_compute_node_matrices(
 	long object_index)
 {
@@ -2565,13 +2564,13 @@ void object_compute_node_matrices(
 				{
 					frame_index = object->object.animation.state.frame_index;
 				}
-
 #ifdef HALO_N3DS
                 extern void n3ds_animation_sample_distant(const struct model *,const struct animation *,short,real_orientation *);
                 if(!TEST_FLAG(animation->flags,_animation_world_relative_bit) && native_distant_pose(object_index,object))
                     n3ds_animation_sample_distant(model,animation,frame_index,node_orientations);
                 else
 #endif
+
 				animation_get_node_orientations(model, animation, frame_index, node_orientations);
 				world_relative = TEST_FLAG(animation->flags, _animation_world_relative_bit);
 			}
@@ -3890,6 +3889,7 @@ static unsigned int native_object_type_counts[13];
 #define NATIVE_OBJECT_STAGE(i) ((void)0)
 #define NATIVE_OBJECT_TYPE() ((void)0)
 #endif
+
 static boolean object_update(
 	long object_index)
 {
@@ -3915,26 +3915,21 @@ static boolean object_update(
 			}
 		}
 
-		NATIVE_OBJECT_START();
 		object_type_update(object_index);
-        NATIVE_OBJECT_TYPE();
 		if (object_definition->object.collision_model.index!=NONE)
 		{
 			object_damage_update(object_index);
 		}
 
 		object_type_export_function_values(object_index);
-        NATIVE_OBJECT_STAGE(1);
 
 		if (!TEST_FLAG(object->object.flags, _object_do_not_recompute_node_matrices_bit))
 		{
 			object_compute_node_matrices(object_index);
 		}
 
-        NATIVE_OBJECT_STAGE(2);
 		object_compute_function_values(object_index);
 		object_compute_change_colors(object_index);
-        NATIVE_OBJECT_STAGE(4);
 
 		if (
 			TEST_FLAG(object->object.flags, _object_dynamic_lighting_recompute_bit) &&
@@ -3947,7 +3942,6 @@ static boolean object_update(
 			object_connect_lights(object_index, TRUE, TRUE);
 		}
 
-        NATIVE_OBJECT_STAGE(5);
 		// Update children (if we have any)
 		if (object->object.first_child_object_index!=NONE)
 		{
@@ -4654,6 +4648,7 @@ void objects_update(
         n3ds_log(message);memset(native_object_type_ticks,0,sizeof(native_object_type_ticks));memset(native_object_type_counts,0,sizeof(native_object_type_counts));
     }
 #endif
+
 	profile_exit(section);
 
 	return;
@@ -4695,7 +4690,6 @@ static void object_connect_lights(
                     n3ds_light_update_attachment(object->object.attachment_indices[i]);continue;
                 }
 #endif
-
 				if (disconnect)
 				{
 					light_disconnect_from_map(object->object.attachment_indices[i]);

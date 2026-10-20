@@ -1,4 +1,3 @@
-#define HALO_N3DS_INLINE_DATUM 1
 /*
 COLLISION_BSP.C
 
@@ -203,6 +202,24 @@ typedef char collision_bsp_test_sphere_context_center2d_offset_assert[
 	offsetof(struct test_sphere_data, center2d) == 0x220 ? 1 : -1];
 #endif
 
+struct collision_leaf
+{
+	word flags;
+	short bsp2d_reference_count;
+	long first_bsp2d_reference_index;
+};
+
+struct bsp2d_reference
+{
+	long plane_designator;
+	long root_index;
+};
+
+typedef char collision_leaf_size_assert[
+	sizeof(struct collision_leaf) == 0x08 ? 1 : -1];
+typedef char bsp2d_reference_size_assert[
+	sizeof(struct bsp2d_reference) == 0x08 ? 1 : -1];
+
 struct collision_bsp_test_vector_context
 {
 	unsigned long flags;
@@ -228,8 +245,8 @@ typedef char collision_bsp_test_vector_context_size_assert[
 
 struct collision_bsp_usage_times
 {
-	collision_timestamp vector;
-	collision_timestamp sphere;
+	LARGE_INTEGER vector;
+	LARGE_INTEGER sphere;
 };
 
 /* ---------- prototypes */

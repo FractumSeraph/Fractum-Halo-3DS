@@ -14196,7 +14196,7 @@ void hs_recompile(
 	return;
 }
 
-struct hs_function_definition const *hs_function_get(
+struct hs_function_definition *hs_function_get(
 	short function_index)
 {
 	match_assert(

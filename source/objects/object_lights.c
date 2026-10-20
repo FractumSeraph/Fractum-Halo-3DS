@@ -2080,7 +2080,6 @@ void light_reconnect_to_map(long light_index) {light_reconnect_internal(light_in
 void n3ds_light_update_attachment(long light_index) {light_reconnect_internal(light_index,TRUE);}
 #endif
 
-static void find_point_lights_for_object_in_cluster(
 /* a light of a cluster, for find_point_lights_for_object_in_cluster: as
 the Xbox's loop does each, marking it (so its other clusters pass it over) */
 static void find_point_light_for_object(

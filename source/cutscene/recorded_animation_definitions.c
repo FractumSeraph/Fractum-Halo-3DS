@@ -43,7 +43,7 @@ symbols in this file:
 /* ---------- prototypes */
 
 static void byte_swap_recording(
-	void *definition,
+	struct recorded_animation_definition const *animation,
 	void *stream,
 	long stream_size);
 
@@ -121,11 +121,10 @@ short scenario_get_animation_by_name(struct scenario const *scenario, char const
 /* ---------- private code */
 
 static void byte_swap_recording(
-	void *definition,
+	struct recorded_animation_definition const *animation,
 	void *stream,
 	long stream_size)
 {
-	struct recorded_animation_definition const *animation = definition;
 	if (animation->version > 0)
 	{
 		if (animation->version > 3)

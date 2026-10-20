@@ -899,6 +899,10 @@ boolean rasterizer_transparent_geometry_is_enclosure(
 	struct triangle_buffer const *triangles,
 	struct shader const *energy, struct vertex_buffer const *inner)
 {
+#ifdef HALO_N3DS
+	/* port: (Halo3DS) its native renderer sorts transparent geometry itself */
+	return FALSE;
+#endif
 	struct shader_transparent_glass_definition const *shell = (void const *)glass;
 	struct shader_transparent_generic const *core;
 	byte *outer_data = NULL, *inner_data = NULL, *index_data = NULL;

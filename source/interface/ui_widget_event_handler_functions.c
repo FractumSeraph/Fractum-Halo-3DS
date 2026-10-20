@@ -933,7 +933,7 @@ symbols in this file:
 #include "interface/ui_widget_definitions.h"
 #include "interface/ui_widget_instance.h"
 #include "saved games/saved_game_files.h"
-#ifdef HALO_64BIT
+#if defined(HALO_64BIT) || defined(HALO_N3DS)
 /* port: (saved games/playlist_profile.h's, whose other prototypes this unit
 declares its own way; the 64-bit build takes no implicit declarations) */
 boolean playlist_profile_get_options(long playlist_profile_index, struct game_variant_options *options);
@@ -1898,8 +1898,8 @@ static boolean create_and_begin_editing_new_gametype_profile(
 	boolean result;
 	long profile_index;
 	wchar_t name[128];
-	struct game_variant source_variant;
-	struct game_variant variant;
+	struct game_variant_data source_variant;
+	struct game_variant_data variant;
 	char directory_path[256];
 	byte *profile;
 
@@ -4469,7 +4469,7 @@ static boolean solo_level_set_next_map_name(
 
 	list_widget = widget;
 	result = FALSE;
-	match_vassert("c:\halo\SOURCE\interface\ui_widget_event_handler_functions.c", 724, list_widget->parameters.list.selected_index >= 0 && list_widget->parameters.list.selected_index < 10, "I don't think this is the solo level list widget");
+	match_vassert("c:\\halo\\SOURCE\\interface\\ui_widget_event_handler_functions.c", 724, list_widget->parameters.list.selected_index >= 0 && list_widget->parameters.list.selected_index < 10, "I don't think this is the solo level list widget");
 #ifdef HALO_N3DS
 	/* port: (Halo3DS) expose prepared campaign levels for manual testing
 	 * without changing profile completion flags or existing campaign saves */

@@ -100,7 +100,6 @@ symbols in this file:
 
 #include "cseries/cseries.h"
 #include "cseries/errors.h"
-#include "cseries/cseries_windows.h"
 #include "bungie_net/common/message_header.h"
 #include "bungie_net/network/transport.h"
 #include "game/player_queues_new.h"

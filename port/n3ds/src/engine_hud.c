@@ -254,7 +254,7 @@ void n3ds_cinematic_draw_screen(void)
      * player's damage-flash clock. The fade's color always has alpha one. */
     struct render_screen_flash fade={0};
     player_effect_get_screen_flash(NONE,&fade);
-    if(fade.type && rasterizer_debug_options.screen_flashes) {
+    if(fade.type && rasterizer_debug_options.screen_flash_enabled) {
         assert(fade.type==1 && fade.color.alpha==1.f);
         fade.color.alpha=PIN(fade.intensity,0.f,1.f);
         if(fade.color.alpha>0) draw_quad(&render.camera.viewport_bounds,real_argb_color_to_pixel32(&fade.color));
@@ -280,7 +280,7 @@ void _rasterizer_screen_effect(struct rasterizer_cinematic_screen_effect_paramet
 {
     parameters=rasterizer_screen_effect_get_cinematic_parameters(parameters);
     struct native_screen_effect effect={0};
-    if(rasterizer_debug_options.screen_effects && parameters) {
+    if(rasterizer_debug_options.screen_effects_enabled && parameters) {
         effect.enhancement=parameters->filter_light_enhancement_intensity;
         effect.desaturation=parameters->filter_desaturation_intensity;
         memcpy(effect.tint,parameters->filter_desaturation_tint.n,sizeof(effect.tint));
@@ -292,7 +292,7 @@ void _rasterizer_screen_effect(struct rasterizer_cinematic_screen_effect_paramet
     n3ds_gpu_screen_effect(&effect);
 #ifdef HALO_N3DS_RENDERER_TESTS
     static int previous=-1;int key=(effect.enhancement>0)|((effect.desaturation>0)<<1)|(!!effect.video<<2);
-    if(key!=previous){char line[160];snprintf(line,sizeof(line),"SCREEN EFFECT OUTPUT: enabled=%d parameters=%d light=%.3f desat=%.3f video=%d",rasterizer_debug_options.screen_effects,!!parameters,effect.enhancement,effect.desaturation,effect.video);n3ds_log(line);previous=key;}
+    if(key!=previous){char line[160];snprintf(line,sizeof(line),"SCREEN EFFECT OUTPUT: enabled=%d parameters=%d light=%.3f desat=%.3f video=%d",rasterizer_debug_options.screen_effects_enabled,!!parameters,effect.enhancement,effect.desaturation,effect.video);n3ds_log(line);previous=key;}
 #endif
 }
 
@@ -305,7 +305,7 @@ static void *bitmap(short kind)
 void _rasterizer_hud_motion_sensor_blip_begin(void)
 {
     assert(hud_active && !sensor_active);
-    if(!rasterizer_debug_options.hud_motion_sensor) return;
+    if(!rasterizer_debug_options.draw_hud_motion_sensor) return;
     blips[0]=bitmap(_interface_bitmap_motion_blip); blips[1]=bitmap(_interface_bitmap_iface_map1);
     n3ds_gpu_sensor_begin();sensor_active=1;
 }

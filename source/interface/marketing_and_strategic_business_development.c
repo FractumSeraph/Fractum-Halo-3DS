@@ -22,7 +22,6 @@ boolean xbox_demos_available(void) { return FALSE; }
 void xbox_demos_launch(void) { n3ds_log("Xbox demo launch unavailable on Nintendo 3DS"); }
 void xbox_dashboard_launch(void) { n3ds_log("Xbox dashboard unavailable on Nintendo 3DS; use native application exit"); }
 #else
-
 static void clean_up_for_image_launch(void);
 
 /* ---------- globals */

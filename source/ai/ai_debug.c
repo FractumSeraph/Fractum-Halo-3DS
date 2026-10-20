@@ -273,17 +273,9 @@ void ai_debug_initialize(
 	ai_debug.render = TRUE;
 
 	actor_debug_array = actor_debug_array==NULL ? (struct actor_debug_info *)debug_malloc(sizeof(*actor_debug_array) * MAXIMUM_NUMBER_OF_ACTORS, FALSE, "c:\\halo\\SOURCE\\ai\\ai_debug.c", 147) : actor_debug_array;
-#ifndef HALO_N3DS_FRONTEND
 	actor_path_debug_array = actor_path_debug_array==NULL ? (struct path_debug_storage *)debug_malloc(sizeof(*actor_path_debug_array) * MAXIMUM_NUMBER_OF_ACTOR_PATHS, FALSE, "c:\\halo\\SOURCE\\ai\\ai_debug.c", 148) : actor_path_debug_array;
+
 	match_assert("c:\\halo\\SOURCE\\ai\\ai_debug.c", 150, actor_debug_array && actor_path_debug_array);
-#else
-	/* Path snapshots are debug visualizations, not live navigation state.
-	 * path_state_new/find/build already accept NULL diagnostic storage. Avoid
-	 * reserving 3,755,904 bytes that campaign tags need on a 64 MiB console. */
-	extern void n3ds_log(const char *);
-	match_assert("c:\\halo\\SOURCE\\ai\\ai_debug.c", 150, actor_debug_array && !actor_path_debug_array);
-	n3ds_log("AI MEMORY: path debug history disabled; saved 3755904 bytes; live pathfinding retained");
-#endif
 
 	return;
 }
@@ -335,8 +327,9 @@ void ai_debug_clear_storage(
 	match_assert("c:\\halo\\SOURCE\\ai\\ai_debug.c", 208, actor_debug_array);
 
 	memset(actor_debug_array, 0, sizeof(*actor_debug_array) * MAXIMUM_NUMBER_OF_ACTORS);
-	if (actor_path_debug_array)
-		memset(actor_path_debug_array, 0, sizeof(*actor_path_debug_array) * MAXIMUM_NUMBER_OF_ACTOR_PATHS);
+	match_assert("c:\\halo\\SOURCE\\ai\\ai_debug.c", 211, actor_path_debug_array)
+
+	memset(actor_path_debug_array, 0, sizeof(*actor_path_debug_array) * MAXIMUM_NUMBER_OF_ACTOR_PATHS);
 
 	return;
 }
@@ -344,7 +337,6 @@ void ai_debug_clear_storage(
 void ai_debug_actor_deleted(
 	long actor_index)
 {
-	if (!actor_path_debug_array) return;
 	short path_index;
 
 	for (path_index = 0; path_index<MAXIMUM_NUMBER_OF_ACTOR_PATHS; ++path_index)
@@ -366,7 +358,6 @@ void ai_debug_actor_deleted(
 struct path_debug_storage *ai_debug_get_last_path(
 	long actor_index)
 {
-	if (!actor_path_debug_array) return NULL;
 	short path_index;
 
 	short found_path_index = NONE;
@@ -4741,7 +4732,7 @@ void ai_debug_update(
 					ai_debug.path_end_surface_index, ai_debug.path_accept_radius);
 			}
 
-			path_state_build_path(&ai_debug.path_state, &ai_debug.path_result);
+			path_state_build_path(&ai_debug.path_state, &ai_debug.field_608A8);
 
 			ai_debug.field_4C818 = TRUE;
 			ai_debug.path_storage.valid = TRUE;
@@ -4990,7 +4981,6 @@ void ai_debug_teleport_to(
 struct path_debug_storage *ai_debug_get_path_storage(
 	long actor_index)
 {
-	if (!actor_path_debug_array) return NULL;
 	short storage_index = NONE;
 	short index;
 
@@ -5597,7 +5587,7 @@ static void ai_debug_render_vehicles_enterable(
 static void ai_debug_render_path(
 	void)
 {
-	if (ai_debug.path_start_valid && ai_debug.path_end_valid && !ai_debug.path_result.valid)
+	if (ai_debug.path_start_valid && ai_debug.path_end_valid && !ai_debug.field_608A8)
 	{
 		real_argb_color const *color;
 
@@ -5634,7 +5624,6 @@ static void ai_debug_render_path(
 static void ai_debug_render_paths_failed(
 	void)
 {
-	if (!actor_path_debug_array) return;
 	short index;
 
 	for (index = 0; index<MAXIMUM_AI_DEBUG_PATH_STORAGE; index++)
@@ -6127,7 +6116,6 @@ static void ai_debug_speech_update(
 static void ai_debug_path_storage_update(
 	void)
 {
-	if (!actor_path_debug_array) return;
 	short index;
 	short other_index;
 

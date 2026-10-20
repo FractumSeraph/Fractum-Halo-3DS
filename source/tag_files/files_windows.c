@@ -115,10 +115,7 @@ symbols in this file:
 /* ---------- headers */
 
 #include "cseries.h"
-#include <ctype.h>
-#ifndef HALO_N3DS
 #include "cseries_windows.h"
-#endif
 #include "errors.h"
 
 #define BUILDING_FILES_WINDOWS
@@ -145,7 +142,6 @@ enum
 
 /* ---------- structures */
 
-#ifndef HALO_N3DS
 struct find_files_state
 {
 	unsigned long flags;
@@ -190,8 +186,6 @@ static struct find_files_state find_files_globals =
 	{ 0 }
 };
 
-#endif /* !HALO_N3DS: native SD backend owns operating-system state. */
-
 /* ---------- public code */
 
 boolean file_location_is_valid(
@@ -207,7 +201,7 @@ long file_compare_last_modification_dates(
 	return csmemcmp(date0, date1, sizeof(*date0));
 }
 
-#ifndef HALO_N3DS
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code has this */
 void find_files_start(
 	unsigned long flags,
 	struct file_reference const *directory)
@@ -246,7 +240,6 @@ void find_files_start(
 
 	return;
 }
-
 #endif
 
 void file_path_add_name(
@@ -396,7 +389,7 @@ void file_location_get_full_path(
 	return;
 }
 
-#ifndef HALO_N3DS
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code has this */
 boolean file_create(
 	struct file_reference *file)
 {
@@ -432,7 +425,9 @@ boolean file_create(
 
 	return FALSE;
 }
+#endif
 
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code has this */
 boolean file_delete(
 	struct file_reference *file)
 {
@@ -465,7 +460,9 @@ boolean file_delete(
 
 	return FALSE;
 }
+#endif
 
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code has this */
 boolean file_rename(
 	struct file_reference *file,
 	const char *new_name)
@@ -489,7 +486,9 @@ boolean file_rename(
 
 	return result;
 }
+#endif
 
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code has this */
 boolean file_open(
 	struct file_reference *file,
 	unsigned long flags)
@@ -540,7 +539,9 @@ boolean file_open(
 
 	return result;
 }
+#endif
 
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code has this */
 boolean file_get_last_modification_date(
 	struct file_reference *file,
 	struct file_last_modification_date *date)
@@ -567,7 +568,9 @@ boolean file_get_last_modification_date(
 
 	return TRUE;
 }
+#endif
 
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code has this */
 boolean file_get_size(
 	struct file_reference const *file,
 	unsigned long *size)
@@ -597,7 +600,9 @@ boolean file_get_size(
 
 	return result;
 }
+#endif
 
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code has this */
 boolean find_files_next(
 	struct file_reference *file,
 	struct file_last_modification_date *date)
@@ -710,7 +715,9 @@ finished:
 	find_files_globals.depth = depth;
 	return result;
 }
+#endif
 
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code has this */
 boolean file_exists(
 	const struct file_reference *file)
 {
@@ -731,7 +738,9 @@ boolean file_exists(
 
 	return result;
 }
+#endif
 
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code has this */
 boolean file_read_only(
 	struct file_reference *file)
 {
@@ -747,7 +756,9 @@ boolean file_read_only(
 
 	return read_only;
 }
+#endif
 
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code has this */
 boolean file_close(
 	struct file_reference *file)
 {
@@ -770,7 +781,9 @@ boolean file_close(
 
 	return result;
 }
+#endif
 
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code has this */
 unsigned long file_get_position(
 	const struct file_reference *file)
 {
@@ -790,7 +803,9 @@ unsigned long file_get_position(
 
 	return position;
 }
+#endif
 
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code has this */
 boolean file_set_position(
 	const struct file_reference *file,
 	unsigned long position)
@@ -812,7 +827,9 @@ boolean file_set_position(
 
 	return result;
 }
+#endif
 
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code has this */
 unsigned long file_get_eof(
 	const struct file_reference *file)
 {
@@ -832,7 +849,9 @@ unsigned long file_get_eof(
 
 	return size;
 }
+#endif
 
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code has this */
 boolean file_set_eof(
 	const struct file_reference *file,
 	unsigned long position)
@@ -858,7 +877,9 @@ boolean file_set_eof(
 
 	return result;
 }
+#endif
 
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code has this */
 boolean file_read(
 	struct file_reference const *file,
 	unsigned long count,
@@ -893,7 +914,9 @@ boolean file_read(
 
 	return result;
 }
+#endif
 
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code has this */
 boolean file_write(
 	struct file_reference const *file,
 	unsigned long count,
@@ -921,7 +944,9 @@ boolean file_write(
 
 	return result;
 }
+#endif
 
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code has this */
 boolean file_read_from_position(
 	struct file_reference const *file,
 	unsigned long position,
@@ -930,7 +955,9 @@ boolean file_read_from_position(
 {
 	return file_set_position(file, position) && file_read(file, count, buffer);
 }
+#endif
 
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code has this */
 boolean file_write_to_position(
 	struct file_reference const *file,
 	unsigned long position,
@@ -939,9 +966,11 @@ boolean file_write_to_position(
 {
 	return file_set_position(file, position) && file_write(file, count, buffer);
 }
+#endif
 
 /* ---------- private code */
 
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code has this */
 static void file_error(
 	struct file_reference const *file,
 	const char *function_name)
@@ -956,4 +985,4 @@ static void file_error(
 
 	return;
 }
-#endif /* !HALO_N3DS: I/O is supplied by engine_files.c. */
+#endif

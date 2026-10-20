@@ -81,7 +81,10 @@ static void render_sky_data_error(
 
 /* ---------- globals */
 
-static real render_sky_globals[MAXIMUM_SKIES_PER_SCENARIO] = {0.f};
+#ifndef HALO_N3DS /* port: (Halo3DS) its native sky reads them */
+static
+#endif
+real render_sky_globals[MAXIMUM_SKIES_PER_SCENARIO] = {0.f};
 
 /* ---------- public code */
 

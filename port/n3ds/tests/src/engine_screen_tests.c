@@ -72,11 +72,11 @@ int halo_engine_screen_tests(void)
         parameters.map_texture_scale[0].i=parameters.map_texture_scale[0].j=1.f/80.f; parameters.map_offset[0]=&uv_offset;
         rectangle(vertices,116,114,80,80,0,0xffffffff);
         rasterizer_psuedo_dynamic_screen_quad_draw(&parameters,vertices);
-        boolean enabled=rasterizer_debug_options.dynamic_screen_geometry;
-        rasterizer_debug_options.dynamic_screen_geometry=FALSE;
+        boolean enabled=rasterizer_debug_options.draw_dynamic_screen_geometry;
+        rasterizer_debug_options.draw_dynamic_screen_geometry=FALSE;
         rectangle(vertices,216,114,80,80,0,0xffffffff);
         rasterizer_psuedo_dynamic_screen_quad_draw(&parameters,vertices);
-        rasterizer_debug_options.dynamic_screen_geometry=enabled;
+        rasterizer_debug_options.draw_dynamic_screen_geometry=enabled;
         rasterizer_window_end(); rasterizer_windows_end(); rasterizer_frame_end(); rasterizer_present(NULL,NULL);
     }
     CHECK(!n3ds_gpu_screen_quad_capture());

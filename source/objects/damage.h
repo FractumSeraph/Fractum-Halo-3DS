@@ -123,8 +123,6 @@ void object_cause_damage(
 	short material_index,
 	real_vector3d const *object_normal);
 
-void render_debug_object_damage(void);
-
 /* ---------- globals */
 
 /* ---------- public code */

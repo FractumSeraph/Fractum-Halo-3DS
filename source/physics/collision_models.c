@@ -164,7 +164,7 @@ boolean collision_model_test_point(
 	return FALSE;
 }
 
-static collision_timestamp collision_model_test_vector_time;
+static LARGE_INTEGER collision_model_test_vector_time;
 
 boolean collision_model_test_vector(
 		struct collision_model_instance const *instance,

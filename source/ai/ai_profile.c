@@ -255,15 +255,6 @@ void ai_profile_update(
 	short index;
 	struct ai_meter_definition const *definition = global_ai_meter_definitions;
 	struct ai_meter *meter = ai_profile.meters;
-#if defined(HALO_N3DS_FRONTEND)
-    /* No on-screen AI profiler in the playable port. Do not sample actors
-     * and swarms just to update an invisible debug graph. Reset accumulated
-     * counters each tick so their short storage cannot wrap over long play. */
-    if(!ai_profile.show) {
-        for(index=0;index<NUMBER_OF_AI_METERS;++index) meter[index].accumulator=0;
-        return;
-    }
-#endif
 
 	for (index = 0; index < NUMBER_OF_AI_METERS; index++, definition++, meter++)
 	{

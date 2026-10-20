@@ -245,23 +245,25 @@ boolean rasterizer_screen_quad_alpha_weighted = FALSE;
 
 /* ---------- public code */
 
-#ifndef HALO_N3DS /* Native HUD state owners live in engine_hud.c. */
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code has this */
 void _rasterizer_hud_begin(
 	void)
 {
 	rasterizer_profile_begin(_rasterizer_profile_hud);
 	return;
 }
+#endif
 
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code has this */
 void _rasterizer_hud_end(
 	void)
 {
 	rasterizer_profile_end(_rasterizer_profile_hud);
 	return;
 }
-
 #endif
-#ifndef HALO_N3DS /* Native screen quads are in engine_screen.c. */
+
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code has this */
 void _rasterizer_psuedo_dynamic_screen_quad_draw(
 	struct rasterizer_dynamic_screen_geometry_parameters *parameters,
 	struct dynamic_screen_vertex *vertices)
@@ -674,7 +676,6 @@ void _rasterizer_psuedo_dynamic_screen_quad_draw(
 
 	return;
 }
-
 #endif
 
 void _rasterizer_dynamic_unlit_geometry_draw(

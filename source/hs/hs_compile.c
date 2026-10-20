@@ -408,8 +408,8 @@ symbols in this file:
 
 /* ---------- headers */
 
+#include <ctype.h> /* port: (the 3DS) tolower, isdigit */
 #include "cseries/cseries.h"
-#include <ctype.h>
 #include "cache/cache_files.h"
 #include "ai/ai_script.h"
 #include "hs/hs.h"
@@ -1498,7 +1498,7 @@ static boolean hs_parse_enum(
 	long expression_index)
 {
 	struct hs_syntax_node *expression = hs_syntax_get(expression_index);
-	struct hs_enum_definition const *enum_definition = &hs_enum_table[expression->type-_hs_type_enum_game_difficulty];
+	struct hs_enum_definition *enum_definition = &hs_enum_table[expression->type-_hs_type_enum_game_difficulty];
 	short value_index;
 	boolean result = TRUE;
 
@@ -2400,7 +2400,7 @@ static boolean hs_parse_nonprimitive(
 				}
 				else
 				{
-					struct hs_function_definition const *function = hs_function_get(expression->function_index);
+					struct hs_function_definition *function = hs_function_get(expression->function_index);
 
 					if (expression->type && !hs_can_cast(function->return_type, expression->type))
 					{
@@ -3163,7 +3163,7 @@ boolean hs_macro_function_parse(
 	long expression_index)
 {
 	boolean result = TRUE;
-	struct hs_function_definition const *definition = hs_function_get(function_index);
+	struct hs_function_definition *definition = hs_function_get(function_index);
 	struct hs_syntax_node *expression = hs_syntax_get(expression_index);
 	long argument_expression_index = hs_syntax_get(expression->data)->next_node_index;
 	short parameter_index;

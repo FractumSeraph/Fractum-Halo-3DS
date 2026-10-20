@@ -40,9 +40,6 @@ symbols in this file:
 
 #include "camera_scripting.h"
 #include "director.h"
-#include "dead_camera.h"
-#include "first_person_camera.h"
-#include "observer.h"
 
 #include "cseries/cseries.h"
 #include "cseries/errors.h"
@@ -69,6 +66,49 @@ enum
 
 /* ---------- structures */
 
+struct camera_control
+{
+	long unknown0;
+	real seconds_elapsed;
+};
+
+struct dead_camera
+{
+	real_point3d position;
+	real_euler_angles2d facing;
+	real distance;
+	real field_of_view;
+	real timer;
+	long player_index;
+	long current_player_index;
+	long unit_index;
+	real switch_timer;
+};
+
+struct scripted_camera_command
+{
+	long flags;
+	real_point3d position;
+	real_vector3d offset;
+	real depth;
+	real field_of_view;
+	real_vector3d forward;
+	real_vector3d up;
+	real_vector3d velocity;
+	real timer;
+	byte position_flags;
+	byte offset_flags;
+	byte distance_flags;
+	byte field_of_view_flags;
+	byte orientation_flags;
+	byte pad51[3];
+	real position_timer;
+	real offset_timer;
+	real distance_timer;
+	real field_of_view_timer;
+	real orientation_timer;
+};
+
 struct scripted_camera_globals
 {
 	boolean enabled;
@@ -86,6 +126,8 @@ struct scripted_camera_globals
 	short animation_index;
 };
 
+typedef char scripted_camera_command_size_assert[
+	sizeof(struct scripted_camera_command) == 0x68 ? 1 : -1];
 typedef char scripted_camera_globals_size_assert[
 	sizeof(struct scripted_camera_globals) == 0x40 ? 1 : -1];
 
@@ -344,7 +386,7 @@ short scripted_camera_time(
 void scripted_camera_update(
 	struct dead_camera *camera,
 	struct camera_control const *controls,
-	struct observer_command *result)
+	struct scripted_camera_command *result)
 {
 	real_point3d focus_position;
 	real speed;
@@ -413,9 +455,9 @@ void scripted_camera_update(
 			cosine_value = cosine(angle);
 			rotated_offset_i = offset.i * cosine_value;
 			rotated_offset_i += sine_value * offset.j;
-			result->focus_offset.i = rotated_offset_i;
-			result->focus_offset.j = sine_value * offset.i - cosine_value * offset.j;
-			result->focus_offset.k = offset.k;
+			result->offset.i = rotated_offset_i;
+			result->offset.j = sine_value * offset.i - cosine_value * offset.j;
+			result->offset.k = offset.k;
 			result->flags |= FLAG(0);
 		}
 		else
@@ -449,8 +491,8 @@ void scripted_camera_update(
 			result->forward = root_matrix.forward;
 			result->up = root_matrix.up;
 			result->field_of_view = DEGREES_TO_RADIANS(70.f);
-			result->focus_position = root_matrix.position;
-			result->focus_distance = 0.f;
+			result->position = root_matrix.position;
+			result->depth = 0.f;
 			result->timer = 0.f;
 			result->flags |= FLAG(0);
 		}
@@ -461,10 +503,6 @@ void scripted_camera_update(
 			camera_script_globals.relative_object_index,
 			_object_mask_unit))
 		{
-			struct camera_command prefix;
-
-			/* The first-person helper updates only the 0x4C-byte prefix. */
-			csmemcpy(&prefix, result, sizeof(prefix));
 			first_person_camera_fake(
 				camera_script_globals.relative_object_index,
 				result);
@@ -498,14 +536,14 @@ void scripted_camera_update(
 		0x172,
 		!(result->flags & FLAG(0)) ||
 		(valid_real_vector3d_axes2(&result->forward, &result->up) &&
-			valid_real(result->focus_position.x) && result->focus_position.x>=-5000.f && result->focus_position.x<=5000.f &&
-			valid_real(result->focus_position.y) && result->focus_position.y>=-5000.f && result->focus_position.y<=5000.f &&
-			valid_real(result->focus_position.z) && result->focus_position.z>=-5000.f && result->focus_position.z<=5000.f &&
-			valid_real(result->focus_offset.i) && result->focus_offset.i>=-5000.f && result->focus_offset.i<=5000.f &&
-			valid_real(result->focus_offset.j) && result->focus_offset.j>=-5000.f && result->focus_offset.j<=5000.f &&
-			valid_real(result->focus_offset.k) && result->focus_offset.k>=-5000.f && result->focus_offset.k<=5000.f &&
-			valid_real_vector3d(&result->focus_velocity) &&
-			valid_real(result->focus_distance) && result->focus_distance>=0.f && result->focus_distance<=5000.f &&
+			valid_real(result->position.x) && result->position.x>=-5000.f && result->position.x<=5000.f &&
+			valid_real(result->position.y) && result->position.y>=-5000.f && result->position.y<=5000.f &&
+			valid_real(result->position.z) && result->position.z>=-5000.f && result->position.z<=5000.f &&
+			valid_real(result->offset.i) && result->offset.i>=-5000.f && result->offset.i<=5000.f &&
+			valid_real(result->offset.j) && result->offset.j>=-5000.f && result->offset.j<=5000.f &&
+			valid_real(result->offset.k) && result->offset.k>=-5000.f && result->offset.k<=5000.f &&
+			valid_real_vector3d(&result->velocity) &&
+			valid_real(result->depth) && result->depth>=0.f && result->depth<=5000.f &&
 			valid_real(result->field_of_view) && result->field_of_view>=0.001f && result->field_of_view<=_pi / 2.f &&
 			valid_real(result->timer) && result->timer>=0.f && result->timer<=3600.f),
 		csprintf(
@@ -517,16 +555,16 @@ void scripted_camera_update(
 			result->up.i,
 			result->up.j,
 			result->up.k,
-			result->focus_position.x,
-			result->focus_position.y,
-			result->focus_position.z,
-			result->focus_offset.i,
-			result->focus_offset.j,
-			result->focus_offset.k,
-			result->focus_distance,
-			result->focus_velocity.i,
-			result->focus_velocity.j,
-			result->focus_velocity.k,
+			result->position.x,
+			result->position.y,
+			result->position.z,
+			result->offset.i,
+			result->offset.j,
+			result->offset.k,
+			result->depth,
+			result->velocity.i,
+			result->velocity.j,
+			result->velocity.k,
 			result->field_of_view,
 			result->timer,
 			result->flags));

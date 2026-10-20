@@ -7,7 +7,7 @@ int n3ds_checkpoint_hs_visit(n3ds_checkpoint_visitor visit)
         int absolute=index&65535;
         short designator=absolute<hs_external_global_count?(short)(absolute|0x8000):(short)(absolute-hs_external_global_count);
         struct hs_global_datum *g=datum_get(hs_global_data,index);
-        if(hs_global_get_type(designator)==_hs_type_string && !visit(&g->value.string,0)) return 0;
+        if(hs_global_get_type(designator)==_hs_type_string && !visit((void *)&g->value,0) /* (the fork's value: a long holding the string's pointer) */) return 0;
     }
     for(index=data_next_index(hs_thread_data,NONE);index!=NONE;index=data_next_index(hs_thread_data,index)) {
         struct hs_thread_datum *t=hs_thread_get(index);

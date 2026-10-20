@@ -32,24 +32,6 @@ enum
 
 /* ---------- structures */
 
-struct collision_leaf
-{
-	word flags;
-	short bsp2d_reference_count;
-	long first_bsp2d_reference_index;
-};
-
-struct bsp2d_reference
-{
-	long plane_designator;
-	long root_index;
-};
-
-typedef char collision_leaf_size_assert[
-	sizeof(struct collision_leaf) == 0x08 ? 1 : -1];
-typedef char bsp2d_reference_size_assert[
-	sizeof(struct bsp2d_reference) == 0x08 ? 1 : -1];
-
 struct collision_surface
 {
 	long plane_designator;

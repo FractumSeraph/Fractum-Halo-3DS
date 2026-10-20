@@ -152,7 +152,6 @@ symbols in this file:
 /* ---------- headers */
 
 #include "cseries.h"
-#include "cseries/sort.h"
 #include "cseries/errors.h"
 #include "cseries/sort.h"
 

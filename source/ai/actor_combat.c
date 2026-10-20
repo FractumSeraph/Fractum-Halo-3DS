@@ -1464,9 +1464,10 @@ static void actor_start_burst(
 		actor->control.burst_initial_position = target;
 		actor->control.burst_relative_position = burst_relative_position;
 		actor->control.burst_adjustment = burst_adjustment;
-		actor->control.burst_target.x = actor->control.burst_initial_position.x + actor->control.burst_relative_position.i;
-		actor->control.burst_target.y = actor->control.burst_initial_position.y + actor->control.burst_relative_position.j;
-		actor->control.burst_target.z = actor->control.burst_initial_position.z + actor->control.burst_relative_position.k;
+		add_vectors3d(
+			&actor->control.burst_initial_position,
+			&actor->control.burst_relative_position,
+			&actor->control.burst_target);
 	}
 
 	if (actor->state.combat_status >= _actor_combat_status_visible)
@@ -2227,9 +2228,10 @@ void actor_combat_update(
 					&actor->control.burst_adjustment,
 					burst_relative_position,
 					burst_relative_position);
-				actor->control.burst_target.x = burst_relative_position->i + actor->control.burst_origin.x;
-				actor->control.burst_target.y = burst_relative_position->j + actor->control.burst_origin.y;
-				actor->control.burst_target.z = burst_relative_position->k + actor->control.burst_origin.z;
+				add_vectors3d(
+					burst_relative_position,
+					&actor->control.burst_origin,
+					&actor->control.burst_target);
 			}
 
 			if (actor->input.vehicle_index != NONE)

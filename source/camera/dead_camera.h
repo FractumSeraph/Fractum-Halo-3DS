@@ -11,7 +11,6 @@ header included in hcex build.
 /* ---------- headers */
 
 #include "cseries/cseries.h"
-#include "camera_control.h"
 #include "math/real_math.h"
 
 /* ---------- constants */
@@ -36,7 +35,8 @@ struct dead_camera
 typedef char dead_camera_size_assert[
 	sizeof(struct dead_camera) == 0x30 ? 1 : -1];
 
-struct observer_command;
+struct camera_control;
+struct dead_camera_command;
 
 /* ---------- prototypes/DEAD_CAMERA.C */
 
@@ -47,7 +47,7 @@ void dead_camera_new(
 void dead_camera_update(
 	struct dead_camera *camera,
 	struct camera_control const *controls,
-	struct observer_command *result);
+	struct dead_camera_command *result);
 
 /* ---------- globals */
 

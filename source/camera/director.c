@@ -118,7 +118,6 @@ symbols in this file:
 /* ---------- headers */
 
 #include "director.h"
-#include "camera_control.h"
 
 #include "camera_scripting.h"
 #include "dead_camera.h"
@@ -149,6 +148,17 @@ boolean network_game_distributed_client(void);
 /* ---------- macros */
 
 /* ---------- structures */
+
+struct camera_control
+{
+	short local_player_index;
+	boolean active;
+	byte pad3;
+	real seconds_elapsed;
+	real_euler_angles3d facing_delta;
+	real_vector3d position_delta;
+	real wheel_delta;
+};
 
 struct mouse_state
 {

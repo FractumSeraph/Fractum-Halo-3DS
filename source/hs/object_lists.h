@@ -55,8 +55,6 @@ short object_list_count(
 extern struct data_array *object_list_header_data;
 extern struct data_array *object_list_data;
 
-void object_list_gc(void);
-
 /* ---------- public code */
 
 #ifdef HALO_64BIT

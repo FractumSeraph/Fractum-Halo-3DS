@@ -925,10 +925,10 @@ void rasterizer_lens_flares_submit_occlusion_tests(
 
 	return;
 }
-
 #ifdef HALO_N3DS
 #include "engine_native_flares.inl"
 #endif
+
 void rasterizer_lens_flares_draw(
 	void)
 {

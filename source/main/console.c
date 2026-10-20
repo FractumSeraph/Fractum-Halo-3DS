@@ -51,9 +51,9 @@ symbols in this file:
 
 /* ---------- headers */
 
+#include <ctype.h> /* port: (the 3DS) tolower, isdigit */
 #include "cseries.h"
 #include "console.h"
-#include <ctype.h>
 
 #include "cseries/errors.h"
 #include "cseries/profile.h"
@@ -305,7 +305,7 @@ static char *console_player_command_name(
 static void console_complete(
 	void)
 {
-	char const *matching_items[256];
+	char *matching_items[256];
 	char print_buffer[1024];
 	/* (port: the players' names the ban and kick commands complete) */
 	static char player_names[64][NETWORK_GAME_SERVER_NAME_TEXT_SIZE];

@@ -241,7 +241,6 @@ symbols in this file:
 #include "ai_profile.h"
 #include "encounters.h"
 #include "props.h"
-#include "path_structure_bsp.h"
 
 #include "game/game.h"
 #include "game/game_globals.h"
@@ -3452,7 +3451,7 @@ boolean actor_action_try_to_evade(
 				short evade_direction = _actor_evade_random;
 				real_vector2d alignment_vector = *attractor_vector;
 				boolean is_ledge;
-				struct path_collision_result collision_result;
+				byte collision_result[0x1C];
 
 				normalize2d(&alignment_vector);
 				if (actor_move_try_evasion_direction(
@@ -3462,7 +3461,7 @@ boolean actor_action_try_to_evade(
 					&evade_direction,
 					0.0f,
 					&is_ledge,
-					&collision_result))
+					collision_result))
 				{
 					long animation;
 
@@ -3506,7 +3505,7 @@ boolean actor_action_try_to_dive(
 	struct actor_debug_info *debug_info =
 		&actor_debug_array[DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index)];
 	boolean dive_off_ledge = FALSE;
-	struct path_collision_result collision_result;
+	byte collision_result[0x1C];
 	real_vector2d evade_vector;
 	real_vector2d left_vector;
 	real animation_desire[4];
@@ -3526,7 +3525,7 @@ boolean actor_action_try_to_dive(
 			&escape_direction,
 			maximum_ledge_height,
 			&dive_off_ledge,
-			&collision_result))
+			collision_result))
 	{
 		switch (escape_direction)
 		{
@@ -4031,7 +4030,7 @@ static boolean actor_action_find_escape_from_danger(
 		real_vector3d right_vector;
 		real_point3d left_position;
 		real_point3d right_position;
-		struct path_collision_result collision_result;
+		byte collision_result[0x1C];
 		boolean left_is_ledge;
 		boolean right_is_ledge;
 		boolean left_found;
@@ -4098,7 +4097,7 @@ static boolean actor_action_find_escape_from_danger(
 			evade_distance,
 			ledge_avoidance_distance,
 			&left_is_ledge,
-			&collision_result);
+			collision_result);
 		left_distance = point_to_line_distance3d(
 			&left_position,
 			danger_position,
@@ -4112,7 +4111,7 @@ static boolean actor_action_find_escape_from_danger(
 			evade_distance,
 			ledge_avoidance_distance,
 			&right_is_ledge,
-			&collision_result);
+			collision_result);
 		right_distance = point_to_line_distance3d(
 			&right_position,
 			danger_position,

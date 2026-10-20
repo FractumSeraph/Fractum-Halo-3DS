@@ -115,10 +115,6 @@ symbols in this file:
 #include "cseries.h"
 #include "collision_debug.h"
 #include "collision_usage.h"
-#ifdef HALO_N3DS
-long long n3ds_engine_ticks(void);
-long long n3ds_engine_tick_frequency(void);
-#endif
 #include "editor/editor_stubs.h"
 #include "game/game.h"
 #include "interface/interface.h"
@@ -208,13 +204,7 @@ char const *global_collision_user_names[] =
 	NULL
 };
 
-#ifdef HALO_N3DS
-/* The Xbox collision debug overlay is not displayed by the native frontend.
- * Detailed collection remains opt-in; gameplay collision queries are intact. */
-boolean global_collision_log_enable = FALSE;
-#else
 boolean global_collision_log_enable = TRUE;
-#endif
 short collision_usage_current_period = NONE;
 
 boolean collision_log_render_enable = FALSE;
@@ -277,10 +267,7 @@ static void collision_log_store_period(
 	match_assert("c:\\halo\\SOURCE\\physics\\collision_usage.c", 167, collision_usage_current_period == NONE);
 	match_assert("c:\\halo\\SOURCE\\physics\\collision_usage.c", 168, (time_period >= 0) && (time_period < NUMBER_OF_COLLISION_TIME_PERIODS));
 
-#ifdef HALO_N3DS
-	if(global_collision_log_enable)
-#endif
-		memset(&collision_usage_current, 0, sizeof(collision_usage_current));
+	memset(&collision_usage_current, 0, sizeof(collision_usage_current));
 	collision_usage_current_period = time_period;
 
 	return;
@@ -310,10 +297,7 @@ void collision_log_end_period(
 
 	collision_usage_current.reset_upon_next_use = TRUE;
 
-#ifdef HALO_N3DS
-	if(global_collision_log_enable)
-#endif
-		collision_usage_buffer[collision_usage_current_period] = collision_usage_current;
+	collision_usage_buffer[collision_usage_current_period] = collision_usage_current;
 	collision_usage_current_period = NONE;
 
 	return;
@@ -325,13 +309,9 @@ static void collision_log_format_usage(
 {
 	if (collision_log_time)
 	{
-		collision_timestamp frequency;
+		LARGE_INTEGER frequency;
 
-		#ifdef HALO_N3DS
-		frequency.QuadPart = n3ds_engine_tick_frequency();
-#else
 		QueryPerformanceFrequency(&frequency);
-#endif
 		sprintf(
 			buffer,
 			"%d/%.2f",
@@ -592,7 +572,7 @@ static short collision_log_get_current_user(
 }
 
 void collision_log_start_time(
-	collision_timestamp *start_time)
+	LARGE_INTEGER *start_time)
 {
 	/* port: the clock is read only when the times are shown
 	(collision_log_time): this runs twice for every collision test, and a
@@ -602,11 +582,7 @@ void collision_log_start_time(
 		start_time->QuadPart = 0;
 		return;
 	}
-#ifdef HALO_N3DS
-	start_time->QuadPart = n3ds_engine_ticks();
-#else
 	QueryPerformanceCounter(start_time);
-#endif
 
 	return;
 }
@@ -615,17 +591,9 @@ void collision_log_end_time(
 	short collision_function,
 	__int64 start_time)
 {
-	collision_timestamp end_time;
+	LARGE_INTEGER end_time;
 	short user;
-#ifdef HALO_N3DS
-	if(!global_collision_log_enable) return;
-#endif
 
-	#ifdef HALO_N3DS
-	end_time.QuadPart = n3ds_engine_ticks();
-#else
-	QueryPerformanceCounter(&end_time);
-#endif
 	user = collision_log_get_current_user(collision_function);
 	/* port: not timed (collision_log_start_time) */
 	if (user != NONE && start_time)
@@ -648,9 +616,6 @@ void collision_log_usage(
 	short collision_function)
 {
 	short user;
-#ifdef HALO_N3DS
-	if(!global_collision_log_enable) return;
-#endif
 
 	user = collision_log_get_current_user(collision_function);
 	if (user != NONE)

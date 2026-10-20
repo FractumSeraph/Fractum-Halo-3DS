@@ -11,7 +11,6 @@ header included in hcex build.
 /* ---------- headers */
 
 #include "cseries/cseries.h"
-#include "camera_control.h"
 
 /* ---------- constants */
 
@@ -21,8 +20,9 @@ header included in hcex build.
 
 /* ---------- prototypes/CAMERA_SCRIPTING.C */
 
+struct camera_control;
 struct dead_camera;
-struct observer_command;
+struct scripted_camera_command;
 union real_point3d;
 union real_vector3d;
 
@@ -58,7 +58,7 @@ long scripted_camera_object_relative_to(
 void scripted_camera_update(
 	struct dead_camera *camera,
 	struct camera_control const *controls,
-	struct observer_command *result);
+	struct scripted_camera_command *result);
 
 /* ---------- globals */
 

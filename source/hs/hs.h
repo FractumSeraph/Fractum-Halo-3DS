@@ -238,12 +238,10 @@ short hs_tokens_enumerate(
 	char const **results,
 	short maximum_count);
 
-void hs_node_gc(void);
-
 boolean hs_can_cast(
 	short actual_type,
 	short desired_type);
-struct hs_function_definition const *hs_function_get(
+struct hs_function_definition *hs_function_get(
 	short function_index);
 struct hs_external_global_definition *hs_global_external_get(
 	short global_index);

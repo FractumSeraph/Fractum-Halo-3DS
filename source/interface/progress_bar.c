@@ -1562,7 +1562,7 @@ void tgaLoad(
 	return;
 }
 
-#ifndef HALO_N3DS /* Native lifecycle/rendering is provided by engine_progress.c. */
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code has this */
 void progress_bar_initialize(
 	void)
 {
@@ -1581,13 +1581,17 @@ void progress_bar_initialize(
 
 	return;
 }
+#endif
 
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code has this */
 void progress_bar_dispose(
 	void)
 {
 	return;
 }
+#endif
 
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code has this */
 void progress_bar_begin(
 	boolean skip_frame_capture)
 {
@@ -1597,7 +1601,9 @@ void progress_bar_begin(
 
 	return;
 }
+#endif
 
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code has this */
 void progress_bar_end(
 	void)
 {
@@ -1606,13 +1612,17 @@ void progress_bar_end(
 
 	return;
 }
+#endif
 
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code has this */
 boolean progress_bar_is_active(
 	void)
 {
 	return progress_bar_mode.active;
 }
+#endif
 
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code has this */
 void progress_bar_enable(
 	boolean enabled)
 {
@@ -1620,7 +1630,6 @@ void progress_bar_enable(
 
 	return;
 }
-
 #endif
 
 void SetRenderStateSmart(
@@ -1781,7 +1790,7 @@ void SetTextureStageStateSmart(
 	return;
 }
 
-#ifndef HALO_N3DS
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code has this */
 void progress_bar_eachframe(
 	void)
 {
@@ -1801,6 +1810,7 @@ void progress_bar_eachframe(
 
 	return;
 }
+#endif
 
 /* port: the textures and sounds the screen made, let go of (as
 progress_bar_eachframe did once a load was over) */
@@ -1858,6 +1868,7 @@ void progress_bar_download_end(
 	return;
 }
 
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code has this */
 void progress_bar_display(
 	real progress)
 {
@@ -1881,10 +1892,9 @@ void progress_bar_display(
 
 	return;
 }
+#endif
 
 /* ---------- private code */
-
-#endif
 
 void to_screen(
 	real x,
@@ -2409,7 +2419,7 @@ static void progress_bar_load_loading_texture(
 	return;
 }
 
-#ifndef HALO_N3DS
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code has this */
 boolean progress_bar_is_stuff_ready(
 	void)
 {
@@ -2419,7 +2429,6 @@ boolean progress_bar_is_stuff_ready(
 
 	return result;
 }
-
 #endif
 
 void gen_cloud_coord(

@@ -127,8 +127,6 @@ void structure_decals_update(
 	unsigned long *new_combined_pvs,
 	short cluster_count);
 
-void render_debug_fog_planes(void);
-
 /* ---------- globals */
 
 /* ---------- public code */

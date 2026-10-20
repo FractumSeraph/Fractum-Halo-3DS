@@ -3362,11 +3362,7 @@ static short source_audible(
 			}
 		}
 
-		/* Out-of-range sources cannot be heard; avoid tracing their path through
-		 * world collision before rejecting them below. Recompute obstruction as
-		 * soon as a source enters range, so audible sound behavior is unchanged. */
-		if (nearest_listener_index != NONE &&
-			nearest_distance_squared <= maximum_distance * maximum_distance)
+		if (nearest_listener_index != NONE)
 		{
 			compute_sound_obstruction(
 				nearest_listener_index,

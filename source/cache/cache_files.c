@@ -129,6 +129,10 @@ symbols in this file:
 #include "tag_files/files.h"
 #include "cache_files.h"
 #include "cache_file_format.h"
+#ifdef HALO_N3DS
+#include "cache_reader.h"
+#include "engine_cache.h"
+#endif
 #include "physical_memory_map.h"
 #include "sound_cache.h"
 #include "texture_cache.h"
@@ -515,6 +519,21 @@ Xbox's (physical_memory_map.c) */
 void *cache_files_tag_cache(
 	unsigned long *size)
 {
+#ifdef HALO_N3DS
+	/* port: (Halo3DS) the tags where its loader put them, relocated in place
+	(port/n3ds/src/engine_cache.c) */
+	{
+		const struct n3ds_cache_view *view = n3ds_engine_cache_view(0);
+
+		if (view && view->tags)
+		{
+			*size = view->tag_bytes;
+			return view->tags;
+		}
+		*size = 0;
+		return NULL;
+	}
+#endif
 #ifdef HALO_CUSTOM_EDITION
 	if (cache_file_is_ce)
 	{
@@ -1056,6 +1075,27 @@ boolean cache_files_map_plays_multiplayer(
 	if (!map_name || !map_name[0])
 		return TRUE;
 	snprintf(path, sizeof(path), "%s%s.map", cache_files_map_directory(), tag_name_strip_path(map_name));
+#ifdef HALO_N3DS
+	/* port: (the 3DS) through the engine's files, Halo3DS's SD card backend */
+	(void)file;
+	{
+		struct file_reference reference;
+
+		if (file_reference_create_from_path(&reference, path, FALSE) &&
+			file_open(&reference, FLAG(_permission_read_bit)))
+		{
+			if (file_read(&reference, sizeof(header), &header) &&
+				cache_file_header_verify(&header, path, FALSE))
+			{
+				csstrncpy(build, header.build, 0x20);
+				build[0x1F] = 0;
+				result = cache_files_build_region(header.build) != NULL;
+			}
+			file_close(&reference);
+		}
+	}
+	return result;
+#endif
 	file = CreateFileA(path, GENERIC_READ, 0, NULL, OPEN_EXISTING, 0, NULL);
 	if (file != INVALID_HANDLE_VALUE)
 	{

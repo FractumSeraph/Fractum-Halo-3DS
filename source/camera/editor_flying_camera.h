@@ -11,7 +11,6 @@ header included in hcex build.
 /* ---------- headers */
 
 #include "cseries/cseries.h"
-#include "camera_control.h"
 #include "math/real_math.h"
 
 /* ---------- constants */
@@ -21,8 +20,8 @@ header included in hcex build.
 /* ---------- structures */
 
 struct flying_camera;
-struct camera_control;
-struct observer_command;
+struct flying_camera_action;
+struct camera_command;
 
 /* ---------- prototypes/EDITOR_FLYING_CAMERA.C */
 
@@ -31,8 +30,8 @@ void editor_camera_new(
 	short local_player_index);
 void editor_camera_update(
 	struct flying_camera *camera,
-	struct camera_control const *controls,
-	struct observer_command *result);
+	struct flying_camera_action const *controls,
+	struct camera_command *result);
 
 void editor_camera_get_focus(
 	real_point3d *position,

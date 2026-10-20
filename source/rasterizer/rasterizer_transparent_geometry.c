@@ -156,7 +156,10 @@ typedef char transparent_geometry_group_cortana_hack_offset_assert[
 
 #endif
 /* ---------- prototypes */
-static void rasterizer_sort_external(
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code calls it */
+static
+#endif
+void rasterizer_sort_external(
 	void);
 
 /* ---------- globals */
@@ -365,13 +368,6 @@ void *rasterizer_transparent_geometry_get_groups(
 	return transparent_geometry_groups;
 }
 
-/* Sorted iteration must start at the sorted index, not physical array slot 0. */
-struct transparent_geometry_group *rasterizer_transparent_geometry_first_group(void)
-{
-	return transparent_geometry_group_count ?
-		transparent_geometry_groups + transparent_geometry_group_sorted_indices[0] : NULL;
-}
-
 struct transparent_geometry_group *rasterizer_transparent_geometry_new_group(
 	void)
 {
@@ -542,7 +538,10 @@ static int __cdecl group_sorted_indices_cmpfn(
 	return comparison;
 }
 
-static void rasterizer_sort_external(
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code calls it */
+static
+#endif
+void rasterizer_sort_external(
 	void)
 {
 	short group_index;
@@ -664,3 +663,11 @@ void rasterizer_transparent_geometry_draw(
 
 	return;
 }
+
+#ifdef HALO_N3DS /* port: (Halo3DS) the first sorted group, for its native renderer */
+struct transparent_geometry_group *rasterizer_transparent_geometry_first_group(void)
+{
+	return transparent_geometry_group_count ?
+		transparent_geometry_groups + transparent_geometry_group_sorted_indices[0] : NULL;
+}
+#endif

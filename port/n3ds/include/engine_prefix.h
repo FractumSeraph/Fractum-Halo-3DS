@@ -21,6 +21,8 @@
 #define __except(filter) else if (0)
 #define __finally
 #define __leave
+/* (the fork's socket sets: room for its 128 machines, halo_port_limits.h) */
+#define FD_SETSIZE 256
 #include "platform.h"
 /* These declarations are also used by the upstream ARM port. Variadic calls
  * must see their real prototypes on ARM hard-float. */
@@ -28,4 +30,19 @@ union real_argb_color;
 void error(short priority, const char *format, ...);
 void console_printf(unsigned char clear, const char *format, ...);
 void terminal_printf(const union real_argb_color *color, const char *format, ...);
+/* The FractumSeraph/OpenCE fork's engine: its native builds' multiplayer
+ * session limits (which its servers' games take) and its per-platform
+ * capacities, the 3DS's the Xbox's (port/linux/include). */
+#include "halo_port_limits.h"
+#include "halo_port_capacity.h"
+/* (and its port functions that the engine calls, declared for it) */
+#include "halo_linux_source_fixups.h"
+/* (the C library's declarations the fork's engine takes from its prefix,
+ * halo_linux_prefix.h, and its timing functions, cseries_windows.h) */
+#include <string.h>
+#include <stdlib.h>
+unsigned long system_milliseconds(void);
+/* (structures the fork's engine renamed, under Halo3DS's names) */
+#define rasterizer_model_skinning render_skinning
+#include "engine_fork_exports.h"
 #endif

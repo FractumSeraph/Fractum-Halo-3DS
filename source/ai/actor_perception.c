@@ -247,7 +247,6 @@ symbols in this file:
 
 /* ---------- headers */
 
-#define HALO_N3DS_INLINE_DATUM 1
 #include "cseries.h"
 #include "cseries/errors.h"
 
@@ -1049,7 +1048,7 @@ struct actor_perception_definition_view
 
 /* ---------- prototypes */
 
-static int actor_perception_qsort_compare_optional_props(
+static long actor_perception_qsort_compare_optional_props(
 	void const *a,
 	void const *b);
 
@@ -6109,7 +6108,7 @@ boolean actor_situation_try_new_target(
 
 /* ---------- private code */
 
-static int actor_perception_qsort_compare_optional_props(
+static long actor_perception_qsort_compare_optional_props(
 	void const *a,
 	void const *b)
 {
@@ -6170,7 +6169,6 @@ static boolean actor_perception_assess_suicide_danger(
 
 	return result;
 }
-
 #ifdef HALO_N3DS
 /* Only defer background status refresh by one tick. Timers, danger handling,
  * target positions, movement, aiming and combat continue at the original rate. */
@@ -6427,19 +6425,8 @@ void actor_perception_update(
 				prop_timer >>= 1;
 			}
 
-            boolean service_due=TRUE;
-#ifdef HALO_N3DS
-            if(!prop_serviced && prop_timer>=actor->meta.highest_prop_timer) {
-                service_due=native_prop_service_due(actor_index,iterator.index,actor,prop,game_time_get());
-                if(!service_due)++native_perception_deferred;else ++native_perception_serviced;
-                if((native_perception_deferred+native_perception_serviced)%600==0) {
-                    extern void n3ds_log(const char *);char message[128];
-                    snprintf(message,sizeof(message),"PERCEPTION SCHEDULE: serviced=%u deferred=%u",native_perception_serviced,native_perception_deferred);n3ds_log(message);
-                }
-            }
-#endif
-            if (!prop_serviced && service_due &&
-                prop_timer >= actor->meta.highest_prop_timer)
+			if (!prop_serviced &&
+				prop_timer >= actor->meta.highest_prop_timer)
 			{
 				refresh_status = TRUE;
 				refresh_position = TRUE;

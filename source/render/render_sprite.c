@@ -198,8 +198,6 @@ struct tag_enum_definition global_sprite_render_orientations_enum =
 
 real const one_over_full_circle = 1.f / (2.f*_pi);
 
-static boolean build_sprite_vertex_allocation_failure_reported;
-
 #ifdef HALO_N3DS
 #include "engine_effect_coverage.inl"
 #endif
@@ -236,25 +234,20 @@ void build_sprites_begin(
 void build_sprites_end(
 	struct build_sprite_data *data)
 {
-	real one_over_sprite_count =
-#ifdef HALO_N3DS
-		data->sprite_count ? 1.f / data->sprite_count : 0.f;
-#else
-		1.f / data->sprite_count;
-#endif
+	real one_over_sprite_count = 1.f / data->sprite_count;
 	short group_index;
 
 	match_assert(
 		"c:\\halo\\SOURCE\\render\\render_sprite.c",
 		358,
 		TEST_FLAG(data->flags, _build_sprites_valid_bit));
-
 #ifdef HALO_N3DS
 	/* A group is allocated before clipping and coverage rejection. An empty
 	 * result has no centroid to transform, and must still release its lock. */
 	if (data->sprite_count)
 	{
 #endif
+
 	data->centroid.x *= one_over_sprite_count;
 	data->centroid.y *= one_over_sprite_count;
 	data->centroid.z *= one_over_sprite_count;
@@ -572,13 +565,8 @@ void build_sprite(
 					{
 						real coverage = render_frustum_cube_view_fraction(&render.frustum, &bounding_rectangle);
 
-#ifdef HALO_N3DS
-                        build_sprite_globals.screen_coverage += coverage;
-                        if (!native_effect_accept(data,&bounds))
-#else
 						build_sprite_globals.screen_coverage += coverage;
 						if (coverage>0.5f && build_sprite_globals.big_sprite_count++>10)
-#endif
 						{
 							group->sprite_count--;
 							data->sprite_count--;

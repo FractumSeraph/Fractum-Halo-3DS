@@ -1202,7 +1202,7 @@ struct transparent_geometry_group *_rasterizer_model_transparent_geometry_submit
     boolean no_queue;
     assert(models_active && model_active);
     if(sort) { sort->group_index=NONE; sort->previous_group_presorted_index_reference=NULL; sort->next_group_presorted_index_reference=NULL; }
-    if(!rasterizer_debug_options.models || !rasterizer_debug_options.model_transparents) return NULL;
+    if(!rasterizer_debug_options.draw_models || !rasterizer_debug_options.draw_model_transparent_geometry) return NULL;
     assert(shader && centroid && shader_type_is_valid_for_model(shader->base.type));
     assert(count>=0 && count<=65535);
     assert(parameters.effect.type==0 || parameters.effect.type==1 || (parameters.effect.type==2 && !parameters.effect.modifier_shader));
@@ -1246,7 +1246,7 @@ struct transparent_geometry_group *_rasterizer_model_transparent_geometry_submit
         sort->previous_group_presorted_index_reference=&group->previous_group_presorted_index;
         sort->next_group_presorted_index_reference=&group->next_group_presorted_index;
     }
-    if(rasterizer_debug_options.stats==2) {
+    if(rasterizer_debug_options.statistics_mode==2) {
         ++rasterizer_frame_statistics.transparent_model_submit_count;
         rasterizer_frame_statistics.transparent_model_triangle_count+=count;
         rasterizer_frame_statistics.transparent_model_maximum_triangle_count=MAX(count,rasterizer_frame_statistics.transparent_model_maximum_triangle_count);

@@ -9,11 +9,9 @@ header included in hcex build.
 #pragma once
 
 #include "cseries/cseries.h"
-#ifdef HALO_N3DS
-/* Profiling uses ARM11 ticks; no Xbox kernel types cross this boundary. */
-typedef struct { long long QuadPart; } collision_timestamp;
-#else
 #include <xtl.h>
+#ifdef HALO_N3DS
+/* port: (Halo3DS) its native code's name for a collision timer's stamp */
 typedef LARGE_INTEGER collision_timestamp;
 #endif
 
@@ -77,7 +75,7 @@ void collision_log_enable(
 void collision_log_render(
 	void);
 void collision_log_start_time(
-	collision_timestamp *start_time);
+	LARGE_INTEGER *start_time);
 void collision_log_end_time(
 	short collision_function,
 	__int64 end_time);

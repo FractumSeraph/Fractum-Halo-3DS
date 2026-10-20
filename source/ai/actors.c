@@ -280,7 +280,6 @@ symbols in this file:
 
 /* ---------- headers */
 
-#define HALO_N3DS_INLINE_DATUM 1
 #include "cseries.h"
 #include "actors.h"
 #include "actor_definitions.h"
@@ -4200,66 +4199,22 @@ static void actor_unit_control(
 	return;
 }
 
-#ifdef HALO_N3DS_CROWD_PROFILE
-extern long long n3ds_engine_ticks(void),n3ds_engine_tick_frequency(void);
-extern void n3ds_log(const char *);
-static int native_actor_sample;
-static unsigned int native_actor_count;
-static long long native_actor_cost[7];
-#define ACTOR_STAGE(i) do {if(native_actor_sample) {long long now=n3ds_engine_ticks();native_actor_cost[i]+=now-native_stamp;native_stamp=now;}} while(0)
-#else
-#define ACTOR_STAGE(i) ((void)0)
-#endif
-#ifdef HALO_N3DS
-static unsigned int native_decisions_deferred;
-static boolean native_decision_due(long index,const struct actor_datum *a)
-{
- static const struct actor_stimulus_data no_stimuli={0};
- extern boolean cinematic_in_progress(void);
- if(!((game_time_get()+DATUM_INDEX_TO_ABSOLUTE_INDEX(index))&1) || cinematic_in_progress() ||
-  a->meta.swarm || a->meta.dormant || a->state.command_list_index!=NONE || a->state.action_changed ||
-  a->target.target_prop_index!=NONE || a->situation.known_enemies || a->danger_zone.danger_type ||
-  a->input.vehicle_index!=NONE || a->input.in_midair || a->input.recent_body_damage>0 || a->input.recent_shield_damage>0 ||
-  a->input.burning_to_death || a->external_orders.conversation_index!=NONE || memcmp(&a->stimuli,&no_stimuli,sizeof(no_stimuli)))return TRUE;
- boolean found=FALSE;
- for(short local=local_player_get_next(NONE);local!=NONE;local=local_player_get_next(local)) {
-  struct player_datum *p=player_get(local_player_get_player_index(local));if(p->unit_index==NONE)continue;
-  struct unit_datum *u=unit_get(p->unit_index);found=TRUE;
-  if(distance_squared3d(&u->object.position,&a->input.position.body_position)<24.f*24.f)return TRUE;
- }
- return !found;
-}
-#endif
 static void actor_update(
 	long actor_index)
 {
 	struct actor_datum *actor = actor_get(actor_index);
 
-	#ifdef HALO_N3DS_CROWD_PROFILE
-    long long native_stamp=native_actor_sample?n3ds_engine_ticks():0;
-    if(native_actor_sample) ++native_actor_count;
-#endif
-    actor_update_begin(actor_index);
+	actor_update_begin(actor_index);
 	if (actor_general_update(actor_index))
 	{
 		actor_get_timeslice(actor_index);
 		actor_input_update(actor_index);
-        ACTOR_STAGE(0);
 		actor_perception_update(actor_index);
-        ACTOR_STAGE(1);
 		actor_situation_update(actor_index);
 		actor_emotion_update(actor_index);
-        ACTOR_STAGE(2);
-#ifdef HALO_N3DS
-        if(native_decision_due(actor_index,actor)) {
-#endif
-        actor_clear_orders(actor_index);
-        actor_decision_loop(actor_index);
-#ifdef HALO_N3DS
-        } else {actor->orders.move.animation.impulse=NONE;++native_decisions_deferred;}
-#endif
+		actor_clear_orders(actor_index);
+		actor_decision_loop(actor_index);
 		actor_action_update(actor_index);
-        ACTOR_STAGE(3);
 
 		if (!actor->meta.dormant)
 		{
@@ -4274,14 +4229,11 @@ static void actor_update(
 				actor_communication_update(actor_index);
 				actor_conversation_control(actor_index);
 				actor_destination_update(actor_index);
-        ACTOR_STAGE(4);
 				actor_look_affect_movement(actor_index);
 				actor_move_update(actor_index);
 				actor_look_update(actor_index);
-        ACTOR_STAGE(5);
 				actor_combat_update(actor_index);
 				actor_unit_control(actor_index);
-        ACTOR_STAGE(6);
 			}
 		}
 	}
@@ -4293,12 +4245,7 @@ static void actor_update(
 void actors_update(
 	void)
 {
-	#ifdef HALO_N3DS_CROWD_PROFILE
-    native_actor_sample=game_time_get()%30==0;
-    native_actor_count=0;memset(native_actor_cost,0,sizeof(native_actor_cost));
-    if(game_time_get()%300==0){char t[100];snprintf(t,sizeof(t),"DECISION BUDGET: deferred=%u",native_decisions_deferred);n3ds_log(t);}
-#endif
-    struct actor_iterator iterator;
+	struct actor_iterator iterator;
 	struct actor_datum *actor;
 
 	ai_globals->last_highest_service_timer = ai_globals->current_highest_service_timer;
@@ -4318,13 +4265,6 @@ void actors_update(
 		}
 	}
 
-#ifdef HALO_N3DS_CROWD_PROFILE
-    if(native_actor_sample) {
-        char message[320];double k=1000./n3ds_engine_tick_frequency();
-        snprintf(message,sizeof(message),"ACTOR DETAIL: tick=%ld count=%u input=%.3f perception=%.3f situation_emotion=%.3f decision_action=%.3f destination=%.3f move_look=%.3f combat=%.3f ms",game_time_get(),native_actor_count,
-            native_actor_cost[0]*k,native_actor_cost[1]*k,native_actor_cost[2]*k,native_actor_cost[3]*k,native_actor_cost[4]*k,native_actor_cost[5]*k,native_actor_cost[6]*k);n3ds_log(message);
-    }
-#endif
 	return;
 }
 

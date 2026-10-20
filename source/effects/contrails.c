@@ -74,7 +74,7 @@ symbols in this file:
 #include "memory/data.h"
 #include "objects/object_definitions.h"
 #include "physics/point_physics.h"
-#ifdef HALO_64BIT
+#if defined(HALO_64BIT) || defined(HALO_N3DS)
 #include "game/game.h"
 #endif
 #include "saved games/game_state.h"

@@ -581,7 +581,7 @@ void interface_draw_bitmap_modulated(
 	return;
 }
 
-void interface_prepare_screen_effect(
+void interface_draw_screen(
 	void)
 {
 	real flashlight_power;
@@ -722,16 +722,6 @@ void interface_prepare_screen_effect(
 				}
 			}
 
-#if defined(HALO_N3DS_RENDERER_TESTS)
-            if(zoomed && flashlight_power>.9f) {
-                static int reported;
-                if(!reported){extern void n3ds_log(const char *);char line[220];
-                    snprintf(line,sizeof(line),"SCREEN EFFECT INPUT: light=%.3f desat=%.3f tint=%.3f,%.3f,%.3f sources=%d,%d power=%.3f",
-                        parameters.filter_light_enhancement_intensity,parameters.filter_desaturation_intensity,
-                        parameters.filter_desaturation_tint.red,parameters.filter_desaturation_tint.green,parameters.filter_desaturation_tint.blue,
-                        screen_effect->light_enhancement_script_source,screen_effect->desaturation_script_source,flashlight_power);n3ds_log(line);reported=1;}
-            }
-#endif
 			rasterizer_screen_effect(&parameters);
 		}
 		else
@@ -744,18 +734,10 @@ void interface_prepare_screen_effect(
 		rasterizer_screen_effect(NULL);
 	}
 
-
+	hud_draw_screen();
+	game_engine_post_rasterize();
 
 	return;
-}
-
-void interface_draw_screen(void)
-{
-#ifndef HALO_N3DS
-    interface_prepare_screen_effect();
-#endif
-    if(render.local_player_index==NONE)return;
-    hud_draw_screen();game_engine_post_rasterize();
 }
 
 void interface_draw_bitmap_modulated_p32(
@@ -1306,3 +1288,173 @@ static void interface_splitscreen_render(
 
 	return;
 }
+
+#ifdef HALO_N3DS /* port: (Halo3DS) the weapon HUD's screen effect, prepared for its native renderer */
+void interface_prepare_screen_effect(
+	void)
+{
+	real flashlight_power;
+	long weapon_hud_index;
+
+	if (render.local_player_index == NONE)
+		return;
+
+	weapon_hud_index = interface_get_weapon_hud_index(&flashlight_power);
+	if (weapon_hud_index != NONE)
+	{
+		struct weapon_hud_interface_definition *hud_definition =
+			weapon_hud_interface_definition_get(weapon_hud_index);
+
+		if (hud_definition->screen_effects.count > 0)
+		{
+			struct hud_screen_effect_definition *screen_effect = TAG_BLOCK_GET_ELEMENT(
+				&hud_definition->screen_effects,
+				0,
+				struct hud_screen_effect_definition);
+			boolean zoomed = player_control_get_zoom_level(render.local_player_index) != NONE;
+			struct rasterizer_cinematic_screen_effect_parameters parameters;
+
+			csmemset(&parameters, 0, sizeof(parameters));
+
+			if (zoomed ||
+				!TEST_FLAG(screen_effect->mask_flags,
+					_hud_screen_effect_mask_only_when_zoomed_bit))
+			{
+				long mask_tag_index = main_get_window_count() <= 1 ?
+					screen_effect->mask_fullscreen.index :
+					screen_effect->mask_splitscreen.index;
+
+				if (mask_tag_index != NONE)
+				{
+					parameters.convolution_mask = TAG_BLOCK_GET_ELEMENT(
+						&bitmap_group_get(mask_tag_index)->bitmaps,
+						0,
+						struct bitmap_data);
+					parameters.filter_light_enhancement_uses_convolution_mask =
+						TEST_FLAG(
+							screen_effect->light_enhancement_flags,
+							_hud_screen_effect_light_enhancement_uses_convolution_mask_bit);
+					parameters.filter_desaturation_uses_convolution_mask =
+						TEST_FLAG(
+							screen_effect->desaturation_flags,
+							_hud_screen_effect_desaturation_uses_convolution_mask_bit);
+				}
+			}
+
+			if (main_get_window_count() <= 1 &&
+				(zoomed ||
+					!TEST_FLAG(
+						screen_effect->convolution_flags,
+						_hud_screen_effect_convolution_only_when_zoomed_bit)))
+			{
+				real convolution_radius = 0.0f;
+
+				if (screen_effect->convolution_radius_in_bounds[0] !=
+					screen_effect->convolution_radius_in_bounds[1])
+				{
+					real interpolation = PIN(
+						(render.camera.vertical_field_of_view -
+							screen_effect->convolution_radius_in_bounds[0]) /
+						(screen_effect->convolution_radius_in_bounds[1] -
+							screen_effect->convolution_radius_in_bounds[0]),
+						0.0f,
+						1.0f);
+
+					scalars_interpolate(
+						screen_effect->convolution_radius_out_bounds[0],
+						screen_effect->convolution_radius_out_bounds[1],
+						interpolation,
+						&convolution_radius);
+				}
+				else
+				{
+					convolution_radius = screen_effect->convolution_radius_out_bounds[1];
+				}
+
+				if (convolution_radius > 0.0f)
+				{
+					parameters.convolution_radius = convolution_radius;
+					parameters.convolution_type =
+						_rasterizer_screen_effect_convolution_type_warp;
+				}
+			}
+
+			if (zoomed ||
+				!TEST_FLAG(
+					screen_effect->light_enhancement_flags,
+					_hud_screen_effect_light_enhancement_only_when_zoomed_bit))
+			{
+				real intensity = screen_effect->light_enhancement_intensity;
+
+				if (TEST_FLAG(
+					screen_effect->light_enhancement_flags,
+					_hud_screen_effect_light_enhancement_connect_to_flashlight_bit))
+				{
+					intensity *= PIN(flashlight_power, 0.0f, 1.0f);
+				}
+
+				intensity *= PIN(
+					rasterizer_script_screen_effect_get_value(
+						screen_effect->light_enhancement_script_source),
+					0.0f,
+					1.0f);
+				if (intensity > 0.0f)
+					parameters.filter_light_enhancement_intensity = intensity;
+			}
+
+			if (zoomed ||
+				!TEST_FLAG(
+					screen_effect->desaturation_flags,
+					_hud_screen_effect_desaturation_only_when_zoomed_bit))
+			{
+				real intensity = screen_effect->desaturation_intensity;
+
+				if (TEST_FLAG(
+					screen_effect->desaturation_flags,
+					_hud_screen_effect_desaturation_connect_to_flashlight_bit))
+				{
+					intensity *= PIN(flashlight_power, 0.0f, 1.0f);
+				}
+
+				intensity *= PIN(
+					rasterizer_script_screen_effect_get_value(
+						screen_effect->desaturation_script_source),
+					0.0f,
+					1.0f);
+				if (intensity > 0.0f)
+				{
+					parameters.filter_desaturation_intensity = intensity;
+					parameters.filter_desaturation_is_additive = TEST_FLAG(
+						screen_effect->desaturation_flags,
+						_hud_screen_effect_desaturation_is_additive_bit);
+					parameters.filter_desaturation_tint = screen_effect->desaturation_tint;
+				}
+			}
+
+#if defined(HALO_N3DS_RENDERER_TESTS)
+            if(zoomed && flashlight_power>.9f) {
+                static int reported;
+                if(!reported){extern void n3ds_log(const char *);char line[220];
+                    snprintf(line,sizeof(line),"SCREEN EFFECT INPUT: light=%.3f desat=%.3f tint=%.3f,%.3f,%.3f sources=%d,%d power=%.3f",
+                        parameters.filter_light_enhancement_intensity,parameters.filter_desaturation_intensity,
+                        parameters.filter_desaturation_tint.red,parameters.filter_desaturation_tint.green,parameters.filter_desaturation_tint.blue,
+                        screen_effect->light_enhancement_script_source,screen_effect->desaturation_script_source,flashlight_power);n3ds_log(line);reported=1;}
+            }
+#endif
+			rasterizer_screen_effect(&parameters);
+		}
+		else
+		{
+			rasterizer_screen_effect(NULL);
+		}
+	}
+	else
+	{
+		rasterizer_screen_effect(NULL);
+	}
+
+
+
+	return;
+}
+#endif

@@ -600,8 +600,6 @@ void rasterizer_environment_shadow_draw(
 	struct vertex_buffer const *vertex_buffer);
 void rasterizer_environment_shadows_end(
 	void);
-void rasterizer_environment_diffuse_textures_begin(
-	void);
 void rasterizer_environment_diffuse_textures_end(
 	void);
 void rasterizer_environment_diffuse_texture_draw(

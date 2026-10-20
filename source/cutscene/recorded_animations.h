@@ -48,8 +48,6 @@ boolean recorded_animation_play_and_hover(
 void render_debug_recording(
 	void);
 
-void render_debug_recording(void);
-
 /* ---------- globals */
 
 /* ---------- public code */

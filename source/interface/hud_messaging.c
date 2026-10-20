@@ -115,7 +115,6 @@ symbols in this file:
 /* ---------- headers */
 
 #include "cseries/cseries.h"
-#include "memory/data.h"
 
 #include "cseries/errors.h"
 #include "bitmaps/bitmap_group.h"
@@ -618,7 +617,6 @@ void hud_messaging_dispose(
 {
 	return;
 }
-
 #ifdef HALO_N3DS
 #include "engine_checkpoint.h"
 int n3ds_checkpoint_hud_visit(n3ds_checkpoint_visitor visit)
@@ -1033,7 +1031,6 @@ void hud_render_timer(
 		}
 	}
 
-#ifndef HALO_N3DS
 	if (time_code_time != NONE)
 	{
 		long stop_time = time_code_stop_time;
@@ -1043,7 +1040,6 @@ void hud_render_timer(
 		sprintf(temporary, "%d", stop_time - time_code_time);
 		render_debug_string(TRUE, temporary);
 	}
-#endif
 
 	return;
 }

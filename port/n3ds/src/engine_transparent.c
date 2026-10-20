@@ -280,7 +280,7 @@ static void effect_draw(const struct transparent_geometry_group *group)
      * zsprites is disabled. Use that original flat-particle fidelity option;
      * still draw every primary particle and retain depth/weapon-mask tests. */
     boolean inactive_depth_map=shader->secondary_map_anchor==2 &&
-        (!rasterizer_debug_options.zsprites || (group->geometry_flags&(1u<<7)));
+        (!rasterizer_debug_options.zsprite_enabled || (group->geometry_flags&(1u<<7)));
     boolean secondary=shader->secondary_map.index!=NONE && !inactive_depth_map;
     boolean supported_secondary_blend=shader->framebuffer_blend_function==NATIVE_BLEND_ADD ||
         shader->framebuffer_blend_function==NATIVE_BLEND_SUBTRACT || shader->framebuffer_blend_function==NATIVE_BLEND_MAX;
@@ -359,8 +359,8 @@ boolean rasterizer_transparent_geometry_initialize_aux_buffer(void)
     if(initialized) {
         effect_groups=effect_batches=effect_triangles=effect_merged=pending_count=0;
         effect_converted=effect_reused=effect_index_reused=packed_vertices_saved=pending_index_count=0;
-        saved_zsprites=rasterizer_debug_options.zsprites;
-        rasterizer_debug_options.zsprites=FALSE;
+        saved_zsprites=rasterizer_debug_options.zsprite_enabled;
+        rasterizer_debug_options.zsprite_enabled=FALSE;
         flat_particle_reported=FALSE;
     }
     return initialized;
@@ -374,7 +374,7 @@ void rasterizer_transparent_geometry_dispose_aux_buffer(void)
         snprintf(message,sizeof(message),"EFFECT VERTEX REUSE: converted=%u reused=%u indexed=%u",effect_converted,effect_reused,effect_index_reused);n3ds_log(message);
         snprintf(message,sizeof(message),"EFFECT GPU OFFLOAD: duplicate_vertices_avoided=%u",packed_vertices_saved);n3ds_log(message);
         rasterizer_memory_pool_dispose();
-        rasterizer_debug_options.zsprites=saved_zsprites;
+        rasterizer_debug_options.zsprite_enabled=saved_zsprites;
     }
     initialized=FALSE;
 }

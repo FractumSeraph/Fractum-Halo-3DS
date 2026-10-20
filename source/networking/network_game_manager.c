@@ -263,6 +263,7 @@ void network_game_generate_local_machine_name(
 	wchar_t *machine_name)
 {
 #ifdef HALO_N3DS
+	/* port: (Halo3DS) the console's own name for this machine */
 	extern void n3ds_engine_machine_name_get(wchar_t *name);
 	n3ds_engine_machine_name_get(machine_name);
 #else
@@ -315,8 +316,8 @@ void network_game_generate_local_machine_name(
 	}
 
 	machine_name[31] = 0;
-#endif
 	return;
+#endif
 }
 
 void network_game_invalidate_player(

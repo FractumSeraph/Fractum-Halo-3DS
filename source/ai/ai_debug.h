@@ -326,7 +326,8 @@ struct ai_debug_state
 	boolean field_4C818;
 	char __unknown4C819[3];
 	struct path_state path_state;
-	struct path_result path_result;
+	boolean field_608A8;
+	char __unknown608A9[91];
 	struct path_debug_storage path_storage;
 	boolean evaluation_context_valid;
 	char __unknown7D381[3];
@@ -354,8 +355,6 @@ struct ai_debug_state
 	short speak_vocalization_type;
 };
 
-typedef char ai_debug_path_result_size_assert[sizeof(struct path_result) == 92 ? 1 : -1];
-typedef char ai_debug_path_result_offset_assert[offsetof(struct ai_debug_state, path_result) == 0x608A8 ? 1 : -1];
 typedef char ai_debug_state_path_offset_assert[
 	offsetof(struct ai_debug_state, path) == 0x3C ? 1 : -1];
 typedef char ai_debug_state_print_speech_offset_assert[

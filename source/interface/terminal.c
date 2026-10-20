@@ -50,7 +50,6 @@ symbols in this file:
 
 #include "cseries.h"
 #include "terminal.h"
-#include <stdarg.h>
 
 #include "cache_files.h"
 #include "game.h"

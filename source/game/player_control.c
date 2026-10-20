@@ -375,7 +375,10 @@ static void handle_one_player_input(
 long player_control_get_desired_weapon(
 	short local_player_index,
 	long unit_index);
-static boolean player_control_camera_control_is_active(
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code calls it */
+static
+#endif
+boolean player_control_camera_control_is_active(
 	void);
 
 /* ---------- globals */
@@ -445,7 +448,10 @@ void player_control_dispose_from_old_map(
 	return;
 }
 
-static boolean player_control_camera_control_is_active(
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code calls it */
+static
+#endif
+boolean player_control_camera_control_is_active(
 	void)
 {
 	return (boolean)(!TEST_FLAG(
@@ -1200,6 +1206,11 @@ static void get_local_player_input_blob(
 						constants->look_function.count,
 						xbox_pointer(constants->look_function.address),
 						clamped_pitch) * pitch_spin_scale * look_pitch_rate;
+#ifdef HALO_N3DS
+					/* port: (Halo3DS) the touch screen's look */
+					look_delta.yaw *= n3ds_input_touch_look_scale(0);
+					look_delta.pitch *= n3ds_input_touch_look_scale(1);
+#endif
 					{
 						/* port: the touch controls' swipe (port/linux/src/xinput_sdl.c),
 						a turn this frame, made a rate as the stick's look is: the
@@ -1227,11 +1238,6 @@ static void get_local_player_input_blob(
 							look_delta.pitch += (touch_pitch + gyro_pitch) / touch_scale;
 						}
 					}
-
-#ifdef HALO_N3DS
-                    look_delta.yaw *= n3ds_input_touch_look_scale(0);
-                    look_delta.pitch *= n3ds_input_touch_look_scale(1);
-#endif
 
 					if (player->unit_index != NONE && control->zoom_level != NONE)
 					{

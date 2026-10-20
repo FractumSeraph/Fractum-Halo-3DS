@@ -1168,10 +1168,10 @@ void hud_render_unit_interface(
 					{
 						hud_state->last_motion_sensor_flash_time = NONE;
 					}
-
 					#ifdef HALO_N3DS
 					n3ds_gpu_hud_layout(3);
 					#endif
+
 					if (hud_definition->motion_sensor.background.interface_bitmap.index != NONE)
 					{
 						hud_draw_static_element(

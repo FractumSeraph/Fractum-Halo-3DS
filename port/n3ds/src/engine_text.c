@@ -21,7 +21,7 @@ void rasterizer_text_begin(const struct rasterizer_dynamic_screen_geometry_param
 {
     unsigned int rgba=0xffffffffU;
     assert(!active);
-    if(!rasterizer_debug_options.dynamic_screen_geometry || global_window_parameters.rasterizer_target!=0) return;
+    if(!rasterizer_debug_options.draw_dynamic_screen_geometry || global_window_parameters.rasterizer_target!=0) return;
     assert(n3ds_engine_window_active() && input && input->map[0]);
     /* All original string/unicode callers use one map. General HUD multi-map,
      * meter and plasma passes require their own shader implementations. */

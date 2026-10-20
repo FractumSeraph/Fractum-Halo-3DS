@@ -466,7 +466,7 @@ static void rasterizer_screen_effect_set_texture_transforms(
 }
 /* ---------- public code */
 
-#ifndef HALO_N3DS /* Native capability-checked owner: engine_hud.c. */
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code has this */
 void _rasterizer_screen_effect(
 	struct rasterizer_cinematic_screen_effect_parameters *parameters)
 {
@@ -1201,8 +1201,8 @@ void _rasterizer_screen_effect(
 
 	return;
 }
-
 #endif
+
 void _rasterizer_screen_flash(
 	void)
 {

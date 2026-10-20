@@ -1,4 +1,3 @@
-#define HALO_N3DS_INLINE_DATUM 1
 /*
 WEAPONS.C
 

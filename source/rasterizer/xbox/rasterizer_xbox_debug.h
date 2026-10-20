@@ -12,7 +12,6 @@ RASTERIZER_XBOX_DEBUG.H
 
 /* ---------- prototypes/RASTERIZER_XBOX_DEBUG.C */
 
-/* The PAL implementation reads only opaque; depth bias comes from debug options. */
 void rasterizer_debug_drawing_begin(
 	boolean opaque);
 void rasterizer_debug_drawing_end(
