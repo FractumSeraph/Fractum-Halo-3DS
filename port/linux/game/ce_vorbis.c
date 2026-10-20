@@ -14,8 +14,12 @@ stb_vorbis (port/third_party/stb).
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Weverything"
 #endif
-/* (port/third_party/stb, a game include directory: port/linux/port.json) */
+/* (port/third_party/stb, a game include directory: port/linux/port.json;
+its own static error(), named apart from the engine's, which the 3DS's
+prefix declares: port/n3ds/include/engine_prefix.h) */
+#define error ce_vorbis_stb_error
 #include "stb_vorbis.c"
+#undef error
 #if defined(__clang__)
 #pragma clang diagnostic pop
 #endif

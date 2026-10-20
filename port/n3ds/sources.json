@@ -3366,6 +3366,54 @@
     {
       "source": "port/n3ds/src/engine_network_help.c",
       "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/ce_bsp.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/ce_functions.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/ce_hud.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/ce_map_checks.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/ce_models.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/ce_repairs.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/ce_resources.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/ce_vorbis.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/server_browser.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/n3ds/src/engine_ce_platform.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "port/linux/game/bmp_files.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/map_share_maps.c",
+      "compiler": "clang"
     }
   ],
   "runtime": [
@@ -3578,6 +3626,7 @@
     "port/third_party/kcp",
     "port/third_party/monocypher",
     "port/third_party/qrcodegen",
-    "port/third_party/zlib"
+    "port/third_party/zlib",
+    "port/third_party/stb"
   ]
 }

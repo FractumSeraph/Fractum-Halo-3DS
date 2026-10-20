@@ -72,12 +72,27 @@ struct n3ds_win32_handle
 	char pattern[128];
 };
 
+/* a path, its backslashes slashes; an Xbox drive's (d:\\, the game's data;
+ * any other letter, its folder there) the SD card's data folder's */
 static void n3ds_win32_path(const char *in, char *out, size_t size)
 {
-	size_t i;
+	size_t i = 0, j;
 
-	for (i = 0; in && in[i] && i + 1 < size; i++)
-		out[i] = in[i] == '\\' ? '/' : in[i];
+	if (in && in[0] && in[1] == ':' && (in[2] == '\\' || in[2] == '/') &&
+		((in[0] >= 'a' && in[0] <= 'z') || (in[0] >= 'A' && in[0] <= 'Z')))
+	{
+		char letter = in[0] >= 'A' && in[0] <= 'Z' ? in[0] - 'A' + 'a' : in[0];
+
+		if (letter == 'd')
+			i = (size_t)snprintf(out, size, "sdmc:/halo-source/");
+		else
+			i = (size_t)snprintf(out, size, "sdmc:/halo-source/%c/", letter);
+		in += 3;
+		if (i >= size)
+			i = size - 1;
+	}
+	for (j = 0; in && in[j] && i + 1 < size; j++)
+		out[i++] = in[j] == '\\' ? '/' : in[j];
 	out[i] = 0;
 }
 
@@ -345,4 +360,29 @@ BOOL WINAPI MoveFileA(LPCSTR from, LPCSTR to)
 	n3ds_win32_path(from, a, sizeof(a));
 	n3ds_win32_path(to, b, sizeof(b));
 	return rename(a, b) == 0;
+}
+
+/* a file's times (the fork's map hashes and Delta's map list keep a file's
+ * write time to see it changed): its modification time, as a Win32 FILETIME
+ * (100 ns since 1601) */
+BOOL WINAPI GetFileTime(HANDLE handle, struct n3ds_win32_filetime *created, struct n3ds_win32_filetime *accessed,
+	struct n3ds_win32_filetime *written)
+{
+	struct n3ds_win32_handle *h = n3ds_win32_file(handle);
+	struct stat status;
+	unsigned long long ticks;
+	struct n3ds_win32_filetime time;
+
+	if (!h || fstat(fileno(h->file), &status) != 0)
+		return FALSE;
+	ticks = ((unsigned long long)status.st_mtime + 11644473600ULL) * 10000000ULL;
+	time.low = (DWORD)ticks;
+	time.high = (DWORD)(ticks >> 32);
+	if (created)
+		*created = time;
+	if (accessed)
+		*accessed = time;
+	if (written)
+		*written = time;
+	return TRUE;
 }

@@ -83,6 +83,8 @@ def main():
     # games are built: the Online Games browser, Bomb, Delta Peer with
     # ChupathingyCE hosts; docs/MULTIPLAYER-PLAN.md)
     defines.append('-DHALO_GAME_BROWSER')
+    # (and its Halo PC maps: Custom Edition's, HaloMD's; port/linux/game/ce_*.c)
+    defines.append('-DHALO_CUSTOM_EDITION')
     if args.diagnostics: defines.append('-DHALO_N3DS_RENDERER_TESTS=1')
     if args.original_memory: defines.append('-DHALO_N3DS_LOW_MEMORY_TEST=1')
     native = [str(gcc),*COMMON,'-D__3DS__','-I',str(args.libctru/'include'),'-I',str(args.citro3d/'include')]

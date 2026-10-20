@@ -12,21 +12,6 @@
 
 void posix_random_bytes(void *buffer, unsigned long size); /* (posix.h's posix_ulong) */
 
-/* source/cache_files.h */
-boolean cache_file_tags_are_ce(void)
-{
-	return 0;
-}
-/* port/linux/game/ce_hud.c */
-boolean ce_hud_halo_pc_overlay_blend_functions(void)
-{
-	return 0;
-}
-/* port/linux/game/ce_hud.c */
-boolean ce_hud_overlays_blocked(void)
-{
-	return 0;
-}
 /* port/linux/game/download_screen.c */
 boolean download_screen_active(void)
 {
@@ -443,14 +428,6 @@ char *_strdup(const char *text)
 }
 /* port/linux/game/map_families.c's, for a build without Custom Edition maps
    (Phase 4 brings them): none is found */
-unsigned char map_family_find(short family, char const *file, char *path, long size)
-{
-	(void)family;
-	(void)file;
-	if (path && size > 0)
-		path[0] = 0;
-	return 0;
-}
 /* port/linux/src/map_download.h */
 #include "../../linux/src/map_download.h" /* (its progress structure) */
 /* port/linux/game/network_objects.c */
@@ -635,4 +612,13 @@ void map_download_get(struct map_download_progress *progress)
 	/* (no download: MAP_DOWNLOAD_IDLE, nothing received) */
 	if (progress)
 		memset(progress, 0, sizeof(*progress));
+}
+/* port/linux/game/map_share.c's (map sharing's downloads, after Custom
+   Edition maps): none starts */
+unsigned char map_share_download_begin(char const *level_name, unsigned long version, char const *message)
+{
+	(void)level_name;
+	(void)version;
+	(void)message;
+	return 0;
 }
