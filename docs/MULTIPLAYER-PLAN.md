@@ -112,7 +112,7 @@ System link works in Azahar, both ways, with the fork's Windows game
   and its filter, bots, co-op pickups and vehicles, the latency meter, the
   overshield effect, the passenger camera, structure culling, model
   detail). The model part cache takes its `display.model_detail` rules.
-  To follow the fork again: `fork_update.py`'s three-way merge from the
+  To follow the fork again: `port/n3ds/tools/fork_update.py`'s three-way merge from the
   last fork commit taken (now 8ab6b1324) to the new one.
 - **Internet play.** The fork's p2p layer and Delta are built (9a3b288):
   STUN, the MQTT brokers (its built-in list: halovps.fractumseraph.net
