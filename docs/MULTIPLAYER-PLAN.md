@@ -35,6 +35,40 @@ of both; most players joining, maps downloaded on their own.
   handled), internet play (p2p.c: STUN, brokers, the tunnel, invites), the
   Delta layer, map sharing, the shared ban lists.
 
+## Phase 1: where it stands (2026-10-20)
+
+The fork's engine runs under Halo3DS's frontend (branch `multiplayer`):
+in Azahar the menus, the campaign (The Pillar of Autumn, its scripts and
+cutscenes) and a solo Slayer game on Blood Gulch (moving, turning, firing)
+run as with Halo3DS's own build.
+
+- **How it is put together.** `source/` is the fork's engine with Halo3DS's
+  changes merged in. The fork's port layer is in `port/linux` (headers,
+  `game/`, `src/`), reached after this port's own include folders
+  (`after_include_dirs` in `port/n3ds/sources.json`); of its units, only
+  what the engine needs to link is built so far. The rest are stand-ins in
+  `port/n3ds/src/engine_fork_stubs.c`: each returns what the fork's unit
+  returns with nothing of its own going on (no network game, no co-op, no
+  high-res assets), and the settings are the fork's settings table's
+  defaults. `port/n3ds/include/engine_shims` holds include-only stand-ins
+  for the headers upstream OpenCE folded together, so Halo3DS's native code
+  still finds them; `engine_fork_exports.h` declares the fork's functions
+  that Halo3DS's code calls.
+- **Halo3DS blocks not brought over yet.** Its speed-ups: the AI's decision
+  deferral and perception scheduling (`ai/actors.c`, `actor_perception.c`),
+  decorative particle thinning (`effects/particle_systems.c`), the model
+  part cache and foliage reductions (`models/models.c`), the collision
+  feature cache (`physics/collision_features.c`), the visibility pass
+  without the Xbox's surface lists (`structures/structure_visibility.c`),
+  and its profiling hooks. The game is correct without them, but slower;
+  they matter on an Original 3DS and come back before the hardware tests.
+- **The emulator.** Azahar's software renderer crashes on Blood Gulch's
+  first frame (a cache flush of address 0 in the emulator), with Halo3DS's
+  own build as well: test with Vulkan (`graphics_api=2`).
+- **The license.** Halo3DS's own work is CC0; the fork's engine and port
+  layer are GPL-3.0-or-later (`LICENSES/GPL-3.0-or-later.txt`), so this
+  branch as a whole is distributed under the GPL.
+
 ## Phases
 
 1. **The fork's engine under Halo3DS.** `source/` becomes the fork's, with
