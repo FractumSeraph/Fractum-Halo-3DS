@@ -70,6 +70,40 @@ run as with Halo3DS's own build.
   layer are GPL-3.0-or-later (`LICENSES/GPL-3.0-or-later.txt`), so this
   branch as a whole is distributed under the GPL.
 
+## Phase 2: where it stands (2026-10-20)
+
+System link works in Azahar, both ways, with the fork's Windows game
+(network version 29) on the same PC: the 3DS on 127.0.0.2, the PC's game on
+127.0.0.3, each with `network.broadcast` set to the other's address.
+
+- **3DS hosting.** The 3DS hosts Slayer on Blood Gulch from System Link Play;
+  the PC's game (`HALO_NETWORK_TEST=join`) finds it, joins, both load and
+  play, each sees the other move; the 3DS returns to its menu when the PC's
+  game leaves.
+- **3DS joining.** The PC's game hosts (`HALO_NETWORK_TEST=host:bloodgulch`);
+  the 3DS lists it, joins, plays.
+- **What it took.** The fork's Winsock and XNet layer (`port/linux/src/xnet.c`,
+  `posix_net.c`) in place of Halo3DS's offline stand-ins, the engine's Winsock
+  calls under the fork's names, the socket service started at boot, the
+  transport started and the server's key registered (the fork's builds
+  define `xbox`; this one does not, so those two places name `HALO_N3DS`),
+  the network's part of each frame in Halo3DS's frame loop (it had none),
+  the fork's network game units (distributed netcode, objects, damage,
+  actors, co-op, fair play, vote kick, team change, the network test), and
+  its settings (`port_config.c`, `halo-source/config.toml`).
+- **Still stand-ins.** Internet play (`p2p.c`: the identifier and hardware id
+  are random for each run until then), voice, map sharing and downloads,
+  Custom Edition maps, the PC menus and pointer, Discord.
+- **The emulator.** Azahar runs the game at about a third of the console's
+  speed, so a host there finds a PC client's clock running fast and refuses
+  its players' predictions (logged); on a console at full speed that should
+  not happen. Azahar's socket service refuses `SO_BROADCAST` (tolerated):
+  whether a console sends broadcasts without it is for the hardware test,
+  with `network.broadcast` as the way around it.
+- **Network version.** The fork has since moved to network version 32 (it
+  joins hosts 11 to 33, so it joins this build's games); bringing this
+  branch's engine up to the fork's latest is a later merge.
+
 ## Phases
 
 1. **The fork's engine under Halo3DS.** `source/` becomes the fork's, with

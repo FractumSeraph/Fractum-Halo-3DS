@@ -35,6 +35,25 @@ If setup asks you to dump DSP firmware for sound, do this once on your console:
 press **L + D-pad Down + SELECT**, then choose
 **Miscellaneous options > Dump DSP firmware** in Rosalina.
 
+## Multiplayer (this branch)
+
+The `multiplayer` branch runs the
+[FractumSeraph/OpenCE](https://github.com/FractumSeraph/OpenCE) fork's engine
+under this port, with its network code: **System Link Play** works with the
+fork's games and servers (OpenCE and ChupathingyCE network version 29) and
+with other 3DS consoles on the same network. Internet play, Custom Edition
+maps and map downloads are still to come; [the plan](docs/MULTIPLAYER-PLAN.md)
+says where each stands.
+
+The console needs its Wi-Fi on. Settings are in `halo-source/config.toml` on
+the SD card, written with every setting and its description the first time
+the game runs; under `[network]`:
+
+- `address`: this console's IPv4 address, if it should use a particular one
+- `broadcast`: where system link announcements go instead of the network's
+  broadcast address, for example `"192.168.1.20"` (a PC's address) if the
+  console finds no games: some networks and consoles don't pass broadcasts
+
 ## Updating
 
 In the setup tool, select your SD card and choose **Update the launcher only**.
@@ -67,7 +86,11 @@ For the setup tools, start with the [Visual Studio solution instructions](docs/D
 ## Origin and notices
 
 Based on [bnunu/halo-1](https://github.com/bnunu/halo-1), revision
-`8d0c1ff46ef92511e4809fff422bacd94c3b7c67`.
+`8d0c1ff46ef92511e4809fff422bacd94c3b7c67`. The `multiplayer` branch's engine
+and its network layer (`port/linux`) are the FractumSeraph/OpenCE fork's,
+under the GPL ([LICENSES/GPL-3.0-or-later.txt](LICENSES/GPL-3.0-or-later.txt)),
+and so is that branch as a whole; settings are read with
+[tomlc17](port/third_party/tomlc17/LICENSE).
 
 See [LICENSE.md](LICENSE.md), the [setup component notices](port/n3ds/setup/THIRD-PARTY.md),
 and the licenses for [LZ4](port/n3ds/vendor/lz4/LICENSE) and the
