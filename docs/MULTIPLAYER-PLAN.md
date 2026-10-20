@@ -100,9 +100,35 @@ System link works in Azahar, both ways, with the fork's Windows game
   not happen. Azahar's socket service refuses `SO_BROADCAST` (tolerated):
   whether a console sends broadcasts without it is for the hardware test,
   with `network.broadcast` as the way around it.
-- **Network version.** The fork has since moved to network version 32 (it
-  joins hosts 11 to 33, so it joins this build's games); bringing this
-  branch's engine up to the fork's latest is a later merge.
+- **Network version.** Now the fork's latest (below).
+
+## Network version 32 and Phase 3: where they stand (2026-10-20)
+
+- **The fork's latest.** The fork's changes from 214407325 (the old 3DS
+  branch's base, network version 29) to fork/main 8ab6b1324 (network version
+  32, joining hosts 11 to 33) are merged in (f943fdf): 163 files merged, 33
+  added, 51 empty headers removed, seven conflicts resolved keeping both
+  sides. Its new units are built (network rules and aim assist, text chat
+  and its filter, bots, co-op pickups and vehicles, the latency meter, the
+  overshield effect, the passenger camera, structure culling, model
+  detail). The model part cache takes its `display.model_detail` rules.
+  To follow the fork again: `fork_update.py`'s three-way merge from the
+  last fork commit taken (now 8ab6b1324) to the new one.
+- **Internet play.** The fork's p2p layer and Delta are built (9a3b288):
+  STUN, the MQTT brokers (its built-in list: halovps.fractumseraph.net
+  first), the tunnel with kcp, Monocypher's signatures; no WebRTC (the
+  fork's browser build's stand-in), no UPnP, no Discord. In Azahar the 3DS
+  joined two empty public dedicated servers by their invites: one's lobby
+  (a team game waiting for players) and the other's game (Slayer on
+  Derelict, 123 ms), and left.
+- **Still to do.** A way for a player to find internet games in the 3DS's
+  menus (the fork's server browser is in its PC menus, stand-ins here; for
+  now an invite goes in `config.toml`); hosting on the internet from the 3DS
+  (its games get an invite and are listed, untested); a version 32 PC game
+  to test 3DS-hosted system link against (the PC game here is version 29,
+  which joins hosts up to 30 only); voice; the fork's deterministic maths
+  (musl's, which its lockstep games need; the distributed netcode corrects
+  differences); then Phase 4's maps.
 
 ## Phases
 
