@@ -45,12 +45,14 @@ versions 11 to 33):
 - **System Link Play** works with the fork's games and servers and with other
   3DS consoles on the same network.
 - **Internet play** works the fork's way (its MQTT signalling brokers, hole
-  punching and its tunnel; no WebRTC or UPnP on the 3DS). For now a game is
-  joined by its invite: put `network_test = "invite:<the invite's 64 hex
-  digits>"` under `[debug]` in `config.toml` (the last part of a
-  `halo://join/` link); the game joins it at start. A list of public games in
-  the 3DS's menus is still to come, as are Custom Edition maps and map
-  downloads; [the plan](docs/MULTIPLAYER-PLAN.md) says where each stands.
+  punching and its tunnel; no WebRTC or UPnP on the 3DS).
+- **Online Games**, under Multiplayer, is the server browser: every game on
+  the community game list (OpenCE's and ChupathingyCE's servers), with its
+  map, game type, players and ping. Up and down pick a game, left and right
+  turn the page, **A** joins it, **X** refreshes, **B** goes back. Games on
+  Custom Edition maps are listed but can't be joined yet, and map downloads
+  are still to come; [the plan](docs/MULTIPLAYER-PLAN.md) says where each
+  stands.
 
 The console needs its Wi-Fi on. Settings are in `halo-source/config.toml` on
 the SD card, written with every setting and its description the first time
@@ -61,6 +63,11 @@ the game runs; under `[network]`:
   broadcast address, for example `"192.168.1.20"` (a PC's address) if the
   console finds no games: some networks and consoles don't pass broadcasts
 - `online`: internet play (on by default)
+
+The game list is reached over HTTPS. The game knows Let's Encrypt's root
+certificates; for others, put a certificate bundle at
+`halo-source/cacert.pem`. A game can also be joined by its invite: put
+`network_test = "invite:<the invite's 64 hex digits>"` under `[debug]`.
 
 ## Updating
 
@@ -99,7 +106,9 @@ and its network layer (`port/linux`) are the FractumSeraph/OpenCE fork's,
 under the GPL ([LICENSES/GPL-3.0-or-later.txt](LICENSES/GPL-3.0-or-later.txt)),
 and so is that branch as a whole; settings are read with
 [tomlc17](port/third_party/tomlc17/LICENSE), internet play uses
-[kcp](port/third_party/kcp/LICENSE) and [Monocypher](port/third_party/monocypher/LICENCE.md).
+[kcp](port/third_party/kcp/LICENSE) and [Monocypher](port/third_party/monocypher/LICENCE.md), the game list
+[Mbed TLS](port/third_party/mbedtls/LICENSE), [qrcodegen](port/third_party/qrcodegen/LICENSE) and
+[zlib](port/third_party/zlib/LICENSE).
 
 See [LICENSE.md](LICENSE.md), the [setup component notices](port/n3ds/setup/THIRD-PARTY.md),
 and the licenses for [LZ4](port/n3ds/vendor/lz4/LICENSE) and the

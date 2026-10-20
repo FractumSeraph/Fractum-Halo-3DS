@@ -121,14 +121,37 @@ System link works in Azahar, both ways, with the fork's Windows game
   joined two empty public dedicated servers by their invites: one's lobby
   (a team game waiting for players) and the other's game (Slayer on
   Derelict, 123 ms), and left.
-- **Still to do.** A way for a player to find internet games in the 3DS's
-  menus (the fork's server browser is in its PC menus, stand-ins here; for
-  now an invite goes in `config.toml`); hosting on the internet from the 3DS
+- **Still to do.** Hosting on the internet from the 3DS
   (its games get an invite and are listed, untested); a version 32 PC game
   to test 3DS-hosted system link against (the PC game here is version 29,
   which joins hosts up to 30 only); voice; the fork's deterministic maths
   (musl's, which its lockstep games need; the distributed netcode corrects
   differences); then Phase 4's maps.
+
+## The server browser (2026-10-20)
+
+The 3DS build is the fork's ChupathingyCE edition (`HALO_GAME_BROWSER`, as its
+released games are built: Online Games, Bomb, Delta Peer with ChupathingyCE
+hosts). Multiplayer > ONLINE GAMES is the fork's own browser screen for the
+Xbox menus (`browser_screen.c`), listing the game list's games
+(halo.milenko.org over HTTPS: OpenCE's brokers' games and ChupathingyCE's
+announced ones); A joins one through its invite. In Azahar it listed 47
+servers and joined the empty dedicated "[C] Slayer" from the list and played
+(Rat Race, 87 ms).
+
+- **Drawing.** The fork draws its screens over the menus with an OpenGL
+  overlay (`ui_overlay.c`); on the 3DS `port/n3ds/src/engine_ui_overlay.c`
+  draws the same calls in the menus' own pass: the game's screen quads for
+  shapes (square corners, gradients in bands), the menus' fonts scaled for
+  text. Pictures (the site's JPEG map art), platform logos and glows are not
+  drawn; Halo's own map pictures are.
+- **HTTPS.** Mbed TLS (the fork's copy and defines; entropy from the PS
+  service; `engine_mbedtls_net.c` for its sockets and clock), Let's
+  Encrypt's ISRG roots built in after `sdmc:/halo-source/cacert.pem`.
+- **Not yet.** Touch on the browser (the fork's pointer is stand-ins);
+  Custom Edition games (listed, not joinable until Phase 4); creating an
+  internet game from the browser's Y (untested); memory on an Original 3DS
+  (Mbed TLS and the larger text buffer, 512 KB of linear memory).
 
 ## Phases
 
