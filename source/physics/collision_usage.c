@@ -204,7 +204,13 @@ char const *global_collision_user_names[] =
 	NULL
 };
 
+#ifdef HALO_N3DS
+/* port: (Halo3DS) the statistics only when asked for: its frontend shows
+no collision overlay */
+boolean global_collision_log_enable = FALSE;
+#else
 boolean global_collision_log_enable = TRUE;
+#endif
 short collision_usage_current_period = NONE;
 
 boolean collision_log_render_enable = FALSE;
@@ -267,6 +273,9 @@ static void collision_log_store_period(
 	match_assert("c:\\halo\\SOURCE\\physics\\collision_usage.c", 167, collision_usage_current_period == NONE);
 	match_assert("c:\\halo\\SOURCE\\physics\\collision_usage.c", 168, (time_period >= 0) && (time_period < NUMBER_OF_COLLISION_TIME_PERIODS));
 
+#ifdef HALO_N3DS
+	if (global_collision_log_enable)
+#endif
 	memset(&collision_usage_current, 0, sizeof(collision_usage_current));
 	collision_usage_current_period = time_period;
 
@@ -297,6 +306,9 @@ void collision_log_end_period(
 
 	collision_usage_current.reset_upon_next_use = TRUE;
 
+#ifdef HALO_N3DS
+	if (global_collision_log_enable)
+#endif
 	collision_usage_buffer[collision_usage_current_period] = collision_usage_current;
 	collision_usage_current_period = NONE;
 
@@ -617,6 +629,10 @@ void collision_log_usage(
 {
 	short user;
 
+#ifdef HALO_N3DS
+	if (!global_collision_log_enable)
+		return;
+#endif
 	user = collision_log_get_current_user(collision_function);
 	if (user != NONE)
 	{

@@ -54,14 +54,15 @@ run as with Halo3DS's own build.
   for the headers upstream OpenCE folded together, so Halo3DS's native code
   still finds them; `engine_fork_exports.h` declares the fork's functions
   that Halo3DS's code calls.
-- **Halo3DS blocks not brought over yet.** Its speed-ups: the AI's decision
-  deferral and perception scheduling (`ai/actors.c`, `actor_perception.c`),
-  decorative particle thinning (`effects/particle_systems.c`), the model
-  part cache and foliage reductions (`models/models.c`), the collision
-  feature cache (`physics/collision_features.c`), the visibility pass
-  without the Xbox's surface lists (`structures/structure_visibility.c`),
-  and its profiling hooks. The game is correct without them, but slower;
-  they matter on an Original 3DS and come back before the hardware tests.
+- **Halo3DS's speed-ups.** Brought over onto the fork's code: the AI's
+  decision deferral (near any player, not only the local ones, since a co-op
+  host runs the AI for everyone) and perception scheduling, decorative
+  particle thinning, the model part cache with merged opaque draws (a model
+  with a bad index in its map falls back to the fork's checked path, which
+  reports it), scenery's flags for the native renderer, the collision
+  feature cache, collision statistics off unless asked for, and the
+  visibility pass without the Xbox's surface lists. Its profiling hooks
+  (opt-in defines) are left out.
 - **The emulator.** Azahar's software renderer crashes on Blood Gulch's
   first frame (a cache flush of address 0 in the emulator), with Halo3DS's
   own build as well: test with Vulkan (`graphics_api=2`).

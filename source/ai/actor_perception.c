@@ -6425,7 +6425,20 @@ void actor_perception_update(
 				prop_timer >>= 1;
 			}
 
-			if (!prop_serviced &&
+			boolean service_due = TRUE;
+
+#ifdef HALO_N3DS
+			/* port: (Halo3DS) a background prop's status refresh put off a tick */
+			if (!prop_serviced && prop_timer >= actor->meta.highest_prop_timer)
+			{
+				service_due = native_prop_service_due(actor_index, iterator.index, actor, prop, game_time_get());
+				if (!service_due)
+					++native_perception_deferred;
+				else
+					++native_perception_serviced;
+			}
+#endif
+			if (!prop_serviced && service_due &&
 				prop_timer >= actor->meta.highest_prop_timer)
 			{
 				refresh_status = TRUE;

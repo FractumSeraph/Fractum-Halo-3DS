@@ -480,7 +480,13 @@ void collision_features_from_surface(
 	return;
 }
 
+#ifdef HALO_N3DS
+/* port: (Halo3DS) the features built; collision_bsp_get_features_in_sphere,
+below, reuses a world test's */
+static void collision_bsp_build_features_in_sphere(
+#else
 void collision_bsp_get_features_in_sphere(
+#endif
 	struct collision_bsp const *bsp,
 	struct collision_bsp_test_sphere_result const *result,
 	real_matrix4x3 const *matrix,
@@ -521,6 +527,39 @@ void collision_bsp_get_features_in_sphere(
 }
 #ifdef HALO_N3DS
 #include "engine_collision_cache.inl"
+
+/* port: (Halo3DS) a world test's features (no object, no matrix, an empty
+list) kept by the BSP result that found them, and reused for the same
+result: the same features, without building them again */
+void collision_bsp_get_features_in_sphere(
+	struct collision_bsp const *bsp,
+	struct collision_bsp_test_sphere_result const *result,
+	real_matrix4x3 const *matrix,
+	real height,
+	real width,
+	long object_index,
+	struct collision_feature_list *features)
+{
+#ifndef HALO_N3DS_COLLISION_CACHE_OFF
+	unsigned int key[773];
+	unsigned int bytes = 0;
+
+	if (!matrix && object_index == NONE &&
+		!features->count[0] && !features->count[1] && !features->count[2])
+	{
+		bytes = world_feature_key(key, result, height, width);
+	}
+	if (bytes && world_feature_reuse(bsp, key, bytes, features))
+		return;
+#endif
+	collision_bsp_build_features_in_sphere(bsp, result, matrix, height, width, object_index, features);
+#ifndef HALO_N3DS_COLLISION_CACHE_OFF
+	if (bytes)
+		world_feature_store(bsp, key, bytes, features);
+#endif
+
+	return;
+}
 #endif
 
 boolean collision_features_test_point(

@@ -675,6 +675,27 @@ static void particle_system_new_particles(
 	short target_particle_count;
 	struct object_marker markers[8];
 	short marker_count;
+	real native_density = 1.f;
+	short native_cap = 32767;
+
+#ifdef HALO_N3DS
+	/* port: (Halo3DS) dense decorative emitters attached to nothing (not a
+	weapon's, a vehicle's or a damage effect's) make fewer particles: a
+	quarter on an Original 3DS, 60% on a New one; the emitter's clock runs
+	as before. Particles are each machine's own, not the network's */
+	{
+		extern int n3ds_input_platform_original_model(void);
+
+		if (system->object_index == NONE &&
+			(type_definition->initial_particle_count >= 16 || type->variables.particle_creation_rate >= 30.f))
+		{
+			int original = n3ds_input_platform_original_model();
+
+			native_density = original ? .25f : .6f;
+			native_cap = original ? 12 : 32;
+		}
+	}
+#endif
 
 	if (initializing)
 	{
@@ -690,7 +711,7 @@ static void particle_system_new_particles(
 	}
 	else
 	{
-		real particle_count = delta_time*type->variables.particle_creation_rate;
+		real particle_count = delta_time*type->variables.particle_creation_rate*native_density;
 		short whole_particle_count = (short)(long)particle_count;
 
 		target_particle_count = type->particle_count + whole_particle_count;
@@ -703,6 +724,9 @@ static void particle_system_new_particles(
 		}
 	}
 
+	if (initializing)
+		target_particle_count = (short)(target_particle_count*native_density + .5f);
+	target_particle_count = MIN(target_particle_count, native_cap);
 	if (type->particle_count < target_particle_count)
 	{
 		if (system->object_index != NONE)
@@ -814,7 +838,7 @@ static void particle_system_new_particles(
 		}
 	}
 
-	if ((real)type->particle_count < type->variables.minimum_particle_count)
+	if ((real)type->particle_count < MIN(type->variables.minimum_particle_count*native_density, (real)native_cap))
 	{
 		/* cut short at the rate of 0.3 a tick, not a frame: the native
 		builds update several frames a tick
@@ -1456,8 +1480,37 @@ static void particle_system_render(
 			while (particle_index != NONE)
 			{
 				struct ps_particle_datum *particle = ps_particle_get(particle_index);
+#ifdef HALO_N3DS
+				/* port: (Halo3DS) dense decorative emitters' particles thinned,
+				the same ones every frame (by slot): an Original 3DS draws a
+				quarter of a free emitter's (half of an attached one's), at
+				most 64 a view; a New 3DS three quarters, at most 192. Small or
+				slow bursts are drawn whole; nothing simulated changes */
+				boolean native_dense = type_definition->initial_particle_count >= 16 ||
+					type->variables.particle_creation_rate >= 30.f;
+				unsigned int native_slot = (unsigned short)particle_index;
+				boolean native_keep = !native_dense ||
+					(native_original ?
+						(system->object_index == NONE ? (native_slot & 3) == 0 : (native_slot & 1) == 0) :
+						(native_slot & 3) != 3);
 
-				if (particle->valid && render_location_visible(&particle->location))
+				if (system->object_index == NONE && native_system_draws >= (native_original ? 64u : 192u))
+					native_keep = FALSE;
+				if (native_keep && particle->valid && render_location_visible(&particle->location))
+				{
+					++native_particle_selected;
+					if (system->object_index == NONE)
+						++native_system_draws;
+				}
+				else
+				{
+					++native_particle_omitted;
+				}
+#else
+				boolean native_keep = TRUE;
+#endif
+
+				if (native_keep && particle->valid && render_location_visible(&particle->location))
 				{
 					real_point3d position_viewer_space;
 					real_vector3d axis_viewer_space;

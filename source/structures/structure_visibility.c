@@ -1891,8 +1891,10 @@ static void structure_visibility_find_clusters(
 	return;
 }
 
-void structure_visibility_compute(
-	void)
+/* port: (Halo3DS) the pass, with or without the Xbox's environment-surface
+list (n3ds_structure_visibility_compute, below) */
+static void structure_visibility_compute_internal(
+	boolean build_environment_surfaces)
 {
 	struct structure_bsp *structure = global_structure_bsp_get();
 
@@ -1985,6 +1987,11 @@ void structure_visibility_compute(
 	}
 	profile_exit(render_structure_visibility_portal_traversal);
 
+	if (!build_environment_surfaces)
+	{
+		return;
+	}
+
 	if (TAG_BLOCK_GET_ELEMENT(
 		&structure->clusters,
 		0,
@@ -2021,18 +2028,58 @@ void structure_visibility_compute(
 	return;
 }
 
-#ifdef HALO_N3DS
-/* port: (Halo3DS) its native BSP renderer's visibility pass. Halo3DS skips
-the Xbox environment-surface list there (structure_visibility_compute_internal
-of its engine); the fork's engine computes the whole pass, the same portal
-traversal, cluster clipping, sky selection and object visibility */
-void n3ds_structure_visibility_compute(void)
+void structure_visibility_compute(
+	void)
 {
-	structure_visibility_compute();
+	structure_visibility_compute_internal(TRUE);
+
+	return;
 }
 
+#ifdef HALO_N3DS
+/* port: (Halo3DS) its native BSP renderer's visibility pass: the native
+renderer submits its own batches and reads nothing of the Xbox
+environment-surface list, which is not built; portal traversal, cluster
+clipping, sky selection and object visibility are the same */
+void n3ds_structure_visibility_compute(void)
+{
+	structure_visibility_compute_internal(FALSE);
+}
+
+static unsigned int native_visibility_hash(const void *data, unsigned int bytes, unsigned int hash)
+{
+	const byte *p = data;
+
+	while (bytes--)
+		hash = (hash ^ *p++) * 16777619u;
+
+	return hash;
+}
+
+static unsigned int native_cluster_hash(void)
+{
+	unsigned int hash = native_visibility_hash(render.visible_cluster_flags, sizeof(render.visible_cluster_flags), 2166136261u);
+
+	hash = native_visibility_hash(render.rendered_clusters, render.rendered_cluster_count * sizeof(render.rendered_clusters[0]), hash);
+
+	return native_visibility_hash(structure_visibility_globals.rendered_cluster_indices,
+		sizeof(structure_visibility_globals.rendered_cluster_indices), hash);
+}
+
+/* (the lighter pass finds what the whole one does, without the surfaces) */
 boolean n3ds_structure_visibility_test(void)
 {
-	return TRUE;
+	short count;
+	short sky;
+	unsigned int hash;
+
+	structure_visibility_compute();
+	count = render.rendered_cluster_count;
+	sky = render.visible_sky_index;
+	hash = native_cluster_hash();
+	n3ds_structure_visibility_compute();
+
+	return count == render.rendered_cluster_count && sky == render.visible_sky_index &&
+		hash == native_cluster_hash() && !render.environment_surface_count;
 }
 #endif

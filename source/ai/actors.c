@@ -4199,6 +4199,48 @@ static void actor_unit_control(
 	return;
 }
 
+#ifdef HALO_N3DS
+/* port: (Halo3DS) an actor's decisions every other tick, alternate actors on
+alternate ticks, unless something is going on: a script or a cinematic, a
+target, an enemy, danger, damage, a vehicle, a conversation, a stimulus, or
+any player (not only the local ones: a co-op host runs the AI for all of
+them) within 24 world units; its last decisions stand in between */
+static boolean native_decision_due(
+	long index,
+	struct actor_datum const *a)
+{
+	static const struct actor_stimulus_data no_stimuli = {0};
+	extern boolean cinematic_in_progress(void);
+	struct data_iterator iterator;
+	struct player_datum *player;
+	boolean found = FALSE;
+
+	if (!((game_time_get() + DATUM_INDEX_TO_ABSOLUTE_INDEX(index)) & 1) || cinematic_in_progress() ||
+		a->meta.swarm || a->meta.dormant || a->state.command_list_index != NONE || a->state.action_changed ||
+		a->target.target_prop_index != NONE || a->situation.known_enemies || a->danger_zone.danger_type ||
+		a->input.vehicle_index != NONE || a->input.in_midair || a->input.recent_body_damage > 0 ||
+		a->input.recent_shield_damage > 0 || a->input.burning_to_death ||
+		a->external_orders.conversation_index != NONE || memcmp(&a->stimuli, &no_stimuli, sizeof(no_stimuli)))
+	{
+		return TRUE;
+	}
+	data_iterator_new(&iterator, player_data);
+	while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+	{
+		if (player->unit_index != NONE)
+		{
+			struct unit_datum *unit = unit_get(player->unit_index);
+
+			found = TRUE;
+			if (distance_squared3d(&unit->object.position, &a->input.position.body_position) < 24.f * 24.f)
+				return TRUE;
+		}
+	}
+
+	return !found;
+}
+#endif
+
 static void actor_update(
 	long actor_index)
 {
@@ -4212,8 +4254,19 @@ static void actor_update(
 		actor_perception_update(actor_index);
 		actor_situation_update(actor_index);
 		actor_emotion_update(actor_index);
+#ifdef HALO_N3DS
+		if (native_decision_due(actor_index, actor))
+		{
+#endif
 		actor_clear_orders(actor_index);
 		actor_decision_loop(actor_index);
+#ifdef HALO_N3DS
+		}
+		else
+		{
+			actor->orders.move.animation.impulse = NONE;
+		}
+#endif
 		actor_action_update(actor_index);
 
 		if (!actor->meta.dormant)

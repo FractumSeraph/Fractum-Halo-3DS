@@ -277,7 +277,7 @@ static struct profile_section render_model_section = { "render_model", NONE, TRU
 
 /* ---------- private code */
 
-static void render_model_parts(
+static void render_model_parts_uncached(
 	struct model const *model,
 	char const *region_permutation_indices,
 	short region_permutation_count,
@@ -469,6 +469,282 @@ static void render_model_parts(
 			}
 		}
 	}
+
+	return;
+}
+
+#ifdef HALO_N3DS
+/* port: (Halo3DS) a model's drawn parts are its map's, and do not change:
+each model's list (for its permutations and detail level) is kept, the
+eight latest, until the map changes (n3ds_engine_cache_generation). A list
+is only made of a model whose every index is good; any other is drawn by
+render_model_parts_uncached, the fork's checked walk, which reports it */
+#include "engine_cache.h"
+
+#define NATIVE_PARTS 96
+
+struct native_part
+{
+	struct model_geometry_part *part;
+	struct model_shader_reference *reference;
+	struct shader *shader;
+	short index;
+	short pass;
+};
+
+static struct native_part_list
+{
+	struct model const *model;
+	unsigned int generation;
+	short lod;
+	short count;
+	short region_count;
+	char permutations[MAXIMUM_REGIONS_PER_MODEL];
+	struct native_part parts[NATIVE_PARTS];
+} native_part_lists[8];
+static unsigned int native_part_clock;
+
+extern int n3ds_model_draw_merged(struct shader *, short, const struct triangle_buffer *const *,
+	const struct vertex_buffer *const *, unsigned int);
+
+/* (scenery's foliage, by its tag's name: trees, bushes, ferns, plants, vines) */
+static int native_foliage_model(
+	long index)
+{
+	static struct {long index; unsigned int generation; int valid, foliage;} cache[64];
+	unsigned int slot = (unsigned int)index & 63;
+	unsigned int generation = n3ds_engine_cache_generation();
+	char const *name;
+	int foliage;
+
+	if (cache[slot].valid && cache[slot].index == index && cache[slot].generation == generation)
+		return cache[slot].foliage;
+	name = tag_get_name(index);
+	foliage = name && (strstr(name, "tree") || strstr(name, "bush") || strstr(name, "fern") ||
+		strstr(name, "plant") || strstr(name, "vine") || strstr(name, "lilypad"));
+	cache[slot].index = index;
+	cache[slot].generation = generation;
+	cache[slot].valid = 1;
+	cache[slot].foliage = foliage;
+
+	return foliage;
+}
+
+static struct native_part_list *native_parts(
+	struct model const *model,
+	char const *permutations,
+	short permutation_count,
+	short lod)
+{
+	unsigned int generation = n3ds_engine_cache_generation();
+	short region_count = (short)MIN(model->regions.count, permutation_count);
+	struct native_part_list *list;
+	unsigned int k;
+	short r;
+
+	if (model->regions.count > MAXIMUM_REGIONS_PER_MODEL || region_count < 0)
+		return NULL;
+	for (k = 0; k < NUMBEROF(native_part_lists); ++k)
+	{
+		list = native_part_lists + k;
+		if (list->model == model && list->generation == generation && list->lod == lod &&
+			list->region_count == region_count && !memcmp(list->permutations, permutations, region_count))
+		{
+			return list;
+		}
+	}
+	list = native_part_lists + (native_part_clock++ % NUMBEROF(native_part_lists));
+	list->model = NULL;
+	list->count = 0;
+	for (r = 0; r < region_count; ++r)
+	{
+		struct model_region *region = TAG_BLOCK_GET_ELEMENT(&model->regions, r, struct model_region);
+		struct model_region_permutation *permutation;
+		struct model_geometry *geometry;
+		short geometry_index;
+		short i;
+
+		if (permutations[r] == NONE)
+			continue;
+		if (!VALID_INDEX(permutations[r], region->permutations.count))
+			return NULL;
+		permutation = TAG_BLOCK_GET_ELEMENT(&region->permutations, permutations[r], struct model_region_permutation);
+		geometry_index = permutation->geometry_indices[lod];
+		if (geometry_index == NONE)
+			continue;
+		if (!VALID_INDEX(geometry_index, model->geometries.count))
+			return NULL;
+		geometry = TAG_BLOCK_GET_ELEMENT(&model->geometries, geometry_index, struct model_geometry);
+		for (i = 0; i < geometry->parts.count; ++i)
+		{
+			struct model_geometry_part *part = TAG_BLOCK_GET_ELEMENT(&geometry->parts, i, struct model_geometry_part);
+			struct model_shader_reference *reference;
+			struct shader *shader;
+			short pass;
+
+			if (!VALID_INDEX(part->shader_index, model->shaders.count))
+				return NULL;
+			reference = TAG_BLOCK_GET_ELEMENT(&model->shaders, part->shader_index, struct model_shader_reference);
+			shader = shader_definition_get(reference->shader.index);
+			if (!shader_type_is_valid_for_model(shader->base.type) ||
+				TEST_FLAG(part->flags, _model_geometry_part_stripped_bit))
+			{
+				continue;
+			}
+			if (list->count == NATIVE_PARTS)
+				return NULL;
+			pass = shader_type_is_transparent(shader->base.type) ? _render_model_pass_transparent :
+				shader->base.type == _shader_type_model &&
+				TEST_FLAG(((struct shader_model_definition *)shader)->flags, _shader_model_alpha_blended_decal_bit) ?
+					_render_model_pass_decal :
+					_render_model_pass_solid;
+			list->parts[list->count].part = part;
+			list->parts[list->count].reference = reference;
+			list->parts[list->count].shader = shader;
+			list->parts[list->count].index = i;
+			list->parts[list->count].pass = pass;
+			list->count++;
+		}
+	}
+	list->generation = generation;
+	list->lod = lod;
+	list->region_count = region_count;
+	memcpy(list->permutations, permutations, region_count);
+	list->model = model;
+
+	return list;
+}
+#endif
+
+static void render_model_parts(
+	struct model const *model,
+	char const *region_permutation_indices,
+	short region_permutation_count,
+	struct render_skinning const *skinning,
+	long object_index,
+	short geometry_detail_level_index,
+	short forced_shader_permutation_index,
+	long flags)
+{
+#ifndef HALO_N3DS
+	render_model_parts_uncached(model, region_permutation_indices, region_permutation_count, skinning,
+		object_index, geometry_detail_level_index, forced_shader_permutation_index, flags);
+#else
+	boolean immediate = TEST_FLAG(flags, _render_model_immediate_bit);
+	short last_pass = TEST_FLAG(flags, _render_model_shadow_bit) ? _render_model_pass_solid : _render_model_pass_transparent;
+	struct render_sort_filth sort_filth[MAXIMUM_PARTS_PER_MODEL_GEOMETRY];
+	struct native_part_list *list;
+	real_point3d centroid;
+	short pass;
+
+	if (render_model_no_geometry)
+		return;
+	list = native_parts(model, region_permutation_indices, region_permutation_count, geometry_detail_level_index);
+	if (!list)
+	{
+		render_model_parts_uncached(model, region_permutation_indices, region_permutation_count, skinning,
+			object_index, geometry_detail_level_index, forced_shader_permutation_index, flags);
+		return;
+	}
+	for (pass = _render_model_pass_solid; pass <= last_pass; pass++)
+	{
+		short sort_filth_count = 0;
+		short entry;
+		short i, j;
+
+		for (entry = 0; entry < list->count; entry++)
+		{
+			struct native_part *item = list->parts + entry;
+			struct model_geometry_part *part = item->part;
+			struct model_shader_reference *shader_reference = item->reference;
+			struct shader *shader = item->shader;
+			short part_index = item->index;
+			short permutation_index = forced_shader_permutation_index ?
+				forced_shader_permutation_index : shader_reference->permutation_index;
+
+			if (item->pass != pass)
+				continue;
+			if (pass == _render_model_pass_transparent)
+			{
+				/* (the fork's: the root's matrix for a node the model doesn't
+				have, no sort record past sort_filth's end, part zero heading a
+				link) */
+				short centroid_node_index = VALID_INDEX(part->centroid_primary_node_index, skinning->node_matrix_count) ?
+					part->centroid_primary_node_index : 0;
+
+				matrix4x3_transform_point(&skinning->node_matrices[centroid_node_index], &part->centroid, &centroid);
+				rasterizer_model_transparent_geometry_submit(shader, permutation_index,
+					&part->triangle_buffer, NONE, part->triangle_buffer.count, &part->vertex_buffer, NONE, &centroid,
+					sort_filth_count < MAXIMUM_PARTS_PER_MODEL_GEOMETRY ? &sort_filth[sort_filth_count] : NULL);
+				if (sort_filth_count < MAXIMUM_PARTS_PER_MODEL_GEOMETRY &&
+					sort_filth[sort_filth_count].group_index != NONE &&
+					!immediate &&
+					(part->next_part_index > 0 || part->previous_part_index >= 0))
+				{
+					sort_filth[sort_filth_count].part_index = part_index;
+					sort_filth[sort_filth_count].next_part_index = part->next_part_index;
+					sort_filth_count++;
+				}
+			}
+			else if (pass == _render_model_pass_decal)
+			{
+				rasterizer_model_draw(shader, permutation_index,
+					&part->triangle_buffer, NONE, part->triangle_buffer.count, &part->vertex_buffer, NONE);
+			}
+			else if (TEST_FLAG(flags, _render_model_shadow_bit))
+			{
+				rasterizer_environment_shadow_model_draw(shader, permutation_index,
+					&part->triangle_buffer, &part->vertex_buffer);
+			}
+			else
+			{
+				/* (adjacent opaque parts of one shader and permutation, up to
+				16, drawn as one: port/n3ds/include/engine_model_merge.inl) */
+				const struct triangle_buffer *triangles[16];
+				const struct vertex_buffer *vertices[16];
+				unsigned int n = 1;
+
+				triangles[0] = &part->triangle_buffer;
+				vertices[0] = &part->vertex_buffer;
+				while (n < 16 && entry + n < list->count)
+				{
+					struct native_part *next = list->parts + entry + n;
+
+					if (next->pass != pass || next->shader != shader ||
+						(!forced_shader_permutation_index &&
+							next->reference->permutation_index != shader_reference->permutation_index))
+					{
+						break;
+					}
+					triangles[n] = &next->part->triangle_buffer;
+					vertices[n] = &next->part->vertex_buffer;
+					++n;
+				}
+				if (n > 1 && n3ds_model_draw_merged(shader, permutation_index, triangles, vertices, n))
+				{
+					entry += (short)(n - 1);
+					continue;
+				}
+				rasterizer_model_draw(shader, permutation_index,
+					&part->triangle_buffer, NONE, part->triangle_buffer.count, &part->vertex_buffer, NONE);
+				rasterizer_debug_model_vertices(object_index, skinning, part);
+			}
+		}
+
+		for (i = 0; i < sort_filth_count; i++)
+		{
+			for (j = 0; j < sort_filth_count; j++)
+			{
+				if (sort_filth[i].next_part_index == sort_filth[j].part_index && sort_filth[i].next_part_index > 0)
+				{
+					*sort_filth[i].next_group_presorted_index_reference = sort_filth[j].group_index;
+					*sort_filth[j].previous_group_presorted_index_reference = sort_filth[i].group_index;
+					break;
+				}
+			}
+		}
+	}
+#endif
 
 	return;
 }
@@ -1418,6 +1694,25 @@ void render_model(
 		model_parameters.skinning.node_matrix_count = node_count;
 #endif
 		model_parameters.geometry_flags = 0;
+#ifdef HALO_N3DS
+		/* port: (Halo3DS) scenery's packets marked for the native renderer's
+		reductions (engine_models.c): bit 16 scenery, 17 foliage, 18 and 19
+		how small it is on screen. Never actors, first-person weapons or the
+		sky (immediate) */
+		if (TEST_FLAG(flags, _render_model_native_scenery_bit) && !TEST_FLAG(flags, _render_model_immediate_bit))
+		{
+			extern int n3ds_input_platform_original_model(void);
+			int original = n3ds_input_platform_original_model();
+
+			model_parameters.geometry_flags |= 1u << 16;
+			if (native_foliage_model(model_index))
+				model_parameters.geometry_flags |= 1u << 17;
+			if (original || level_of_detail_pixels < 128.f)
+				model_parameters.geometry_flags |= 1u << 18;
+			if (level_of_detail_pixels < (original ? 160.f : 64.f))
+				model_parameters.geometry_flags |= 1u << 19;
+		}
+#endif
 		model_parameters.base_map_scale = model->base_map_scale;
 
 		if (TEST_FLAG(flags, _render_model_immediate_bit))
