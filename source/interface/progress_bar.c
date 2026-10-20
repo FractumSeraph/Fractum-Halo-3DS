@@ -1844,6 +1844,7 @@ static void progress_bar_let_go(
 	return;
 }
 
+#ifndef HALO_N3DS /* port: (Halo3DS) its native code has these (engine_progress.c) */
 /* port: the screen of a map's download, over the menus
 (port/linux/game/download_screen.c): the loading screen at the download's
 progress, drawn each frame while the menus behind it go on (a load's
@@ -1868,6 +1869,7 @@ void progress_bar_download_end(
 
 	return;
 }
+#endif
 
 #ifndef HALO_N3DS /* port: (Halo3DS) its native code has this */
 void progress_bar_display(

@@ -12,19 +12,6 @@
 
 void posix_random_bytes(void *buffer, unsigned long size); /* (posix.h's posix_ulong) */
 
-/* port/linux/game/download_screen.c */
-boolean download_screen_active(void)
-{
-	return 0;
-}
-/* port/linux/game/download_screen.c */
-void download_screen_process(void)
-{
-}
-/* port/linux/game/download_screen.c */
-void download_screen_render(void)
-{
-}
 /* source/sound_dsound_xbox.c */
 void dsound_port_set_channel_stereo_position(short virtual_channel_index, boolean positioned, real pan, real distance, real minimum_distance, real distance_fade, real occlusion, real obstruction, boolean attenuate_direct_path)
 {
@@ -110,39 +97,6 @@ struct bitmap_data const * hud_hires_sprite_bitmap(struct bitmap_data const *bit
 /* port/linux/game/hud_hires_tags.c */
 void hud_hires_tags_unloaded(void)
 {
-}
-/* port/linux/game/map_share.h */
-boolean map_share_downloading(char const *level_name)
-{
-	return 0;
-}
-/* port/linux/game/map_share.h */
-void map_share_handle_message(long machine_index, word const *message, word size, boolean from_stream)
-{
-}
-/* port/linux/game/map_share.h */
-boolean map_share_handles_message(word const *message, word size)
-{
-	return 0;
-}
-/* port/linux/game/map_share.h */
-boolean map_share_holds_players(void)
-{
-	return 0;
-}
-/* port/linux/game/map_share.h */
-void map_share_level_name_choose(char *level_name, long size)
-{
-}
-/* port/linux/game/map_share.h */
-boolean map_share_machine_downloading(long machine_index)
-{
-	return 0;
-}
-/* port/linux/game/map_share.h */
-boolean map_share_machine_needs_map(long machine_index)
-{
-	return 0;
 }
 /* port/linux/src/map_torrents.h */
 void map_torrents_playing(const char *level_name, unsigned long version, int hosting)
@@ -379,10 +333,6 @@ boolean viewmodel_shield_is_visible(void)
    one for each run, made like a locally administered unicast MAC address as
    the fork's is (p2p_identifier_from_hash) */
 void posix_random_bytes(void *buffer, unsigned long size); /* (posix.h's posix_ulong) */
-/* port/linux/game/map_share.h */
-void map_share_update(void)
-{
-}
 /* port/linux/src/p2p.h */
 /* (until p2p.c, whose id is the machine's lasting one: one for each run,
    32 hex digits, as a host logs and its ban lists hold it) */
@@ -543,31 +493,6 @@ void posix_ui_image_free(unsigned char *pixels)
 }
 /* port/linux/src/map_download.c's Custom Edition map downloader: not on the
    3DS until it plays those maps (Phase 4): "never" downloads, none runs */
-int map_download_setting(void)
-{
-	return MAP_DOWNLOADS_NEVER;
-}
-void map_download_set_setting(int setting)
-{
-	(void)setting;
-}
-int map_download_possible(const char *name)
-{
-	(void)name;
-	return 0;
-}
-int map_download_start(const char *name, unsigned int version)
-{
-	(void)name;
-	(void)version;
-	return 0;
-}
-void map_download_cancel(void)
-{
-}
-void map_download_reset(void)
-{
-}
 /* port/linux/src/map_torrents.c's: none */
 int map_torrents_fetch(const char *level_name, unsigned long version, const char *files)
 {
@@ -598,30 +523,17 @@ int map_torrents_take_ready(char *level_name, int size)
 }
 /* port/linux/game/map_share_files.c's (map sharing comes with Phase 4):
    no map's hash known */
-unsigned char map_share_map_hash(char const *path, unsigned char *hash)
-{
-	(void)path;
-	(void)hash;
-	return 0;
-}
 /* port/linux/game/menu_functions.c's (the PC menus, not this port's): no
    profile editor to open */
 unsigned char pc_menu_profile_edit_begin(void)
 {
 	return 0;
 }
-void map_download_get(struct map_download_progress *progress)
-{
-	/* (no download: MAP_DOWNLOAD_IDLE, nothing received) */
-	if (progress)
-		memset(progress, 0, sizeof(*progress));
-}
 /* port/linux/game/map_share.c's (map sharing's downloads, after Custom
    Edition maps): none starts */
-unsigned char map_share_download_begin(char const *level_name, unsigned long version, char const *message)
+/* port/linux/game/menu_functions.c's (not built: Halo3DS's menus join from
+   Online Games, browser_screen.c, whose own download offer has no join
+   waiting in the menus to let go) */
+void ui_widget_port_map_fetch_cancel(void)
 {
-	(void)level_name;
-	(void)version;
-	(void)message;
-	return 0;
 }

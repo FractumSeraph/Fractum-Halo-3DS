@@ -49,6 +49,21 @@ void terminal_printf(const union real_argb_color *color, const char *format, ...
 #include <string.h>
 #include <stdlib.h>
 unsigned long system_milliseconds(void);
+/* The fork's engine opens files by Xbox path (d:\maps_ce\..., z:\...),
+ * which its builds translate as CreateFile does (port/linux/include/stdio.h):
+ * here, as engine_win32_files.c does (n3ds_xbox_path). A native path
+ * (sdmc:/...) is left as it is. */
+#ifndef HALO_LINUX_PLATFORM_LAYER
+#include <stdio.h>
+FILE *n3ds_xbox_fopen(const char *path, const char *mode);
+FILE *n3ds_xbox_freopen(const char *path, const char *mode, FILE *stream);
+int n3ds_xbox_remove(const char *path);
+int n3ds_xbox_rename(const char *old_path, const char *new_path);
+#define fopen n3ds_xbox_fopen
+#define freopen n3ds_xbox_freopen
+#define remove n3ds_xbox_remove
+#define rename n3ds_xbox_rename
+#endif
 /* (structures the fork's engine renamed, under Halo3DS's names) */
 #define rasterizer_model_skinning render_skinning
 #include "engine_fork_exports.h"

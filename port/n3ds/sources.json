@@ -3416,6 +3416,25 @@
       "compiler": "clang"
     },
     {
+      "source": "port/linux/src/map_download.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
+    },
+    {
+      "source": "port/linux/game/map_share.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/map_share_files.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/download_screen.c",
+      "compiler": "clang"
+    },
+    {
       "source": "port/n3ds/src/engine_ce_relocate.c",
       "compiler": "gcc"
     }

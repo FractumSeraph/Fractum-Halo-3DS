@@ -27,3 +27,9 @@ void progress_bar_display(real progress)
     assert(n3ds_gpu_loading_draw(progress));
     prepared=TRUE;
 }
+/* port: a map's download (port/linux/game/download_screen.c): its screen
+ * draws its own text over the menus; no loading screen is drawn over them
+ * (the fork's draws its loading screen at the download's progress) */
+static real download_progress;
+void progress_bar_download_display(real progress) { download_progress=progress; }
+void progress_bar_download_end(void) { download_progress=0.f; }

@@ -103,6 +103,57 @@ void n3ds_xbox_path(const char *in, char *out, size_t size)
 	out[i] = 0;
 }
 
+/* the C library's file calls by an Xbox path (engine_prefix.h's fopen,
+ * freopen, remove, rename, for the fork's engine units). A file made for
+ * writing has its folder made first (the fork's map sharing writes into
+ * d:\maps_ce, which a new SD card has not) */
+FILE *n3ds_xbox_fopen(const char *path, const char *mode)
+{
+	char native[260];
+	FILE *file;
+
+	n3ds_xbox_path(path, native, sizeof(native));
+	file = fopen(native, mode);
+	if (!file && errno == ENOENT && mode && (mode[0] == 'w' || mode[0] == 'a'))
+	{
+		char *slash = strrchr(native, '/');
+
+		if (slash && slash > native)
+		{
+			*slash = 0;
+			mkdir(native, 0777);
+			*slash = '/';
+			file = fopen(native, mode);
+		}
+	}
+	return file;
+}
+
+FILE *n3ds_xbox_freopen(const char *path, const char *mode, FILE *stream)
+{
+	char native[260];
+
+	n3ds_xbox_path(path, native, sizeof(native));
+	return freopen(native, mode, stream);
+}
+
+int n3ds_xbox_remove(const char *path)
+{
+	char native[260];
+
+	n3ds_xbox_path(path, native, sizeof(native));
+	return remove(native);
+}
+
+int n3ds_xbox_rename(const char *old_path, const char *new_path)
+{
+	char a[260], b[260];
+
+	n3ds_xbox_path(old_path, a, sizeof(a));
+	n3ds_xbox_path(new_path, b, sizeof(b));
+	return rename(a, b);
+}
+
 static int n3ds_win32_match(const char *pattern, const char *name)
 {
 	for (; *pattern; pattern++, name++)
@@ -402,6 +453,37 @@ BOOL WINAPI GetFileTime(HANDLE handle, struct n3ds_win32_filetime *created, stru
 		*accessed = time;
 	if (written)
 		*written = time;
+	return TRUE;
+}
+
+/* a file's attributes, size and times by its path (the fork's map sharing
+ * checks its shared maps' stamps with it: map_share_files.c): the SDK's
+ * WIN32_FILE_ATTRIBUTE_DATA, its standard level only */
+struct n3ds_win32_attribute_data
+{
+	DWORD attributes;
+	struct n3ds_win32_filetime created, accessed, written;
+	DWORD size_high, size_low;
+};
+_Static_assert(sizeof(struct n3ds_win32_attribute_data) == 36, "the SDK's WIN32_FILE_ATTRIBUTE_DATA");
+
+BOOL WINAPI GetFileAttributesExA(const char *path, int level, void *information)
+{
+	struct n3ds_win32_attribute_data *data = information;
+	char native[260];
+	struct stat status;
+	unsigned long long ticks;
+
+	n3ds_xbox_path(path, native, sizeof(native));
+	if (level != 0 || !data || stat(native, &status) != 0)
+		return FALSE;
+	memset(data, 0, sizeof(*data));
+	data->attributes = S_ISDIR(status.st_mode) ? 0x10 : 0x80;
+	data->size_low = (DWORD)status.st_size;
+	ticks = ((unsigned long long)status.st_mtime + 11644473600ULL) * 10000000ULL;
+	data->written.low = (DWORD)ticks;
+	data->written.high = (DWORD)(ticks >> 32);
+	data->created = data->accessed = data->written;
 	return TRUE;
 }
 
