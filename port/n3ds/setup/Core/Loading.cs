@@ -10,11 +10,14 @@ public static class Loading
     {
         string hash = Data.Hash(data);
         if (hash == AssetHash) return data;
-        if (hash != XbeHash) return null;
         // Retail progress-bar loader: dimensions followed by run-length/intensity
         // nibbles, at VA 0x210988 (.data file offset 0x20a728), 26596 RLE bytes.
+        // Another revision's executable (the Rev 2 disc's) is read at the
+        // same place and used only if the artwork is the retail's exactly.
         byte[] result = new byte[26604];
+        if (data.Length < 0x20a728 + result.Length) return null;
         Array.Copy(data, 0x20a728, result, 0, result.Length);
+        if (hash != XbeHash) return Data.Hash(result) == AssetHash ? result : null;
         Data.Require(Data.Hash(result) == AssetHash, "Loading artwork verification failed.");
         return result;
     }

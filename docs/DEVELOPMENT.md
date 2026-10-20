@@ -51,6 +51,28 @@ Incremental builds track source/header content. Choose a new `--output` director
 for clean verification. Player releases must use the default options, without
 diagnostics, a frame limit or a test heap.
 
+### Building without the SDK, in Docker
+
+`port/n3ds/xdk/` holds clean-room declarations of the Xbox SDK's types,
+structures, constants and prototypes, written without the SDK's headers
+(its README says from what: the game's own debug information, public
+documentation, public-domain mingw-w64 headers). They come from the
+FractumSeraph/OpenCE fork's `port/include/xdk` (GPL-3.0, as that fork is),
+with the few constants Halo3DS's units add. `port/n3ds/build-docker.sh`
+builds the game with them in an image of devkitPro's devkitARM, libctru,
+citro3d, picasso and 3dsxtool with Debian's Clang (`port/n3ds/docker`), so
+nothing need be installed but Docker:
+
+```sh
+sh port/n3ds/build-docker.sh
+```
+
+The setup CLI runs in Microsoft's .NET SDK image in the same way (`docker
+run ... mcr.microsoft.com/dotnet/sdk:10.0 dotnet run --project
+port/n3ds/setup/Cli -- prepare ...`). It takes a Rev 2 disc's `default.xbe`
+too: its HUD text and loading artwork are read at the retail layout and
+used only when they are the retail files byte for byte (their hashes).
+
 ### Diagnostic builds
 
 Add `--test-frames 240 --diagnostics --output build/n3ds-diagnostics` to the

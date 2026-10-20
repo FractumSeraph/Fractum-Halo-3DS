@@ -12,7 +12,23 @@ public static class Hud
     {
         string hash = Data.Hash(data);
         if (hash == HudHash) return data;
+        // Another revision's executable (the Rev 2 disc's, whose maps are the
+        // same) is read at the retail layout and taken only if the text it
+        // gives is the retail file's, byte for byte (its hash, below).
+        byte[]? other = hash == XbeHash ? null : TryExtract(data);
+        if (other != null) return other;
         Data.Require(hash == XbeHash, "This Xbox executable does not match the supported release. Choose default.xbe from your English North American retail copy of Halo: Combat Evolved for the original Xbox, or an existing ntsc2276-hud-strings.bin. No prototype or debug executable is needed.");
+        return Read(data);
+    }
+    static byte[]? TryExtract(byte[] data)
+    {
+        try { return Read(data); }
+        catch (SetupException) { return null; }
+        catch (ArgumentException) { return null; }
+        catch (IndexOutOfRangeException) { return null; }
+    }
+    static byte[] Read(byte[] data)
+    {
         using var stream = new MemoryStream();
         using var writer = new BinaryWriter(stream);
         foreach (uint value in new uint[] { 0x5453484e, 2276, 74, 27 }) writer.Write(value);
