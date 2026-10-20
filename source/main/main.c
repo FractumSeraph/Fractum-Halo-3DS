@@ -384,6 +384,7 @@ symbols in this file:
 #include "networking/network_game_manager.h"
 #include "networking/network_server_manager.h" /* port: a co-op game's level won */
 #include "network_coop.h" /* port: port/linux/game/network_coop.c */
+#include "network_chat.h" /* port: port/linux/game/network_chat.c */
 #include "map_share.h" /* port: port/linux/game/map_share.c */
 #include "profile_sections.h" /* port: port/linux/include/profile_sections.h */
 #ifdef HALO_3DS
@@ -761,6 +762,7 @@ static struct _main_globals main_globals = { 0 };
 /* Keep the original globals layout; these clocks belong to pending requests. */
 static long main_loss_last_tick;
 static long main_respawn_last_tick;
+/* port: the game tick a checkpoint last counted (main_save_map_private) */
 static long main_save_last_tick;
 boolean debug_force_frame_rate_update = FALSE;
 boolean debug_no_drawing = FALSE;
@@ -1716,7 +1718,7 @@ void main_save_map_safe(
 		main_globals.ticks_until_next_save_check = 0;
 		main_globals.ticks_unable_to_save = 0;
 		main_globals.safe_intervals = 0;
-		/* (the tick before: the first check is at once) */
+		/* port: the tick before: the first check is at once */
 		main_save_last_tick = game_time_get()-1;
 	}
 	return;
@@ -1732,7 +1734,7 @@ void main_save_map_no_timeout(
 		main_globals.ticks_until_next_save_check = 0;
 		main_globals.ticks_unable_to_save = 0;
 		main_globals.safe_intervals = 0;
-		/* (the tick before: the first check is at once) */
+		/* port: the tick before: the first check is at once */
 		main_save_last_tick = game_time_get()-1;
 	}
 	main_globals.save_map_timeout = FALSE;
@@ -2736,6 +2738,13 @@ static void main_update_time_unthrottled(
 	{
 		seconds_elapsed = main_globals.recording_dt;
 	}
+	else if (halo_fixed_step() && main_globals.connection == _game_connection_local)
+	{
+		/* port: debug.fixed_step, a frame a tick whatever time has passed, as
+		a movie's frames are its recording's: what runs once a frame (aiming)
+		sees the game's time, and the game plays the same every time */
+		seconds_elapsed = 1.0f / TICKS_PER_SECOND;
+	}
 	else
 	{
 		seconds_elapsed = PIN(seconds_elapsed, 0.0f, 1.0f);
@@ -2977,6 +2986,11 @@ static void main_update_time(
 	if (main_globals.movie)
 	{
 		seconds_elapsed = main_globals.recording_dt;
+	}
+	else if (halo_fixed_step() && main_globals.connection == _game_connection_local)
+	{
+		/* port: debug.fixed_step, as main_update_time_unthrottled */
+		seconds_elapsed = 1.0f / TICKS_PER_SECOND;
 	}
 	else
 	{
@@ -3832,12 +3846,20 @@ static boolean main_loop_iteration(
 
 				network_voice_update();
 			}
+			/* port: (the host's mouse aim assist policy is sent by
+			network_distributed.c, which hands it to OpenCE's network_aim_assist.c
+			on a client: its network_aim_assist_update would send it twice) */
 			/* port: map sharing, in the lobby and in game (port/linux/game/map_share.c) */
 			map_share_update();
 #if defined(HALO_GAME_BROWSER) || defined(HALO_BROWSER)
 			/* text chat (port/linux/game/chat.c; the browser's too) */
 			chat_update();
 #endif
+			/* port: network games' text chat (port/linux/game/network_chat.c,
+			OpenCE's); where chat.c is built, chat.c's is the chat typed and
+			shown, and network_chat.c only carries OpenCE machines' lines to and
+			from it (chat.c, "OpenCE's text chat, bridged") */
+			network_chat_update();
 			/* changing teams during a game (port/linux/game/team_change.c) */
 			team_change_update();
 			profile_scope_enter(main_network_start_frame_section)
@@ -3919,7 +3941,9 @@ static boolean main_loop_iteration(
 
 				if (!console_update() || main_globals.connection!=_game_connection_local)
 				{
-					debug_keys_update();
+					/* port: not while a chat line is typed (its K plays an animation) */
+					if (!network_chat_typing())
+						debug_keys_update();
 					cheats_update();
 					player_control_update((real)main_globals.halt_time_scale*main_globals.seconds_elapsed);
 

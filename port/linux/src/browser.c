@@ -1549,7 +1549,7 @@ static void update_anchors(void)
 	wanted = browser.anchors_wanted && !browser.anchors_started;
 	browser.anchors_started |= wanted;
 	pthread_mutex_unlock(&browser_lock);
-	if (!wanted || !config_boolean("network.online"))
+	if (!wanted || !p2p_native_online())
 		return;
 	if (pthread_create(&thread, NULL, anchors_thread, NULL) == 0)
 		pthread_detach(thread);
@@ -2222,7 +2222,7 @@ int browser_list_status(void)
 
 void browser_follow_listings(int on)
 {
-	int online = config_boolean("network.online");
+	int online = p2p_native_online();
 
 	p2p_lobby_browse(on && online);
 	/* (no pings with internet play off: no probe, no anchor timed) */
@@ -2282,3 +2282,46 @@ int browser_headless(void)
 }
 
 #endif
+
+/* (every build: the menus leave co-op games out of their lists of games,
+menu_functions.c, in the browser build too, which has no game browser) */
+#include "browser.h"
+
+#include <string.h>
+
+/* whether two names are the same, ASCII letters in either case (every
+build has this: the server's and Android's link no SDL string functions) */
+static int browser_ascii_equal(const char *a, const char *b)
+{
+	for (; *a && *b; a++, b++)
+	{
+		char x = *a >= 'A' && *a <= 'Z' ? (char)(*a - 'A' + 'a') : *a;
+		char y = *b >= 'A' && *b <= 'Z' ? (char)(*b - 'A' + 'a') : *b;
+
+		if (x != y)
+			return 0;
+	}
+	return !*a && !*b;
+}
+
+int browser_map_is_campaign(const char *map)
+{
+	static const char *const levels[] = { "a10", "a30", "a50", "b30", "b40", "c10", "c20", "c40", "d20", "d40" };
+	const char *name = map ? map : "";
+	size_t index;
+
+	/* (the path's last part; a Halo PC or HaloMD map, <file>@ce or @md, is not a level) */
+	for (index = 0; name[index]; index++)
+	{
+		if (name[index] == '@')
+			return 0;
+	}
+	while (strpbrk(name, "\\/"))
+		name = strpbrk(name, "\\/") + 1;
+	for (index = 0; index < sizeof(levels) / sizeof(levels[0]); index++)
+	{
+		if (browser_ascii_equal(name, levels[index]))
+			return 1;
+	}
+	return 0;
+}

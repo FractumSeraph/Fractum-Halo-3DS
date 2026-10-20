@@ -574,6 +574,7 @@ symbols in this file:
 #include "network_votekick.h" /* port: port/linux/game/network_votekick.c */
 #include "network_voice.h" /* port: port/linux/game/network_voice.c */
 #include "follow_camera.h" /* port: port/linux/game/follow_camera.c */
+#include "network_chat.h" /* port: port/linux/game/network_chat.c */
 /* (network_server_manager_internal.h's: the host's game record) */
 struct network_game *network_game_server_get_game(struct network_game_server *server);
 #include "objects.h"
@@ -601,6 +602,7 @@ struct network_game *network_game_server_get_game(struct network_game_server *se
 #endif
 #ifdef HALO_GAME_BROWSER
 #include "../../port/linux/src/browser.h"
+#include "../../port/linux/src/ui_overlay.h"
 /* port/linux/game/game_stats.c's */
 void game_stats_player_killed(long killing_player_index, long dead_player_index, boolean friendly_fire);
 void game_stats_player_extra(long player_index, char *text, long size, short *multikills);
@@ -612,6 +614,7 @@ boolean game_stats_line_full(long player_index, boolean host);
 /* cache_files.c's */
 boolean cache_file_tags_are_ce(void);
 #endif
+#include "latency_meter.h" /* port: port/linux/game/latency_meter.c */
 
 /* network_game_globals.c's */
 boolean network_game_distributed_client(void);
@@ -1755,21 +1758,26 @@ HUD's text, centred, on a panel (display.scoreboard_background). A team game's
 players in a column for each team (display.scoreboard_team_layout), else in
 order of score in one column, or two when one has too few rows; each with
 the player's ping in a network game (the host's measure:
-network_distributed.c). More players than a page are scrolled to with the
-mouse wheel and Page Up/Down (platform_scoreboard_scroll), a footer telling
-which are shown; opened, it shows the viewer's own player's page. Network
-co-op's campaign, with no game engine, lists its players as they joined,
-with only their names and pings. */
+network_distributed.c) and, before the name, the logo of the platform its
+client says it plays on over Delta Peer (display.scoreboard_platforms). More
+players than a page are scrolled to with the mouse wheel and Page Up/Down
+(platform_scoreboard_scroll), a footer telling which are shown; opened, it
+shows the viewer's own player's page. Network co-op's campaign, with no
+game engine, lists its players as they joined, with only their names and
+pings. */
 enum
 {
 	/* the rows' widths (in the scoreboard's text, before it is scaled):
 	place, name, score, ping (the last as wide as "Ping" or three digits,
-	so that the columns centred are their text centred) */
+	so that the columns centred are their text centred); and the platform
+	logos' between place and name, when a row has one */
 	SCOREBOARD_PLACE_WIDTH = 55,
+	SCOREBOARD_PLATFORM_WIDTH = 20,
 	SCOREBOARD_NAME_WIDTH = 150,
 	SCOREBOARD_SCORE_WIDTH = 95,
 	SCOREBOARD_PING_WIDTH = 40,
-	SCOREBOARD_COLUMN_WIDTH = SCOREBOARD_PLACE_WIDTH + SCOREBOARD_NAME_WIDTH + SCOREBOARD_SCORE_WIDTH + SCOREBOARD_PING_WIDTH,
+	SCOREBOARD_BASE_COLUMN_WIDTH = SCOREBOARD_PLACE_WIDTH + SCOREBOARD_NAME_WIDTH + SCOREBOARD_SCORE_WIDTH +
+		SCOREBOARD_PING_WIDTH,
 	SCOREBOARD_COLUMN_GAP = 40,
 	/* the rows a column has: as many as fit between 6 rows of the screen
 	from its top and 2 from its bottom (the motion sensor); the scoreboard
@@ -1784,6 +1792,11 @@ enum
 };
 
 #define SCOREBOARD_SCALE 0.75f
+
+/* the platform logos' column this frame: SCOREBOARD_PLATFORM_WIDTH when
+the scoreboard shows them, else 0 (the original layout) */
+static short scoreboard_platform_width = 0;
+#define SCOREBOARD_COLUMN_WIDTH (SCOREBOARD_BASE_COLUMN_WIDTH + scoreboard_platform_width)
 
 /* network_distributed.c's */
 long distributed_player_ping(short player_index);
@@ -1867,7 +1880,7 @@ static void scoreboard_draw_row(
 		color.blue = MIN(color.blue + 0.4f, 1.0f);
 	}
 	tab_stops[0] = left;
-	tab_stops[1] = (short)(left + SCOREBOARD_PLACE_WIDTH);
+	tab_stops[1] = (short)(left + SCOREBOARD_PLACE_WIDTH + scoreboard_platform_width);
 	tab_stops[2] = (short)(tab_stops[1] + SCOREBOARD_NAME_WIDTH);
 	tab_stops[3] = (short)(tab_stops[2] + SCOREBOARD_SCORE_WIDTH);
 	draw_string_set_tab_stops(tabs ? tab_stops : NULL, tabs ? 4 : 0);
@@ -1883,6 +1896,106 @@ static void scoreboard_draw_row(
 
 	return;
 }
+
+#ifdef HALO_GAME_BROWSER
+/* menu_tags.c's: 0 the Xbox's menus, 1 Gearbox's, 2 the Chupathingy menus */
+short pc_menus_set(void);
+/* delta_peer_game.c's */
+int delta_peer_game_on_delta(void);
+int delta_peer_player_platform(int player_index);
+
+/* display.scoreboard_platforms: the menus whose look the logos take (as
+pc_menus_set), or NONE when they are not shown: "auto" with the
+Chupathingy menus only (the Xbox's and Gearbox's stay as the originals
+were), "on" with any, "off" never */
+static short scoreboard_platforms_style(
+	void)
+{
+	static unsigned long read_at = (unsigned long)-1;
+	static short style = NONE;
+
+	/* (read again when Settings changes it) */
+	if (read_at != config_changes())
+	{
+		char const *value = config_string("display.scoreboard_platforms");
+		short menus = pc_menus_set();
+
+		read_at = config_changes();
+		if (value && !csstrcmp(value, "off"))
+			style = NONE;
+		else if (value && !csstrcmp(value, "on"))
+			style = menus;
+		else
+			style = menus == 2 ? menus : NONE;
+	}
+
+	return style;
+}
+
+/* a player's platform for the scoreboard (delta.h's enum delta_platform):
+0 when its machine has not said it over Delta Peer, or this game is not on
+Delta (OpenCE's and the retail game's players show none) */
+static int scoreboard_player_platform(
+	long player_index)
+{
+	if (!delta_peer_game_on_delta())
+		return 0;
+	return delta_peer_player_platform((int)DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index));
+}
+
+/* a row's platform logo, drawn by the overlay (ui_overlay.h) over the
+scoreboard's text, in its column before the name and in the row's colour:
+plain, as the HUD's text is, under the Xbox's and Gearbox's menus; with the
+drop shadow of their text under the Chupathingy menus */
+static void scoreboard_draw_platform(
+	int platform,
+	short style,
+	boolean brighten,
+	real_argb_color const *row_color,
+	long row_index,
+	short top,
+	short left)
+{
+	long font_index = hud_get_font_index();
+	struct font_header *font;
+	real line_height;
+	real size;
+	real x;
+	real y;
+	real red = row_color->red;
+	real green = row_color->green;
+	real blue = row_color->blue;
+	short x0 = (short)(render.camera.window_bounds.x0 - render.camera.viewport_bounds.x0);
+
+	if (platform <= 0 || font_index == NONE || !ui_overlay_available())
+		return;
+	font = font_definition_get(font_index);
+	/* (the scoreboard's units scaled about the title's top left, then the
+	overlay's 640 columns centred on the screen's; its 480 lines are the
+	screen's) */
+	line_height = (real)(font->leading_height + font->descending_height + font->ascending_height) * SCOREBOARD_SCALE;
+	size = line_height * 0.7f;
+	x = x0 + (left + SCOREBOARD_PLACE_WIDTH + 0.5f * SCOREBOARD_PLATFORM_WIDTH - x0) * SCOREBOARD_SCALE -
+		0.5f * (halo_screen_width() - 640);
+	y = top + row_index * line_height + 0.5f * (line_height - size);
+	if (brighten)
+	{
+		red = MIN(red + 0.4f, 1.0f);
+		green = MIN(green + 0.4f, 1.0f);
+		blue = MIN(blue + 0.4f, 1.0f);
+	}
+	ui_overlay_platform(
+		platform,
+		size,
+		x,
+		y,
+		((unsigned int)(red * 255.0f) << 24) | ((unsigned int)(green * 255.0f) << 16) |
+			((unsigned int)(blue * 255.0f) << 8) | (unsigned int)(PIN(row_color->alpha, 0.0f, 1.0f) * 255.0f),
+		style == 2);
+
+	return;
+}
+#endif
 
 /* sdl_platform.c's: the wheel's and Page Up/Down's moves of the open
 scoreboard (notches and pages, down positive) */
@@ -1917,12 +2030,14 @@ static boolean scoreboard_team_columns(
 /* a network game's scoreboard picks players with the mouse
 (halo_scoreboard_pointer_update: a right click frees it): a player's name
 picked opens a menu of what may be done to them, the players' vote to kick
-them (network_votekick.c), muting their voice (network_voice.c), and the
-host's Kick and Ban, Ban picked twice */
+them (network_votekick.c), muting their voice and text chat on this
+machine (network_voice.c, network_chat.c), and the host's Mute for everyone
+(network_chat.c), Kick and Ban, Ban picked twice */
 enum
 {
 	_scoreboard_item_vote,
 	_scoreboard_item_mute,
+	_scoreboard_item_host_mute,
 	_scoreboard_item_kick,
 	_scoreboard_item_ban,
 	_scoreboard_item_cancel,
@@ -1982,20 +2097,26 @@ static void scoreboard_menu_items(
 	{
 		usprintf(labels[_scoreboard_item_vote], L"Start a vote to kick");
 	}
-	/* (its machine's voice: this machine's own choice) */
+	/* (its machine's voice and text chat lines: this machine's own choice) */
 	{
 		struct player_datum *player = player_try_and_get(scoreboard_menu.player_index);
 
-		if (player && network_voice_available())
+		if (player)
 		{
 			offered[_scoreboard_item_mute] = TRUE;
 			usprintf(labels[_scoreboard_item_mute],
-				network_voice_machine_muted(player->network_player_data.machine_index) ? L"Unmute voice" :
-					L"Mute voice");
+				network_voice_machine_muted(player->network_player_data.machine_index) ? L"Unmute voice and chat" :
+					L"Mute voice and chat");
 		}
 	}
 	if (network_votekick_host())
 	{
+		/* (the host's mute of their voice and lines, for every machine:
+		network_chat.c) */
+		offered[_scoreboard_item_host_mute] = TRUE;
+		usprintf(labels[_scoreboard_item_host_mute],
+			network_chat_host_mute_minutes((short)DATUM_INDEX_TO_ABSOLUTE_INDEX(scoreboard_menu.player_index)) ?
+				L"Unmute for everyone" : L"Mute for everyone");
 		offered[_scoreboard_item_kick] = TRUE;
 		offered[_scoreboard_item_ban] = TRUE;
 		usprintf(labels[_scoreboard_item_kick], L"Kick");
@@ -2066,6 +2187,9 @@ static void scoreboard_menu_pick(
 		}
 		break;
 	}
+	case _scoreboard_item_host_mute:
+		network_chat_host_mute(player_index, !network_chat_host_mute_minutes(player_index));
+		break;
 	case _scoreboard_item_kick:
 		network_votekick_host_kick(player_index, FALSE);
 		break;
@@ -2139,7 +2263,11 @@ static void game_engine_rasterize_scoreboard(
 	short menu_item_count = 0;
 	long menu_first_row = 0;
 	long last_row;
+#ifdef HALO_GAME_BROWSER
+	short platforms_style = network ? scoreboard_platforms_style() : NONE;
+#endif
 
+	scoreboard_platform_width = 0;
 	if (font_index == NONE)
 		return;
 	offset_rectangle2d(&bounds, -render.camera.viewport_bounds.x0, -render.camera.viewport_bounds.y0);
@@ -2171,6 +2299,21 @@ static void game_engine_rasterize_scoreboard(
 		ranked_count = populate_statistic_buffer(ranked, _postgame_statistic_ranking, FALSE);
 		statistic_buffer_in_game_only = FALSE;
 	}
+#ifdef HALO_GAME_BROWSER
+	/* (the logos' column only when a player has one: else the layout is the
+	original's) */
+	if (platforms_style != NONE && ui_overlay_available())
+	{
+		for (index = 0; index < ranked_count; index++)
+		{
+			if (scoreboard_player_platform(ranked[index].player_index) > 0)
+			{
+				scoreboard_platform_width = SCOREBOARD_PLATFORM_WIDTH;
+				break;
+			}
+		}
+	}
+#endif
 	team_columns = has_teams && scoreboard_team_columns() && width >= 2 * SCOREBOARD_COLUMN_WIDTH + SCOREBOARD_COLUMN_GAP;
 	for (index = 0; index < ranked_count; index++)
 	{
@@ -2358,6 +2501,8 @@ static void game_engine_rasterize_scoreboard(
 		struct player_datum *player;
 		wchar_t *status_string;
 		real_argb_color *row_color;
+		long ping = NONE;
+		boolean ping_colored;
 
 		if (row >= rows || position >= list_counts[list])
 			continue;
@@ -2380,7 +2525,9 @@ static void game_engine_rasterize_scoreboard(
 		ping_string[0] = 0;
 		if (network)
 		{
-			long ping = distributed_player_ping((short)DATUM_INDEX_TO_ABSOLUTE_INDEX(entry->player_index));
+			/* port: as this machine times it, with the latency meter on
+			(latency_meter.c); else the host's measure, as before */
+			ping = latency_meter_player_ping((short)DATUM_INDEX_TO_ABSOLUTE_INDEX(entry->player_index));
 
 			/* (three digits at most: its column's width) */
 			if (ping == NONE)
@@ -2390,6 +2537,9 @@ static void game_engine_rasterize_scoreboard(
 			else
 				usprintf(ping_string, L"%ld", ping);
 		}
+		/* port: with the latency meter on, a known ping is drawn on its own,
+		in the meter's colour for it (display.latency_meter) */
+		ping_colored = ping != NONE && latency_meter_shown();
 		usnprintf(
 			row_string,
 			NUMBEROF(row_string),
@@ -2397,7 +2547,7 @@ static void game_engine_rasterize_scoreboard(
 			campaign ? L"" : get_place_string(entry),
 			player->name,
 			status_string,
-			ping_string);
+			ping_colored ? L"" : ping_string);
 		row_string[NUMBEROF(row_string) - 1] = 0;
 		row_color = has_teams ? &team_colors[PIN(player->team_index, 0, 1)] : &color;
 		/* port: a player talking (or muted) in voice chat, its speaker just
@@ -2470,6 +2620,36 @@ static void game_engine_rasterize_scoreboard(
 			top,
 			(short)(left + column * (SCOREBOARD_COLUMN_WIDTH + SCOREBOARD_COLUMN_GAP)),
 			TRUE);
+#ifdef HALO_GAME_BROWSER
+		if (scoreboard_platform_width)
+		{
+			scoreboard_draw_platform(
+				scoreboard_player_platform(entry->player_index),
+				platforms_style,
+				player_index == entry->player_index,
+				row_color,
+				2 + row,
+				top,
+				(short)(left + column * (SCOREBOARD_COLUMN_WIDTH + SCOREBOARD_COLUMN_GAP)));
+		}
+#endif
+		if (ping_colored)
+		{
+			real_argb_color ping_color;
+
+			latency_meter_color(ping, &ping_color);
+			ping_color.alpha = alpha;
+			usnprintf(row_string, NUMBEROF(row_string), L"\t\t\t\t%s", ping_string);
+			row_string[NUMBEROF(row_string) - 1] = 0;
+			scoreboard_draw_row(
+				row_string,
+				FALSE,
+				&ping_color,
+				2 + row,
+				top,
+				(short)(left + column * (SCOREBOARD_COLUMN_WIDTH + SCOREBOARD_COLUMN_GAP)),
+				TRUE);
+		}
 	}
 	/* (where the scroll is, and how to move it) */
 	if (total > page)
@@ -2716,6 +2896,35 @@ static void drawline(
 	rasterizer_draw_unicode_string(&bounds, NULL, NULL, 0, string);
 
 	return;
+}
+
+/* port: the carnage report's prompt, kept inside the 4:3 screen. Retail's
+start where the Xbox's buttons fit; the keyboard's keys ("[Space] =pick
+game") and wider buttons ran past the screen's right edge into a wide
+screen's sides. A prompt that would end past POSTGAME_PROMPT_RIGHT starts
+that much further left (measured by drawing it unseen first); one that
+fits is where retail drew it */
+enum
+{
+	POSTGAME_PROMPT_RIGHT = 610
+};
+
+static void postgame_draw_prompt(
+	rectangle2d const *bounds,
+	wchar_t const *prompt,
+	real_argb_color const *color)
+{
+	rectangle2d drawn = *bounds;
+	real_argb_color unseen = *color;
+
+	unseen.alpha = 0.0f;
+	draw_string_set_color(&unseen);
+	draw_string_and_hack_in_icons(&drawn, NULL, NULL, 0, prompt, FALSE);
+	drawn = *bounds;
+	if (draw_string_and_hack_in_icons_end_x > POSTGAME_PROMPT_RIGHT)
+		drawn.x0 = (short)MAX(0, drawn.x0 - (draw_string_and_hack_in_icons_end_x - POSTGAME_PROMPT_RIGHT));
+	draw_string_set_color(color);
+	draw_string_and_hack_in_icons(&drawn, NULL, NULL, 0, prompt, FALSE);
 }
 
 void game_engine_post_rasterize_post_game(
@@ -2985,13 +3194,7 @@ void game_engine_post_rasterize_post_game(
 					unicode_string_list_get_string(string_list_index, 0x48);
 			else
 				prompt = L"";
-			draw_string_and_hack_in_icons(
-				&bounds,
-				NULL,
-				NULL,
-				0,
-				prompt,
-				FALSE);
+			postgame_draw_prompt(&bounds, prompt, &prompt_color);
 			return;
 		}
 
@@ -3001,13 +3204,7 @@ void game_engine_post_rasterize_post_game(
 			prompt = unicode_string_list_get_string(string_list_index, 0x49);
 		else
 			prompt = L"";
-		draw_string_and_hack_in_icons(
-			&bounds,
-			NULL,
-			NULL,
-			0,
-			prompt,
-			FALSE);
+		postgame_draw_prompt(&bounds, prompt, &prompt_color);
 	}
 
 	return;
@@ -4254,6 +4451,14 @@ boolean game_engine_showing_postgame(
 	void)
 {
 	return game_engine != NULL && game_engine_globals.postgame_state == game_engine_mode_postgame_rasterize;
+}
+
+/* port: whether a game is being played: one of no game engine's (the
+campaign, co-op), or its game not over (port/linux/game/latency_meter.c) */
+boolean game_engine_in_play(
+	void)
+{
+	return game_engine == NULL || game_engine_globals.postgame_state == game_engine_mode_active;
 }
 
 void game_variant_options_default(
@@ -5770,6 +5975,30 @@ void game_engine_clear_goal_position(
 	if (!VALID_INDEX(goal_index, NUMBEROF(global_goal)))
 		return;
 	csmemset(&global_goal[goal_index], 0, sizeof(struct netgame_goal));
+
+	return;
+}
+
+/* port: a flag or ball deleted on a client of the distributed netcode, on
+the host's word (port/linux/game/network_objects.c): the goals its game
+type's objective_weapon_update set at it each tick, which nothing else
+clears (ctf: its team's, and its carrier's goal; oddball: its team's) */
+void game_engine_objective_weapon_deleted(
+	long weapon_index)
+{
+	short team_index = weapon_get(weapon_index)->object.owner_team_index;
+
+	if (!game_engine || team_index == NONE)
+		return;
+	if (global_variant.game_engine_index == game_engine_ctf)
+	{
+		game_engine_clear_goal_position(team_index);
+		game_engine_clear_goal_position(team_index + 2);
+	}
+	else if (global_variant.game_engine_index == game_engine_oddball)
+	{
+		game_engine_clear_goal_position(team_index);
+	}
 
 	return;
 }
@@ -8353,7 +8582,8 @@ short game_engine_friendly_damage(
 
 	/* port: network co-op's friendly fire is Server Setup's FRIENDLY FIRE,
 	in the host's game settings (only the host deals damage), between its
-	players: their AI allies they always hurt, as in the campaign */
+	players: their AI allies they always hurt, as in the campaign. Each
+	player also has a choice of their own (network_coop_players_friendly_fire) */
 	if (network_coop_active())
 	{
 		struct network_game *game = network_game_get_game();
@@ -8362,6 +8592,8 @@ short game_engine_friendly_damage(
 
 		if (!game || !unit || unit->unit.player_index == NONE)
 			return _friendly_damage_all;
+		if (!network_coop_players_friendly_fire(attacker_player_index, unit->unit.player_index))
+			return _friendly_damage_none;
 		friendly_fire = game->variant_options.friendly_fire;
 	}
 	else if (!game_engine || !global_variant.universal_variant.teams)

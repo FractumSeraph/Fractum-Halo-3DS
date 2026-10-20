@@ -85,6 +85,7 @@ their handlers open opens.
 #include "saved games/player_profile.h"
 #include "saved games/saved_game_files.h"
 #include "tag_files/tag_groups.h"
+#include "tag_files/tag_files.h"
 #include "text/text_group.h"
 #include "text/unicode.h"
 
@@ -108,6 +109,7 @@ unsigned long cache_files_map_version(char const *map_name);
 #include "halo_server_browser.h"
 /* (the multiplayer maps past the Xbox's: ui_map_list.c) */
 #include "halo_ui_map_list.h"
+#include "text_filter.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -654,6 +656,7 @@ reached, and (map_data) a saved game on the level */
 #define ROW_TEXT_LENGTH 64
 #define MAXIMUM_PROFILES 32
 #define SOUND_ERROR 4
+#define SOUND_CURSOR 1
 #define SOUND_FORWARD 2
 #define SOUND_BACK 3
 
@@ -1065,6 +1068,8 @@ static short map_kind_first(short chosen, short count)
 	return (short)PIN(chosen - MAP_KIND_ROWS / 2, 0, MAX(count - MAP_KIND_ROWS, 0));
 }
 
+static boolean list_scrolls_at_end(void);
+
 static void map_kind_focus(struct widget_instance *list, short first, short chosen)
 {
 	focus_row(list, (short)(1 + chosen - first));
@@ -1080,12 +1085,12 @@ static short map_kind_rows_update(struct widget_instance *list, short *first, sh
 	short row = focused_row(list), index = 0;
 	struct widget_instance *child;
 
-	if (row != NONE && row >= 1 && row == shown && *first + shown < count)
+	if (row != NONE && row >= 1 && row == shown && *first + shown < count && list_scrolls_at_end())
 	{
 		(*first)++;
 		focus_row(list, --row);
 	}
-	else if (row == 1 && *first > 0)
+	else if (row == 1 && *first > 0 && list_scrolls_at_end())
 	{
 		(*first)--;
 		focus_row(list, ++row);
@@ -1380,10 +1385,16 @@ static void level_list_update(struct widget_instance *list)
 
 /* "solo level set map": the level shown, if reached, or the Halo PC
 campaign map, for the difficulty menu; or the multiplayer map, played at
-once (FALSE: no difficulty menu) */
-static boolean level_choose(short controller)
+once (FALSE: no difficulty menu). The list is read again first: a tap on
+the touchscreen focuses a row and activates it at once, before the list's
+update has read which row it is (it started the level shown before, Pillar
+of Autumn on a new profile). The map and gametype lists do the same. */
+static boolean level_choose(struct widget_instance *list, short controller)
 {
-	short level = campaign.shown_level;
+	short level;
+
+	level_list_update(list);
+	level = campaign.shown_level;
 
 	if (level_list.kind != MAP_KIND_SINGLEPLAYER &&
 		(level_list.chosen < 0 || level_list.chosen >= map_kind_count(level_list.kind, level_list.map_count)))
@@ -1633,6 +1644,34 @@ static boolean setting_changed_save(struct widget_instance *spinner, struct pc_m
 	return TRUE;
 }
 
+/* "port settings accept" (this fork): the Chupathingy menus' settings pages'
+A (tools/port_settings.py's chupathingy_settings_pages), which their list
+takes before its rows. On a row that opens a page of its own (a category's,
+"chupathingy/settings/<page>/op_<category>": Video Setup's Graphics and the
+rest) the row's A opens that page, and FALSE keeps the handler from going back
+(as lobby_join_start does); on any other row the page is saved, as "port
+settings save", and the handler goes back */
+static boolean settings_accept(struct widget_instance *list, struct event_record *event, boolean *widget_deleted)
+{
+	struct widget_instance *row = list->focused_child;
+	char const *name = row ? tag_get_name(row->definition_tag_index) : NULL;
+
+	/* (the port's menus' tags are named "pc\\" and their name: menu_tags.c) */
+	if (name && !strncmp(name, "pc\\chupathingy\\settings\\", strlen("pc\\chupathingy\\settings\\")) &&
+		strstr(name, "\\op_"))
+	{
+		/* (this page's changes kept first: its ACCEPT prompt is this A too,
+		and comes back to the category's row) */
+		settings_each(screen_of(list), setting_changed_save);
+		platform_display_apply();
+		ui_widget_port_dispatch_event(row, BUTTON_A, event_controller(list, event), widget_deleted);
+		return FALSE;
+	}
+	settings_each(screen_of(list), setting_changed_save);
+	platform_display_apply();
+	return TRUE;
+}
+
 /* "port settings defaults" */
 static boolean setting_default_show(struct widget_instance *spinner, struct pc_menu_setting *setting)
 {
@@ -1659,6 +1698,23 @@ static void settings_help(struct widget_instance *list)
 
 		if (label != NONE)
 			index = label + 1;
+	}
+	/* (Button Layout set to Bumper Jumper: its own help, after the rows': the
+	last string, one for each row before it) */
+	if (index && row)
+	{
+		struct widget_instance *spinner = named(row, "button_preset_spinner", 0);
+
+		if (spinner && spinner->parameters.list.selected_index == _button_preset_bumper_jumper)
+		{
+			struct widget_instance *each;
+			short rows = 0;
+
+			for (each = list->child; each; each = each->next)
+				if (each->child && each->child->type == 1 && strncmp(each->name, "button", 6))
+					rows++;
+			index = (short)(rows + 1);
+		}
 	}
 	help->parameters.text_box.string_list_index = index;
 }
@@ -1759,6 +1815,7 @@ static boolean color_list_initialize(struct widget_instance *list)
 
 /* (ui_widget.c) whether the pointer moved the menus' focus last */
 boolean ui_widget_port_pointer_focused(void);
+boolean ui_widget_port_hover_focused(void);
 
 /* Whether a list whose focus is on its first or last row moves on: when the
 d-pad put it there. The pointer resting there would make it move every
@@ -1827,20 +1884,25 @@ the PC version's nine and Privacy's (FRAME_COPIES) the Xbox's five of the
 button settings */
 #define PROFILE_GAMEPAD_FRAME 2
 #define PROFILE_FIRST_LAYOUT_FRAME 10
+#define PROFILE_LAYOUT_FRAMES (_button_preset_swap_b_and_right_thumb + 1)
 
 /* "port gamepad layout preview" (the picture's own): on Gamepad Setup's
-row, the edited profile's button settings */
+row, the edited profile's button settings; the port's own (Bumper Jumper),
+of which the Xbox has no picture, keeps the row's */
 static void profile_gamepad_layout(struct widget_instance *picture)
 {
 	struct player_profile *profile = player_ui_get_edit_player_profile();
 	short frame = picture->animation.current_frame_index;
 
 	if (frame == PROFILE_GAMEPAD_FRAME ||
-		(frame >= PROFILE_FIRST_LAYOUT_FRAME && frame < PROFILE_FIRST_LAYOUT_FRAME + NUMBER_OF_BUTTON_PRESETS))
+		(frame >= PROFILE_FIRST_LAYOUT_FRAME && frame < PROFILE_FIRST_LAYOUT_FRAME + PROFILE_LAYOUT_FRAMES))
 	{
-		picture->animation.current_frame_index = (short)(PROFILE_FIRST_LAYOUT_FRAME +
-			(profile && profile->controller_settings.button_preset < NUMBER_OF_BUTTON_PRESETS ?
-				profile->controller_settings.button_preset : _button_preset_standard));
+		/* (the Xbox's map has a picture for its five layouts: Bumper Jumper's
+		is the plain gamepad's) */
+		byte preset = profile ? profile->controller_settings.button_preset : (byte)_button_preset_standard;
+
+		picture->animation.current_frame_index = preset < PROFILE_LAYOUT_FRAMES ?
+			(short)(PROFILE_FIRST_LAYOUT_FRAME + preset) : PROFILE_GAMEPAD_FRAME;
 	}
 }
 
@@ -1856,9 +1918,12 @@ static void chupathingy_settings_picture(struct widget_instance *picture)
 
 	if (picture->animation.current_frame_index == PROFILE_GAMEPAD_FRAME)
 	{
-		picture->animation.current_frame_index = (short)(CHUPATHINGY_FIRST_LAYOUT_FRAME +
-			(profile && profile->controller_settings.button_preset < NUMBER_OF_BUTTON_PRESETS ?
-				profile->controller_settings.button_preset : _button_preset_standard));
+		if (profile && profile->controller_settings.button_preset == _button_preset_bumper_jumper)
+			picture->animation.current_frame_index = PROFILE_GAMEPAD_FRAME;
+		else
+			picture->animation.current_frame_index = (short)(CHUPATHINGY_FIRST_LAYOUT_FRAME +
+				(profile && profile->controller_settings.button_preset < _button_preset_bumper_jumper ?
+					profile->controller_settings.button_preset : _button_preset_standard));
 	}
 }
 
@@ -2172,10 +2237,13 @@ static struct
 	{ "controls.scoreboard", L"SHOW SCORES", 2 },
 	{ "controls.pause", L"PAUSE MENU", 2 },
 	{ "controls.screenshot", L"SCREENSHOT", 2 },
-	{ "controls.push_to_talk", L"PUSH TO TALK", 2 },
-	{ "controls.chat_all", L"CHAT", 2 },
-	{ "controls.chat_team", L"TEAM CHAT", 2 },
-	{ "controls.chat_log", L"CHAT LOG", 2 },
+	{ "controls.push_to_talk", L"PUSH TO TALK", 3 },
+	{ "controls.chat_all", L"CHAT", 3 },
+	{ "controls.chat_team", L"TEAM CHAT", 3 },
+	{ "controls.chat_log", L"CHAT LOG", 3 },
+	/* (OpenCE's text chat, port/linux/game/network_chat.c) */
+	{ "controls.chat", L"NETWORK CHAT", 3 },
+	{ "controls.team_chat", L"NETWORK TEAM CHAT", 3 },
 };
 
 static struct
@@ -2956,6 +3024,7 @@ boolean game_engine_running(void);
 void game_engine_end_game(void);
 /* the platform layer's */
 int p2p_join_invite(char const *text);
+int p2p_join_listing(struct p2p_listing const *listing);
 int p2p_invite_link(char *link, int size);
 void p2p_set_hosting_allowed(int allowed);
 int p2p_peer_address(unsigned char const *identifier, unsigned long *address);
@@ -3148,6 +3217,12 @@ static void text_field_show(struct widget_instance *value, char const *text, boo
 		shown[index++] = L'_';
 	shown[index] = 0;
 	text_set(value, shown);
+	/* (what is being typed shown as it is: streamer mode hides nothing of it,
+	text_filter.c) */
+	if (editing && value)
+		text_filter_exempt(value->parameters.text_box.text);
+	else if (!text_field_editing(NULL))
+		text_filter_exempt(NULL);
 }
 
 /* ---- the menu */
@@ -3324,7 +3399,10 @@ difficulties, or the level at the difficulty chosen. FALSE stays on the Map
 screen (the gametypes open on TRUE). */
 static boolean map_list_choose(struct widget_instance *list, boolean *widget_deleted)
 {
-	short chosen = map_list.chosen;
+	short chosen;
+
+	map_list_update(list);
+	chosen = map_list.chosen;
 
 	if (chosen >= map_step_count())
 		return campaign_fail();
@@ -3521,8 +3599,9 @@ static void gametype_list_update(struct widget_instance *list)
 }
 
 /* "mp profile set for game" */
-static boolean gametype_choose(void)
+static boolean gametype_choose(struct widget_instance *list)
 {
+	gametype_list_update(list);
 	gametype_setup_end();
 	if (multiplayer.gametype_chosen >= multiplayer.bank_count)
 		return campaign_fail();
@@ -3583,9 +3662,9 @@ gametype_options' coop_extra_enemies_spinner has them, in this order): its
 amount's row is the choice's */
 enum
 {
-	_cooperative_enemies_none,
 	_cooperative_enemies_per_player,
 	_cooperative_enemies_multiplier,
+	_cooperative_enemies_none,
 	NUMBER_OF_COOPERATIVE_ENEMIES_MODES
 };
 
@@ -3738,7 +3817,8 @@ static void server_settings_update(struct widget_instance *list)
 	visible_set(named(list, "op_listing", 0), multiplayer.mode == _multiplayer_mode_host_internet &&
 		config_boolean("network.online") && config_boolean("network.public_lobby"));
 #endif
-	if ((spinner = named(list, "listing_spinner", 0)) != NULL && named(list, "op_listing", 0)->visible)
+	if ((spinner = named(list, "listing_spinner", 0)) != NULL && named(list, "op_listing", 0) &&
+		named(list, "op_listing", 0)->visible)
 	{
 		boolean public = spinner->parameters.list.selected_index == 0;
 		struct widget_instance *help = list->parameters.list.extended_description;
@@ -3899,7 +3979,8 @@ static void browser_games_read(void)
 			struct advertised_game *game = &games[index];
 
 			if (network_game_client_advertised_game_is_valid(game) && !advertised_in_progress(game) == (pass == 0) &&
-				game_from_peer(game) == (multiplayer.mode == _multiplayer_mode_direct_link))
+				game_from_peer(game) == (multiplayer.mode == _multiplayer_mode_direct_link) &&
+				(game_from_peer(game) || !browser_map_is_campaign(game->map_name)))
 			{
 				multiplayer.games[multiplayer.game_count++] = game;
 			}
@@ -3912,6 +3993,38 @@ static void browser_games_read(void)
 static short browser_row_index(struct widget_instance *row)
 {
 	return row && !strncmp(row->name, "server_item_", 12) ? (short)(atoi(row->name + 12) - 1) : NONE;
+}
+
+/* the ping each row shows (-1: none), coloured by pc_menu_text_color: green
+under PING_GOOD milliseconds, yellow under PING_FAIR, red above */
+static short browser_row_pings[BROWSER_ROWS];
+enum
+{
+	PING_GOOD = 80,
+	PING_FAIR = 160,
+};
+#define PING_COLOR_GOOD 0x5ED38CFFUL
+#define PING_COLOR_FAIR 0xE8C547FFUL
+#define PING_COLOR_POOR 0xE86A5AFFUL
+
+/* a server browser row's ping's colour, by how good it is (FALSE: not a
+row's ping, or none): pc_menu_text_color */
+static boolean browser_ping_color(struct widget_instance const *widget, real_rgb_color *color)
+{
+	short row = widget->parent ? browser_row_index(widget->parent) : NONE;
+	short ping;
+	unsigned long rgba;
+
+	if (row < 0 || row >= BROWSER_ROWS || strcmp(widget->name, "server_item_ping"))
+		return FALSE;
+	ping = browser_row_pings[row];
+	if (ping < 0)
+		return FALSE;
+	rgba = ping < PING_GOOD ? PING_COLOR_GOOD : ping < PING_FAIR ? PING_COLOR_FAIR : PING_COLOR_POOR;
+	color->red = (real)((rgba >> 24) & 0xFF) / 255.0f;
+	color->green = (real)((rgba >> 16) & 0xFF) / 255.0f;
+	color->blue = (real)((rgba >> 8) & 0xFF) / 255.0f;
+	return TRUE;
 }
 
 /* a bar of buttons' focus, off one hidden: on its first one shown */
@@ -3941,21 +4054,25 @@ static boolean browser_item_usable(struct widget_instance *child)
 }
 
 /* the browser's focus, off what cannot have it (at the start, or a row whose
-game went): the first game, else the buttons (off those hidden) */
-static void browser_focus(struct widget_instance *list)
+game went): the first game, else the buttons (off those hidden); the row of
+the game chosen is `chosen_row` (NONE: none shown) */
+static void browser_focus(struct widget_instance *list, short chosen_row)
 {
 	char const *const choices[] = { "server_item_1", "join_game_button_bar" };
 	struct widget_instance *focused = list->focused_child;
 	struct widget_instance *row;
 	short index;
 
-	/* (the rows' backgrounds: the focused one's outlined frame. The engine
-	shows a list item's focus only on a bitmap of two frames, and theirs has
-	three: normal, focused, selected) */
+	/* (the rows' backgrounds, as Custom Edition's: the chosen game's
+	outlined in yellow, the focused one's in blue. The engine shows a list
+	item's focus only on a bitmap of two frames, and theirs has three:
+	normal, focused, selected) */
 	for (row = list->child; row; row = row->next)
 	{
-		if (browser_row_index(row) != NONE)
-			row->animation.current_frame_index = row == focused ? 1 : 0;
+		short row_index = browser_row_index(row);
+
+		if (row_index != NONE)
+			row->animation.current_frame_index = row_index == chosen_row ? 2 : row == focused ? 1 : 0;
 	}
 	focus_off_hidden(named(list, "join_game_button_bar", 0));
 	if (focused && focused->visible && !focused->disabled)
@@ -4015,7 +4132,7 @@ static boolean browser_initialize(struct widget_instance *screen, struct event_r
 		for (child = list ? list->child : NULL; child; child = child->next)
 			child->disabled = !browser_item_usable(child);
 		if (list)
-			browser_focus(list);
+			browser_focus(list, NONE);
 	}
 	visible_set(named(screen, "scroll_up_button", 0), FALSE);
 	visible_set(named(screen, "scroll_down_button", 0), FALSE);
@@ -4183,6 +4300,7 @@ static struct
 	/* a message about the game chosen (why it cannot be joined), and when */
 	wchar_t message[ROW_TEXT_LENGTH * 2];
 	unsigned long message_time;
+	boolean failed_nat_strict;
 	/* a game with a password chosen: the password screen's (its own copy:
 	the rows' are read again each frame), and a join it began, which the
 	browser takes up again as it comes back */
@@ -4221,6 +4339,17 @@ static void lobby_browser_headers_initialize(struct widget_instance *screen)
 		if (header->focused_child == child && child->disabled)
 			header->focused_child = NULL;
 	}
+}
+
+/* the row of the browser's chosen game, NONE if it is not on the rows */
+static short browser_chosen_row(void)
+{
+	boolean server_browser = multiplayer.mode == _multiplayer_mode_server_browser;
+	short chosen = server_browser ? lobby_browser.chosen : multiplayer.game_chosen;
+	short row = server_browser ? (short)(chosen - lobby_browser.first) : chosen;
+
+	return chosen < (server_browser ? lobby_browser.count : multiplayer.game_count) && row >= 0 &&
+		row < BROWSER_ROWS ? row : NONE;
 }
 
 static void lobby_browser_begin(struct widget_instance *screen)
@@ -4381,6 +4510,9 @@ static short lobby_browser_valid_games(struct p2p_listing *games, short count)
 		wchar_t name[P2P_LISTING_NAME_SIZE + 1];
 		short index;
 
+		/* (no co-op games in a server browser) */
+		if (browser_map_is_campaign(games[read].map))
+			continue;
 		text_to_wide(games[read].name, name, NUMBEROF(name));
 		if (!player_name_clean(name, NUMBEROF(name)))
 			continue;
@@ -4554,12 +4686,19 @@ static void lobby_browser_add_listed(void)
 {
 	/* (its gametypes as a listing names them) */
 	static char const *const gametypes[] = { "Game", "CTF", "Slayer", "Oddball", "King", "Race", "Bomb" };
-	short index;
+	short index, kept;
 
 	lobby_browser_listed.count = 0;
-	if (!config_boolean("network.online") || !config_boolean("network.public_lobby"))
+	if (!p2p_native_online() || !config_boolean("network.public_lobby"))
 		return;
 	lobby_browser_listed.count = (short)browser_get_games(lobby_browser_listed.games, BROWSER_MAXIMUM_GAMES);
+	/* (no co-op games in a server browser) */
+	for (index = kept = 0; index < lobby_browser_listed.count; index++)
+	{
+		if (!browser_map_is_campaign(lobby_browser_listed.games[index].map))
+			lobby_browser_listed.games[kept++] = lobby_browser_listed.games[index];
+	}
+	lobby_browser_listed.count = kept;
 	for (index = 0; index < lobby_browser_listed.count; index++)
 	{
 		struct browser_game const *listed = &lobby_browser_listed.games[index];
@@ -4804,9 +4943,10 @@ static void lobby_browser_update(struct widget_instance *list)
 			lobby_browser_focus_row(list, 0);
 			focused = 0;
 			lobby_browser.last_row = 0;
+			lobby_browser.chosen = lobby_browser.first;
 		}
 	}
-	if (focused != NONE)
+	if (focused != NONE && !ui_widget_port_hover_focused())
 		lobby_browser.chosen = (short)(lobby_browser.first + focused);
 	lobby_browser.chosen = (short)PIN(lobby_browser.chosen, 0, MAX(0, lobby_browser.count - 1));
 	chosen = lobby_browser.chosen;
@@ -4845,9 +4985,11 @@ static void lobby_browser_update(struct widget_instance *list)
 		text_set(named(row, "server_item_type", 0), game_type_name(game->engine_type));
 		usnprintf(text, ROW_TEXT_LENGTH - 1, L"%d/%d", game->player_count, game->maximum_player_count);
 		text_set(named(row, "server_item_players", 0), text);
-		/* (no ping yet: its host is reached only on joining) */
-		text_set(named(row, "server_item_ping", 0), game->failed ? L"FAILED" : !game->open ? L"CLOSED" :
-			game->in_progress ? L"LIVE" : L"");
+		/* (its host's ping, once probed: p2p_lobby.c; none before) */
+		browser_row_pings[index - lobby_browser.first] = game->failed ? -1 : game->ping;
+		usnprintf(text, ROW_TEXT_LENGTH - 1, L"%d", game->ping);
+		text_set(named(row, "server_item_ping", 0), game->failed ? L"FAILED" : game->ping >= 0 ? text :
+			!game->open ? L"CLOSED" : game->in_progress ? L"LIVE" : L"");
 		/* (the lock: a game with a password. Its bitmap's first frame is
 		empty, the PC version's for no lock; the next is the lock, in the
 		menus' blue) */
@@ -4905,6 +5047,7 @@ static void lobby_browser_update(struct widget_instance *list)
 			p2p_lobby_mark_failed(lobby_browser.identifier);
 			csmemcpy(lobby_browser.failed_name, lobby_browser.name, sizeof(lobby_browser.failed_name));
 			lobby_browser.failed_time = now ? now : 1;
+			lobby_browser.failed_nat_strict = p2p_nat_strict();
 			lobby_browser.joining = FALSE;
 			platform_log("menus: could not reach the server browser's game %s", lobby_browser.name);
 			ui_play_audio_feedback_sound(SOUND_ERROR);
@@ -4933,12 +5076,26 @@ static void lobby_browser_update(struct widget_instance *list)
 		else if (lobby_browser.failed_time && now - lobby_browser.failed_time < LOBBY_BROWSER_FAILED_TIME)
 		{
 			text_to_wide(lobby_browser.failed_name, name, NUMBEROF(name));
-			usnprintf(text, NUMBEROF(text) - 1, L"Could not reach %s", name);
+			/* (and why, when this network's NAT is what stops it: the router's
+			UPnP, or a forwarded network.tunnel_port, lets it through) */
+			usnprintf(text, NUMBEROF(text) - 1, lobby_browser.failed_nat_strict ?
+				L"Strict NAT, turn on UPnP: could not reach %s" :
+				L"Could not reach %s", name);
 		}
 		else if (!lobby_browser.count)
 		{
-			usnprintf(text, NUMBEROF(text) - 1, L"%s", now - lobby_browser.begin_time < LOBBY_BROWSER_LOOK_TIME ?
-				L"Looking for public games..." : L"No public games found");
+			/* (an old build sees none of the games: it says why) */
+			int newer = p2p_lobby_newer_games();
+
+			if (now - lobby_browser.begin_time < LOBBY_BROWSER_LOOK_TIME)
+				usnprintf(text, NUMBEROF(text) - 1, L"Looking for public games...");
+			else if (newer)
+			{
+				usnprintf(text, NUMBEROF(text) - 1, L"%d %s on a newer version: update the game to join", newer,
+					newer == 1 ? L"game is" : L"games are");
+			}
+			else
+				usnprintf(text, NUMBEROF(text) - 1, L"No public games found");
 		}
 		else if (lobby_browser.message[0] && now - lobby_browser.message_time < LOBBY_BROWSER_MESSAGE_TIME)
 		{
@@ -4990,7 +5147,7 @@ static void lobby_browser_update(struct widget_instance *list)
 		usnprintf(text, ROW_TEXT_LENGTH - 1, L"%s %d", label, lobby_browser.count);
 		text_set(named(stats, "server_count_label", 0), text);
 	}
-	browser_focus(list);
+	browser_focus(list, browser_chosen_row());
 }
 
 /* the game's host reached by its invite (joined, once it is reached:
@@ -5066,7 +5223,9 @@ static boolean lobby_browser_join(struct p2p_listing const *game, short controll
 		return TRUE;
 	}
 #endif
-	if (!p2p_join_invite(game->invite))
+	/* (a public game: the text chat is off in it, whatever its host says:
+	network_chat.c) */
+	if (!p2p_join_listing(game))
 		return FALSE;
 #ifdef HALO_BROWSER
 	/* (the page joins it and shows its lobby: nothing to wait for here) */
@@ -5376,13 +5535,14 @@ static void browser_update(struct widget_instance *list)
 	}
 	browser_games_read();
 	map_fetch_update(list);
-	if (focused != NONE && focused < multiplayer.game_count)
+	if (focused != NONE && focused < multiplayer.game_count && !ui_widget_port_hover_focused())
 		multiplayer.game_chosen = focused;
 	for (row = list->child; row; row = row->next)
 	{
 		short index = browser_row_index(row);
 		struct advertised_game *game;
 		wchar_t text[ROW_TEXT_LENGTH];
+		int ping;
 
 		if (index == NONE)
 			continue;
@@ -5398,7 +5558,11 @@ static void browser_update(struct widget_instance *list)
 		text_set(named(row, "server_item_type", 0), game_type_name(game->engine_type));
 		usnprintf(text, ROW_TEXT_LENGTH - 1, L"%d/%d", game->player_count, game->maximum_player_count);
 		text_set(named(row, "server_item_players", 0), text);
-		text_set(named(row, "server_item_ping", 0), advertised_in_progress(game) ? L"LIVE" : L"");
+		/* (a Direct Link game's host: the tunnel's ping) */
+		ping = multiplayer.mode == _multiplayer_mode_direct_link ? p2p_peer_ping(game->xnaddr + 2) : -1;
+		browser_row_pings[index] = (short)ping;
+		usnprintf(text, ROW_TEXT_LENGTH - 1, L"%d", ping);
+		text_set(named(row, "server_item_ping", 0), ping >= 0 ? text : advertised_in_progress(game) ? L"LIVE" : L"");
 		visible_set(named(row, "server_item_locked", 0), FALSE);
 		visible_set(named(row, "server_item_dedicated", 0), FALSE);
 		visible_set(named(row, "server_item_classic", 0), FALSE);
@@ -5448,7 +5612,7 @@ static void browser_update(struct widget_instance *list)
 		usnprintf(text, ROW_TEXT_LENGTH - 1, L"%s %d", label, multiplayer.game_count);
 		text_set(named(stats, "server_count_label", 0), text);
 	}
-	browser_focus(list);
+	browser_focus(list, browser_chosen_row());
 }
 
 /* "direct ip connect go" (Direct Link's PASTE LINK): the invite
@@ -5486,13 +5650,25 @@ static boolean browser_join_chosen(struct widget_instance *widget, short control
 	return ui_widget_port_join(widget, multiplayer.games[multiplayer.game_chosen], LOBBY_NAME, widget_deleted);
 }
 
-/* "gamespy select item" (a row: joins its game) and "gamespy select button"
-(Join) */
+/* "gamespy select item" (a row: chooses its game, or joins it once chosen)
+and "gamespy select button" (Join) */
 static boolean browser_select(struct widget_instance *widget, struct event_record *event, short controller,
 	boolean *widget_deleted)
 {
 	short row = browser_row_index(widget);
 
+	/* (a row not chosen, clicked after the pointer passed over it: chosen,
+	as Custom Edition's; a click on it chosen, a double click, A or JOIN
+	joins its game. Not the A press a join posts: lobby_browser_select) */
+	if (row != NONE && row != browser_chosen_row() && !lobby_browser.ready)
+	{
+		if (multiplayer.mode == _multiplayer_mode_server_browser)
+			lobby_browser.chosen = (short)(lobby_browser.first + row);
+		else
+			multiplayer.game_chosen = row;
+		ui_play_audio_feedback_sound(SOUND_CURSOR);
+		return TRUE;
+	}
 	if (multiplayer.mode == _multiplayer_mode_server_browser)
 		return lobby_browser_select(widget, controller, row, widget_deleted);
 	if (row != NONE)
@@ -5601,6 +5777,24 @@ static boolean pause_change_teams(struct widget_instance *widget)
 		return campaign_fail();
 	team_change_ask(widget->local_player_index);
 	return TRUE;
+}
+
+/* "port coop friendly fire" (network co-op's pause menu's FRIENDLY FIRE,
+menu_tags.c): switches this machine's own friendly fire, from now on */
+static boolean coop_friendly_fire_change(void)
+{
+	char const *choice = config_boolean("network.coop_own_friendly_fire") ? "false" : "true";
+
+	if (!config_write("network.coop_own_friendly_fire", choice))
+		platform_log("menus: could not write network.coop_own_friendly_fire to config.toml");
+	ui_play_audio_feedback_sound(SOUND_FORWARD);
+	return TRUE;
+}
+
+/* "port coop friendly fire text": the button's text, ON or OFF */
+static void coop_friendly_fire_text(struct widget_instance *button)
+{
+	button->parameters.text_box.string_list_index = config_boolean("network.coop_own_friendly_fire") ? 0 : 1;
 }
 
 /* ---- the lobby: the game's players (up to the port's 128), its map and
@@ -5887,6 +6081,9 @@ boolean pc_menu_text_color(struct widget_instance const *widget, real_rgb_color 
 {
 	short index;
 
+	/* (OpenCE's: the server browser's pings, coloured by how good they are) */
+	if (browser_ping_color(widget, rgb))
+		return TRUE;
 	for (index = 0; index < MAXIMUM_TEXT_COLORS; index++)
 	{
 		if (text_colors[index].widget == widget &&
@@ -6416,12 +6613,19 @@ static struct gametype_option const gametype_options[] =
 		{ "5", "10", "15", "20", "30", "50" } },
 	/* (and the players' votes to kick: port/linux/game/network_votekick.c) */
 	{ "votekick_spinner", _option_setting, 0, 0, 2, { 0 }, "network.votekick", { "true", "false" } },
+	/* (and the text chat: port/linux/game/network_chat.c) */
+	{ "text_chat_spinner", _option_setting, 0, 0, 3, { 0 }, "network.text_chat", { "on", "links", "off" } },
+	{ "aim_assist_spinner", _option_setting, 0, 0, 2, { 0 }, "network.block_mouse_aim_assist", { "false", "true" } },
 	/* co-op's options (Server Setup's CO-OP OPTIONS: tools/port_settings.py's
 	COOP_SETUP_SCREENS; coop_enemies.c) */
 	{ "coop_friendly_fire_spinner", _option_setting, 0, 0, 4, { 0 }, "network.coop_friendly_fire",
 		{ "off", "on", "shields_only", "explosives_only" } },
 	{ "coop_extra_enemies_spinner", _option_setting, 0, 0, 3, { 0 }, "network.coop_enemies_mode",
-		{ "none", "per_player", "multiplier" } },
+		{ "per_player", "multiplier", "none" } },
+	{ "coop_extra_pickups_spinner", _option_setting, 0, 0, 3, { 0 }, "network.coop_pickups",
+		{ "per_player", "multiplier", "none" } },
+	{ "coop_extra_vehicles_spinner", _option_setting, 0, 0, 3, { 0 }, "network.coop_vehicles",
+		{ "per_player", "multiplier", "none" } },
 	{ "coop_enemies_per_player_spinner", _option_setting, 0, 0, 5, { 0 }, "network.coop_enemies",
 		{ "25", "50", "100", "150", "200" } },
 	{ "coop_enemies_multiplier_spinner", _option_setting, 0, 0, 5, { 0 }, "network.coop_enemies_multiplier",
@@ -6431,12 +6635,24 @@ static struct gametype_option const gametype_options[] =
 	/* map sharing's (Server Setup's MAP SHARING: tools/port_settings.py's
 	MAP_SHARE_SETUP; map_share.c) */
 	{ "map_share_spinner", _option_setting, 0, 0, 2, { 0 }, "network.map_share", { "true", "false" } },
-	{ "map_share_upload_spinner", _option_setting, 0, 0, 6, { 0 }, "network.map_share_upload",
-		{ "256", "512", "1024", "2048", "4096", "8192" } },
+	{ "map_share_upload_spinner", _option_setting, 0, 0, 8, { 0 }, "network.map_share_upload",
+		{ "256", "512", "1024", "2048", "4096", "8192", "16384", "20480" } },
 	/* vehicle options (the side's set and counts: vehicles_update) */
 	{ "vehicles_respawn_spinner", _option_short, OPTIONS_FIELD(vehicle_respawn_time), 0, 7,
 		{ 0, 30, 60, 90, 120, 180, 300 } },
 };
+
+/* TEXT CHAT's (network.text_chat) OFF, which it shows while the game is
+listed in the server browser, and its host cannot change: a listed game has
+no text chat whatever the setting (network_chat.c), which is kept for a
+private game or a LAN one */
+#define TEXT_CHAT_SPINNER "text_chat_spinner"
+#define TEXT_CHAT_OFF 2
+
+static boolean text_chat_locked(struct gametype_option const *option)
+{
+	return !strcmp(option->spinner, TEXT_CHAT_SPINNER) && p2p_hosting_listed();
+}
 
 /* an option of the host's own setting: the value shown for it (the one
 set, else the nearest) */
@@ -6572,8 +6788,11 @@ static void gametype_options_each(struct widget_instance *list, boolean save)
 				if (!gametype_edit.setup)
 					continue;
 				if (!save)
-					spinner->parameters.list.selected_index = gametype_option_setting_index(option);
-				else if (index != gametype_option_setting_index(option) &&
+				{
+					spinner->parameters.list.selected_index = text_chat_locked(option) ? TEXT_CHAT_OFF :
+						gametype_option_setting_index(option);
+				}
+				else if (!text_chat_locked(option) && index != gametype_option_setting_index(option) &&
 					!setting_write(option->setting, option->setting_values[index]))
 				{
 					platform_log("menus: could not set %s", option->setting);
@@ -6613,8 +6832,11 @@ static void setting_options_each(struct widget_instance *list, boolean save)
 				continue;
 			index = (short)PIN(spinner->parameters.list.selected_index, 0, option->count - 1);
 			if (!save)
-				spinner->parameters.list.selected_index = gametype_option_setting_index(option);
-			else if (index != gametype_option_setting_index(option) &&
+			{
+				spinner->parameters.list.selected_index = text_chat_locked(option) ? TEXT_CHAT_OFF :
+					gametype_option_setting_index(option);
+			}
+			else if (!text_chat_locked(option) && index != gametype_option_setting_index(option) &&
 				!setting_write(option->setting, option->setting_values[index]))
 			{
 				platform_log("menus: could not set %s", option->setting);
@@ -6958,14 +7180,40 @@ static void gametype_option_help(struct widget_instance *list)
 		visible_set(named(list, "op_primary_weapon", 0), custom);
 		visible_set(named(list, "op_secondary_weapon", 0), custom);
 	}
-	/* (CO-OP OPTIONS: the row of the amount of the extra enemies chosen,
-	PER PLAYER's or MULTIPLIER's, in the one place) */
+	/* (TEXT CHAT held at OFF while the game is listed: text_chat_locked) */
+	if (named(list, TEXT_CHAT_SPINNER, 0) && p2p_hosting_listed())
+		named(list, TEXT_CHAT_SPINNER, 0)->parameters.list.selected_index = TEXT_CHAT_OFF;
+	/* CO-OP OPTIONS: enemies, pickups and vehicles share the amount rows.
+	Mixed modes may need both rows at once. */
 	if (named(list, "coop_extra_enemies_spinner", 0))
 	{
 		short mode = named(list, "coop_extra_enemies_spinner", 0)->parameters.list.selected_index;
 
-		visible_set(named(list, "op_coop_enemies_per_player", 0), mode == _cooperative_enemies_per_player);
-		visible_set(named(list, "op_coop_enemies_multiplier", 0), mode == _cooperative_enemies_multiplier);
+		struct widget_instance *pickups = named(list, "coop_extra_pickups_spinner", 0);
+		struct widget_instance *vehicles = named(list, "coop_extra_vehicles_spinner", 0);
+		boolean per_player = mode == _cooperative_enemies_per_player ||
+			(pickups && pickups->parameters.list.selected_index == _cooperative_enemies_per_player) ||
+			(vehicles && vehicles->parameters.list.selected_index == _cooperative_enemies_per_player);
+		boolean multiplier = mode == _cooperative_enemies_multiplier ||
+			(pickups && pickups->parameters.list.selected_index == _cooperative_enemies_multiplier) ||
+			(vehicles && vehicles->parameters.list.selected_index == _cooperative_enemies_multiplier);
+
+		visible_set(named(list, "op_coop_enemies_per_player", 0), per_player);
+		visible_set(named(list, "op_coop_enemies_multiplier", 0), multiplier);
+
+		/* Hidden amounts must not reserve a blank row. Offsets are relative
+		to the parent: moving only the row carries its labels and spinners
+		with it when widget_instance_render_recursive draws and notes targets. */
+		{
+			short y = 73;
+
+			for (row = list->child; row; row = row->next)
+				if (row->visible && !strncmp(row->name, "op_coop_", 8))
+				{
+					row->vertical_offset = y;
+					y += 30;
+				}
+		}
 	}
 	/* (the server browser's filters, hidden: their helps are fewer than
 	their values) */
@@ -7208,6 +7456,10 @@ boolean pc_menu_event_function_invoke(
 		{
 			return pause_change_teams(widget);
 		}
+		else if (!strcmp(name, "port coop friendly fire"))
+		{
+			return coop_friendly_fire_change();
+		}
 		else if (!strcmp(name, "player profile save changes"))
 		{
 			return profile_save_changes(widget, widget_deleted);
@@ -7244,7 +7496,7 @@ boolean pc_menu_event_function_invoke(
 		}
 		else if (!strcmp(name, "mp profile set for game"))
 		{
-			return gametype_choose();
+			return gametype_choose(widget);
 		}
 		else if (!strcmp(name, "server settings init"))
 		{
@@ -7290,6 +7542,10 @@ boolean pc_menu_event_function_invoke(
 		{
 			settings_each(screen_of(widget), setting_changed_save);
 			platform_display_apply();
+		}
+		else if (!strcmp(name, "port settings accept"))
+		{
+			return settings_accept(widget, event, widget_deleted);
 		}
 		else if (!strcmp(name, "port settings defaults"))
 		{
@@ -7409,7 +7665,7 @@ boolean pc_menu_event_function_invoke(
 		}
 		else if (!strcmp(name, "solo level set map"))
 		{
-			return level_choose(controller);
+			return level_choose(widget, controller);
 		}
 		else if (!strcmp(name, "difficulty item select"))
 		{
@@ -7502,4 +7758,6 @@ void pc_menu_game_data_function_invoke(
 		profile_gamepad_layout(widget);
 	else if (!strcmp(name, "chupathingy settings picture"))
 		chupathingy_settings_picture(widget);
+	else if (!strcmp(name, "port coop friendly fire text"))
+		coop_friendly_fire_text(widget);
 }

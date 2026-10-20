@@ -89,6 +89,9 @@ symbols in this file:
 #include "game/players.h"
 #include "interface/hud.h"
 #include "interface/hud_definitions.h"
+#ifdef HALO_CUSTOM_EDITION
+#include "interface/hud_draw.h" /* port: hud_bitmap_group_scale */
+#endif
 #include "interface/hud_messaging.h"
 #include "interface/hud_unit.h"
 #include "interface/hud_weapon.h"
@@ -117,6 +120,7 @@ symbols in this file:
 #if defined(HALO_GAME_BROWSER) || defined(HALO_BROWSER)
 #include "chat.h" /* port: port/linux/game/chat.c */
 #endif
+#include "network_chat.h" /* port: port/linux/game/network_chat.c */
 #include "text/font_group.h"
 #include "text/text_group.h"
 #include "units/unit_definitions.h"
@@ -961,7 +965,12 @@ static void hud_draw_friendly_indicator(
 				bitmap,
 				&position,
 				&clip,
+#ifdef HALO_CUSTOM_EDITION
+				/* port: at its bitmap's HUD scale */
+				hud_bitmap_group_scale(interface_get_tag_index(_interface_bitmap_multiplayer_hud)),
+#else
 				1.0f,
+#endif
 				0.0f,
 				1.0f);
 		}
@@ -1021,6 +1030,7 @@ allies' if it shows only friends (game_engine_draw_object_in_motion_sensor). */
 /* the platform layer's (port/linux/src/port_config.c) */
 const char *config_string(const char *name);
 double config_real(const char *name);
+int config_boolean(const char *name);
 unsigned long config_changes(void);
 /* port/linux/game/network_voice.c's: a player talking in voice chat (its
 machine), and its speaker drawn */
@@ -1183,7 +1193,15 @@ static void hud_draw_player_name(
 			interface_get_tag_index(_interface_bitmap_multiplayer_hud), 0, 0);
 
 		if (bitmap)
+		{
+#ifdef HALO_CUSTOM_EDITION
+			/* (the triangle drawn at its bitmap's HUD scale) */
+			y -= (short)(bitmap->registration_point.y *
+				hud_bitmap_group_scale(interface_get_tag_index(_interface_bitmap_multiplayer_hud)));
+#else
 			y -= bitmap->registration_point.y;
+#endif
+		}
 	}
 	y -= 2;
 	font = font_definition_get(font_index);
@@ -1410,6 +1428,65 @@ static void temporary_hud_draw(
 	return;
 }
 
+/* port: the match clock (display.match_timer, off by default: Custom
+Edition's HUD has none), counting up from the game's
+first tick, which the items' respawn periods count from as well
+(game_engine_update_item_spawn's game_time_get() % respawn_period): an item
+is back on the map at every multiple of its period on the clock. */
+static boolean hud_match_timer_setting(
+	void)
+{
+	static boolean setting = FALSE;
+	static unsigned long read_at = (unsigned long)-1;
+
+	/* (read again when Settings changes it) */
+	if (read_at != config_changes())
+	{
+		read_at = config_changes();
+		setting = config_boolean("display.match_timer") != 0;
+	}
+
+	return setting;
+}
+
+static void hud_draw_match_timer(
+	void)
+{
+	long font_index = hud_get_font_index();
+	wchar_t time_string[32];
+	real_argb_color color;
+	rectangle2d bounds;
+	struct font_header *font;
+
+	if (!hud_match_timer_setting() || font_index == NONE)
+		return;
+	ticks_to_unicode_time_string(game_time_get(), NUMBEROF(time_string), time_string);
+	/* (a time under a minute is drawn with no minutes digit, which a clock
+	counting up from zero starts at: " :07") */
+	if (time_string[0] == L' ')
+		time_string[0] = L'0';
+	font = font_definition_get(font_index);
+	/* (the HUD's window, which a wide screen widens and a split screen
+	divides, in the view's coordinates; into the corner, where the first
+	person's weapon is not drawn) */
+	bounds.x1 = render.camera.window_bounds.x1 - render.camera.viewport_bounds.x0 - 5;
+	bounds.x0 = bounds.x1 - 320;
+	bounds.y1 = render.camera.window_bounds.y1 - render.camera.viewport_bounds.y0 - 14;
+	bounds.y0 = bounds.y1 - (font->ascending_height + font->descending_height);
+	hud_get_text_color(&color);
+	/* (lifted toward white, and whole: the HUD's own text colour is lost
+	against a map as bright as it) */
+	color.red += (1.0f - color.red) * 0.65f;
+	color.green += (1.0f - color.green) * 0.65f;
+	color.blue += (1.0f - color.blue) * 0.65f;
+	color.alpha = 1.0f;
+	/* (right justified: 1) */
+	draw_string_set_draw_mode(font_index, NONE, 1, 0, &color);
+	rasterizer_draw_unicode_string(&bounds, NULL, NULL, 0, time_string);
+
+	return;
+}
+
 void hud_draw_screen(
 	void)
 {
@@ -1449,6 +1526,13 @@ void hud_draw_screen(
 			chat_draw(render.local_player_index);
 #endif
 
+		/* port: the match clock, in multiplayer */
+		if (game_engine_running() && !cinematic_in_progress() &&
+			hud_scripted_globals->show_hud)
+		{
+			hud_draw_match_timer();
+		}
+
 		if (!game_time_get_paused() &&
 			render.local_player_index == local_player_get_next(NONE))
 		{
@@ -1487,6 +1571,8 @@ void hud_draw_screen(
 		}
 
 		hud_messaging_update(render.local_player_index);
+		/* port: network games' text chat, the lines this view's player hears */
+		network_chat_draw(render.local_player_index);
 	}
 
 	rasterizer_hud_end();

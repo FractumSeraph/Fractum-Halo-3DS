@@ -853,6 +853,14 @@ static void fetch_games(
 		csstrncpy(invite, browser_screen.games[browser_screen.selected].invite, sizeof(invite) - 1);
 	invite[sizeof(invite) - 1] = 0;
 	browser_screen.count = (short)browser_get_games(browser_screen.games, BROWSER_MAXIMUM_GAMES);
+	/* (co-op games are not listed here, whatever list they came from; an
+	invite to one still joins) */
+	for (index = other = 0; index < browser_screen.count; index++)
+	{
+		if (!browser_map_is_campaign(browser_screen.games[index].map))
+			browser_screen.games[other++] = browser_screen.games[index];
+	}
+	browser_screen.count = other;
 	/* (insertion: a few dozen games) */
 	for (index = 1; index < browser_screen.count; index++)
 	{
@@ -1297,7 +1305,13 @@ void browser_screen_process(
 		browser_connect_get(&browser_screen.connect);
 	while (browser_screen.active && get_next_event(&event, NONE))
 	{
-		if (event.type == BROWSER_EVENT_BUTTON)
+		/* (a d-pad direction held steps at the menus' pace, held_step; every
+		other button acts once a press, as the menus' buttons do: a held
+		trigger went through the sorts a frame at a time) */
+		if (event.type == BROWSER_EVENT_BUTTON &&
+			(event.data.button.value == 1 ||
+				(event.data.button.index >= _gamepad_binary_button_dpad_up &&
+					event.data.button.index <= _gamepad_binary_button_dpad_right)))
 			press(event.data.button.index);
 		else if (event.type == BROWSER_EVENT_LEFT_STICK && !browser_screen.connect_open &&
 			browser_screen.offer == _offer_none)
@@ -1480,9 +1494,11 @@ List: a ChupathingyCE host's own word; nothing of an older or OpenCE host) */
 
 /* its platform (delta.h's registry), short for the row's tag and in full
 for the details */
-static char const *const platform_tags[] = { "", "WIN", "MAC", "LNX", "AND", "DECK", "XBOX", "360", "WIIU", "NX" };
+static char const *const platform_tags[] = { "", "WIN", "MAC", "LNX", "AND", "DECK", "XBOX", "360", "WIIU", "NX",
+	"PSP", "VITA", "XBS" };
 static char const *const platform_names[] = {
 	"", "Windows", "Mac", "Linux", "Android", "Steam Deck", "Xbox", "Xbox 360", "Wii U", "Switch",
+	"PSP", "Vita", "Xbox Series",
 };
 
 /* the row's tag before the name: the host's platform, SRV for a dedicated
@@ -1535,7 +1551,8 @@ static char const *machines_text(
 	without Delta) */
 	static struct { char const *name; unsigned char first, last; } const groups[] = {
 		{ "PC", 1, 3 }, { "Steam Deck", 5, 5 }, { "Android", 4, 4 }, { "Xbox", 6, 6 }, { "Xbox 360", 7, 7 },
-		{ "Wii U", 8, 8 }, { "Switch", 9, 9 }, { "other", 0, 0 }, { "OpenCE", BROWSER_MACHINE_KINDS - 1, BROWSER_MACHINE_KINDS - 1 },
+		{ "Wii U", 8, 8 }, { "Switch", 9, 9 }, { "PSP", 10, 10 }, { "Vita", 11, 11 }, { "Xbox Series", 12, 12 },
+		{ "other", 0, 0 }, { "OpenCE", BROWSER_MACHINE_KINDS - 1, BROWSER_MACHINE_KINDS - 1 },
 	};
 	long used = 0, group;
 

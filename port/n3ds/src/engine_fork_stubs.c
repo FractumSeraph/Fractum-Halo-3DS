@@ -798,3 +798,48 @@ void test_input_hold_fire(int hold)
 void test_input_hold_melee(int hold)
 {
 }
+/* port/linux/src/d3d8_gl.c's display.model_detail scale: the stock levels
+   (Halo3DS's native renderer chooses its own reductions) */
+float halo_model_detail_scale(int level)
+{
+	(void)level;
+	return 1.0f;
+}
+int halo_model_detail_stock(void)
+{
+	return 1;
+}
+/* source/cseries/cseries_windows.c's (not in this port's build: Halo3DS
+   has its own system layer), over the C library, for the fork's bots */
+void *system_malloc(long size)
+{
+	return malloc((size_t)size);
+}
+void system_free(void *pointer)
+{
+	free(pointer);
+}
+/* port/linux/include/halo_keyboard.h */
+int halo_chat_touch_layout(void)
+{
+	return 0;
+}
+/* port/linux/src/p2p.h */
+int p2p_hosting_listed(void)
+{
+	return 0;
+}
+/* port/linux/src/p2p.h */
+int p2p_join_listing(const struct p2p_listing *listing)
+{
+	return 0;
+}
+/* port/linux/src/p2p.h */
+int p2p_joined_listed_host(void)
+{
+	return 0;
+}
+/* port/linux/game/network_test.c */
+void test_input_press(unsigned long buttons)
+{
+}

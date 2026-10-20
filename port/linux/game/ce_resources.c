@@ -40,6 +40,7 @@ by their tags' paths (below).
 #include "bitmaps/bitmaps.h"
 #include "ce_map_checks.h"
 #include "halo_map_families.h"
+#include "ce_locale.h"
 
 #include <xtl.h>
 #include <stdio.h>
@@ -162,6 +163,11 @@ static unsigned long ce_free_next, ce_free_end;
 (ce_resources_tag_names_copy), and their size */
 static char *ce_tag_names;
 static unsigned long ce_tag_names_size;
+/* and in the room above it (platform.h), once that runs out: the next free
+address there, 0 while the tag cache's room is used. Allocations only ever
+move up, so a mark (ce_resources_free_mark) is the lowest address of all
+that is allocated after it */
+static unsigned long ce_room_next;
 
 /* ---------- private code */
 
@@ -1162,6 +1168,7 @@ boolean ce_resources_tags_loaded(
 	ce_indexed_tags = system_malloc(tag_count);
 	ce_indexed_tag_count = ce_indexed_tags ? tag_count : 0;
 	ce_free_next = ce_free_end = 0;
+	ce_room_next = 0;
 	if (!ce_indexed_tags)
 		return FALSE;
 	image.data = xbox_pointer(CE_IMAGE_TAG_CACHE_BASE);
@@ -1489,15 +1496,28 @@ HANDLE ce_resources_file_for_tag(
 }
 
 /* size bytes (16-byte aligned) of the map's tag cache, after its tags and
-resources (ce_models.c): their Xbox address, or 0 if there is no room */
+resources (ce_models.c), or once that room is used, of the room above the
+tag cache (platform.h; Halo PC kept what the port puts here, its models'
+and level's buffers, outside its tag cache): their Xbox address, or 0 if
+there is no room */
 unsigned long ce_resources_allocate(
 	unsigned long size)
 {
+	unsigned long room_base = CE_IMAGE_TAG_CACHE_BASE + CE_IMAGE_TAG_CACHE_SIZE;
+	unsigned long room_end = room_base + CE_CONVERSION_ROOM;
 	unsigned long address = ce_free_next;
 
-	if (!address || address > ce_free_end || size > ce_free_end - address)
+	if (!address)
 		return 0;
-	ce_free_next = (address + size + 15) & ~15UL;
+	if (!ce_room_next && address <= ce_free_end && size <= ce_free_end - address)
+	{
+		ce_free_next = (address + size + 15) & ~15UL;
+		return address;
+	}
+	address = ce_room_next ? ce_room_next : room_base;
+	if (address > room_end || size > room_end - address)
+		return 0;
+	ce_room_next = (address + size + 15) & ~15UL;
 	return address;
 }
 
@@ -1506,14 +1526,24 @@ when it unloads, ce_resources_free_to) */
 unsigned long ce_resources_free_mark(
 	void)
 {
-	return ce_free_next;
+	return ce_room_next ? ce_room_next : ce_free_next;
 }
 
 void ce_resources_free_to(
 	unsigned long mark)
 {
-	if (mark && mark <= ce_free_next)
+	if (!mark)
+		return;
+	if (ce_room_next && mark >= CE_IMAGE_TAG_CACHE_BASE + CE_IMAGE_TAG_CACHE_SIZE)
+	{
+		if (mark <= ce_room_next)
+			ce_room_next = mark;
+	}
+	else if (mark <= ce_free_next)
+	{
 		ce_free_next = mark;
+		ce_room_next = 0;
+	}
 }
 
 /* a Custom Edition map's tags loaded (cache_files.c), last of all: each
@@ -1609,6 +1639,171 @@ void ce_resources_tags_unloaded(
 		XPhysicalFree(ce_tag_names);
 	ce_tag_names = NULL;
 	ce_tag_names_size = 0;
+	ce_room_next = 0;
+}
+
+/* ---------- the menus' text in the Custom Edition's language (ce_locale.h)
+
+OpenCE's custom_edition_locale_*, on this file's reading of a resource map:
+loc.map opened on its own (not the loaded map's: ce_resource_maps), quietly,
+as the menus ask for it whether or not a Halo PC map is played. */
+
+/* a unicode string list tag: its strings' block (count, address and
+definition), each element a tag_data of the string's UTF-16 characters
+(size, then the address 12 bytes in) */
+#define STRING_LIST_HEADER_BYTES 12
+#define STRING_LIST_ELEMENT_BYTES 20
+#define STRING_LIST_ELEMENT_ADDRESS_OFFSET 12
+#define STRING_LIST_MAXIMUM_COUNT 32767
+
+/* loc.map, while open: its file, resources and paths */
+static struct
+{
+	HANDLE file;
+	unsigned long file_size;
+	unsigned long count;
+	struct ce_resource *resources;
+	char *paths;
+	unsigned long paths_size;
+} ce_locale;
+
+boolean custom_edition_locale_open(
+	void)
+{
+	char path[256];
+	unsigned long header[4];
+	unsigned long file_size, file_size_high = 0;
+	HANDLE file;
+
+	custom_edition_locale_close();
+	if (!map_family_resource(ce_resource_map_names[_ce_resource_strings], path, sizeof(path)))
+		return FALSE;
+	file = CreateFileA(path, GENERIC_READ, 0, NULL, OPEN_EXISTING, 0, NULL);
+	if (file == INVALID_HANDLE_VALUE)
+		return FALSE;
+	file_size = GetFileSize(file, &file_size_high);
+	if (file_size == INVALID_FILE_SIZE || file_size_high || file_size > 0x7fffffff ||
+		!ce_read(file, 0, header, sizeof(header)) || header[0] != (unsigned long)(_ce_resource_strings + 1) ||
+		header[3] > CE_MAXIMUM_ELEMENTS || header[1] > header[2] ||
+		!ce_range_within(header[2], header[3] * sizeof(struct ce_resource), file_size) ||
+		!ce_range_within(header[1], header[2] - header[1], file_size))
+	{
+		error(_error_silent, "custom edition: '%s' is not a locale resource map", path);
+		CloseHandle(file);
+		return FALSE;
+	}
+	ce_locale.resources = system_malloc(header[3] * sizeof(struct ce_resource) + 1);
+	ce_locale.paths_size = header[2] - header[1];
+	ce_locale.paths = system_malloc(ce_locale.paths_size + 1);
+	if (!ce_locale.resources || !ce_locale.paths ||
+		!ce_read(file, header[2], ce_locale.resources, header[3] * sizeof(struct ce_resource)) ||
+		(ce_locale.paths_size && !ce_read(file, header[1], ce_locale.paths, ce_locale.paths_size)))
+	{
+		system_free(ce_locale.resources);
+		system_free(ce_locale.paths);
+		ce_locale.resources = NULL;
+		ce_locale.paths = NULL;
+		CloseHandle(file);
+		return FALSE;
+	}
+	ce_locale.paths[ce_locale.paths_size] = 0;
+	ce_locale.count = header[3];
+	ce_locale.file_size = file_size;
+	ce_locale.file = file;
+	return TRUE;
+}
+
+void custom_edition_locale_close(
+	void)
+{
+	if (ce_locale.file)
+	{
+		CloseHandle(ce_locale.file);
+		system_free(ce_locale.resources);
+		system_free(ce_locale.paths);
+	}
+	csmemset(&ce_locale, 0, sizeof(ce_locale));
+}
+
+struct custom_edition_string_list *custom_edition_locale_strings(
+	char const *name)
+{
+	struct ce_resource const *item = NULL;
+	struct custom_edition_string_list *list = NULL;
+	byte *tag;
+	long count, index;
+	unsigned long address, text_bytes = 0;
+	unsigned short *characters;
+
+	for (index = 0; ce_locale.file && (unsigned long)index < ce_locale.count && !item; index++)
+	{
+		unsigned long offset = ce_locale.resources[index].path_offset;
+
+		if (offset < ce_locale.paths_size && !_stricmp(ce_locale.paths + offset, name))
+			item = &ce_locale.resources[index];
+	}
+	if (!item || item->size < STRING_LIST_HEADER_BYTES || !ce_range_within(item->offset, item->size,
+		ce_locale.file_size) || !(tag = malloc(item->size)))
+	{
+		return NULL;
+	}
+	if (!ce_read(ce_locale.file, item->offset, tag, item->size))
+		goto done;
+	/* (the tag's addresses count from its start; every string lies within
+	it, so together they are no longer than it) */
+	memcpy(&count, tag, sizeof(count));
+	memcpy(&address, tag + 4, sizeof(address));
+	if (count <= 0 || count > STRING_LIST_MAXIMUM_COUNT || address > item->size ||
+		(unsigned long)count > (item->size - address) / STRING_LIST_ELEMENT_BYTES)
+	{
+		goto done;
+	}
+	for (index = 0; index < count; index++)
+	{
+		byte const *element = tag + address + (unsigned long)index * STRING_LIST_ELEMENT_BYTES;
+		long size;
+		unsigned long data;
+
+		memcpy(&size, element, sizeof(size));
+		memcpy(&data, element + STRING_LIST_ELEMENT_ADDRESS_OFFSET, sizeof(data));
+		if (size < 0 || (size & 1) || data > item->size || (unsigned long)size > item->size - data ||
+			(unsigned long)size > item->size - text_bytes)
+		{
+			goto done;
+		}
+		text_bytes += (unsigned long)size;
+	}
+	/* one block: the list, its strings' addresses and lengths, then their
+	characters, each terminated */
+	list = malloc(sizeof(*list) + (size_t)count * (sizeof(*list->strings) + sizeof(*list->lengths)) +
+		(size_t)text_bytes + (size_t)count * sizeof(unsigned short));
+	if (!list)
+		goto done;
+	list->count = count;
+	list->strings = (unsigned short const **)(list + 1);
+	list->lengths = (long *)(list->strings + count);
+	characters = (unsigned short *)(list->lengths + count);
+	for (index = 0; index < count; index++)
+	{
+		byte const *element = tag + address + (unsigned long)index * STRING_LIST_ELEMENT_BYTES;
+		long size;
+		unsigned long data;
+		long length;
+
+		memcpy(&size, element, sizeof(size));
+		memcpy(&data, element + STRING_LIST_ELEMENT_ADDRESS_OFFSET, sizeof(data));
+		memcpy(characters, tag + data, (size_t)size);
+		length = size / 2;
+		if (!length || characters[length - 1])
+			characters[length++] = 0;
+		list->strings[index] = characters;
+		list->lengths[index] = length;
+		characters += length;
+	}
+
+done:
+	free(tag);
+	return list;
 }
 
 #endif

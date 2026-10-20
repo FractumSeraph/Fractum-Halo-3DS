@@ -71,6 +71,10 @@ long get_return_eip(
 #endif
 real hud_globals_get_scale(
 	boolean in_multiplayer);
+#ifdef HALO_CUSTOM_EDITION
+real hud_bitmap_group_scale(
+	long bitmap_group_index);
+#endif
 void hud_retrieve_bitmap_and_bounding_rect(
 	long bitmap_group_index,
 	short sequence_index,
@@ -155,6 +159,11 @@ void hud_draw_numbers(
 	short draw_flags,
 	long flash_reference_time,
 	real override_scale);
+
+/* port: the left of the last picture drawn, in the window's units
+(hud_unit.c: the motion sensor's, which the text chat goes above:
+port/linux/game/network_chat.c) */
+extern short hud_draw_last_left;
 
 /* ---------- public code */
 

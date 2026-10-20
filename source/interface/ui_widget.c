@@ -700,6 +700,8 @@ boolean moderation_screen_active(void);
 void moderation_screen_update(boolean menu_open);
 void moderation_screen_process(void);
 void moderation_screen_render(void);
+/* (this fork) its prompts take the menus' pointer too */
+void moderation_screen_pointer(struct halo_ui_pointer const *pointer);
 /* the menus' pointer, while it is up (its own taps and clicks) */
 void browser_screen_pointer(struct halo_ui_pointer const *pointer);
 /* port: the question before joining a clipboard's invite
@@ -1551,6 +1553,7 @@ short local_player_index_for_draw_string_and_hack_in_icons;
 /* port: draw_string_and_hack_in_icons draws a widget's text (the menus'
 keys for the buttons, not the game's: input_abstraction_port_icon_key) */
 static boolean draw_string_icons_for_menus = FALSE;
+short draw_string_and_hack_in_icons_end_x = 0;
 
 /* January defines this and never references it, as we do not */
 real const _one_over_255 = 1.0f / 255.0f;
@@ -2688,6 +2691,11 @@ static void widget_instance_give_focus_by_tag(
 	return;
 }
 
+/* a list watched for the player stepping it with left/right (the Xbox-style
+controls screen watches its layout spinner) */
+struct widget_instance *g_list_widget_watched = NULL;
+boolean g_list_widget_watched_stepped = FALSE;
+
 boolean widget_event_function_list_widget_goto_next_item(
 	struct widget_instance *widget,
 	struct event_record *event,
@@ -2702,6 +2710,8 @@ boolean widget_event_function_list_widget_goto_next_item(
 		"c:\\halo\\SOURCE\\interface\\ui_widget.c",
 		1230,
 		widget);
+	if (widget == g_list_widget_watched)
+		g_list_widget_watched_stepped = TRUE;
 	definition = ui_widget_definition_get(widget->definition_tag_index);
 	match_vassert(
 		"c:\\halo\\SOURCE\\interface\\ui_widget.c",
@@ -2854,6 +2864,8 @@ boolean widget_event_function_list_widget_goto_previous_item(
 		"c:\\halo\\SOURCE\\interface\\ui_widget.c",
 		1359,
 		widget);
+	if (widget == g_list_widget_watched)
+		g_list_widget_watched_stepped = TRUE;
 	definition = ui_widget_definition_get(widget->definition_tag_index);
 	match_vassert(
 		"c:\\halo\\SOURCE\\interface\\ui_widget.c",
@@ -3544,6 +3556,9 @@ static void event_handler_dispatch(
 	struct ui_widget_event_handler_reference *handler,
 	boolean *calling_widget_deleted)
 {
+	/* port: the widget's tag, named when its function fails (which may have
+	deleted the widget) */
+	long definition_tag_index = widget->definition_tag_index;
 	boolean widget_deleted = FALSE;
 	boolean success = TRUE;
 	boolean function_failed = FALSE;
@@ -3577,7 +3592,8 @@ static void event_handler_dispatch(
 			handler->function,
 			&widget_deleted))
 	{
-		error(_error_silent, "event handler function failed");
+		error(_error_silent, "event handler function %d of %s failed", handler->function,
+			tag_get_name(definition_tag_index));
 		function_failed = TRUE;
 	}
 	else
@@ -4074,7 +4090,10 @@ static void widget_instance_initialize(
 	if (widget->pause_game_time == TRUE)
 	{
 		widget_globals.pause_game_time_count++;
-		if (!game_time_get_paused())
+		/* port: not at the main menu, where the clock only runs the menu's
+		scene, which stopped behind the screen and started again from its
+		beginning as it closed */
+		if (!game_time_get_paused() && !we_are_at_the_main_menu)
 			game_time_set_paused(TRUE);
 		if (!widget_globals.sound_paused && !we_are_at_the_main_menu)
 		{
@@ -4515,6 +4534,7 @@ void draw_string_and_hack_in_icons(
 	}
 	if (current)
 		render_state_text(bounds, &cursor_bounds, current);
+	draw_string_and_hack_in_icons_end_x = cursor_bounds.x0;
 	draw_string_set_indents(0, 0);
 
 	return;
@@ -4853,7 +4873,8 @@ void display_error(
 							widget_globals.pause_game_time_count>=0,
 							"widget pause counter is out of whack");
 						widget_globals.pause_game_time_count++;
-						if (!game_time_get_paused())
+						/* port: not at the main menu (above) */
+						if (!game_time_get_paused() && !we_are_at_the_main_menu)
 							game_time_set_paused(TRUE);
 						if (!widget_globals.sound_paused && !we_are_at_the_main_menu)
 						{
@@ -5703,7 +5724,8 @@ static void widget_instance_render_text_box(
 		}
 	}
 	/* port: a colour the PC menus give this text box (the lobby's players
-	by team: menu_functions.c) */
+	by team, the server browser's pings: menu_functions.c), its alpha the
+	box's */
 	{
 		extern boolean pc_menu_text_color(struct widget_instance const *widget, real_rgb_color *rgb);
 
@@ -6069,6 +6091,10 @@ static boolean ui_mouse_click_pending = FALSE;
 then doesn't scroll on at its end, which the pointer, moving, would make it
 do every frame (menu_functions.c) */
 static boolean ui_mouse_focused_last = FALSE;
+/* port: whether the pointer passing over a widget moved the focus last, not
+a click (or the d-pad): the server browser's game stays chosen
+(menu_functions.c) */
+static boolean ui_mouse_hovered_last = FALSE;
 static short ui_mouse_hover_x, ui_mouse_hover_y;
 static short ui_mouse_click_x, ui_mouse_click_y;
 /* whether the latest pointer read was the touchscreen: the taller legend
@@ -6273,21 +6299,17 @@ static short ui_mouse_key_button(
 		{ "start_butn", _gamepad_binary_button_start },
 		{ "back_butn", _gamepad_binary_button_back },
 	};
-	struct ui_widget_definition const *definition = ui_widget_definition_get(widget->definition_tag_index);
-	/* the widget's own name, then its picture's: the Chupathingy menus'
-	prompts are chupathingy\prompts\a and so on, drawn with
-	chupathingy\prompts\a_butn (port/assets/menus/chupathingy/prompts.xml),
-	which a tap did not take, so that their settings pages had no way back
-	without a pad or keys */
-	char const *names[2];
-	long name_index;
+	long tag_indices[2];
+	long tag;
 
-	names[0] = tag_get_name(widget->definition_tag_index);
-	names[1] = definition && definition->background_bitmap.index != NONE ?
-		tag_get_name(definition->background_bitmap.index) : NULL;
-	for (name_index = 0; name_index < NUMBEROF(names); name_index++)
+	/* the widget's name (ui.map's prompts, "a_butn"), or its picture's (the
+	Chupathingy menus' prompts are "chupathingy\\prompts\\a", drawn from
+	"chupathingy\\prompts\\a_butn": chupathingy/prompts.xml) */
+	tag_indices[0] = widget->definition_tag_index;
+	tag_indices[1] = ui_widget_definition_get(widget->definition_tag_index)->background_bitmap.index;
+	for (tag = 0; tag < NUMBEROF(tag_indices); tag++)
 	{
-		char const *name = names[name_index];
+		char const *name = tag_indices[tag] != NONE ? tag_get_name(tag_indices[tag]) : NULL;
 		char const *leaf = name ? strrchr(name, '\\') : NULL;
 		long key_index;
 
@@ -6854,6 +6876,14 @@ boolean ui_widget_port_pointer_focused(
 	return ui_mouse_focused_last;
 }
 
+/* port: whether the pointer passing over a widget, not a click or the
+d-pad, moved the menus' focus last (menu_functions.c's server browser) */
+boolean ui_widget_port_hover_focused(
+	void)
+{
+	return ui_mouse_hovered_last;
+}
+
 /* the d-pad buttons that step a widget back and forward */
 static void ui_mouse_list_directions(
 	struct widget_instance *widget,
@@ -7203,11 +7233,14 @@ static void ui_widgets_process_mouse(
 		invite_prompt_pointer(&pointer);
 	else if (pointer_active && !keyboard_active && browser_screen_active())
 		browser_screen_pointer(&pointer);
+	/* port (this fork): the moderation screen's prompts (B: Back) */
+	else if (pointer_active && !keyboard_active && moderation_screen_active())
+		moderation_screen_pointer(&pointer);
 #endif
 	if (!pointer_active || keyboard_active
 #ifdef HALO_GAME_BROWSER
 		/* (nor over Online Games: a click left in the queue would pick a game) */
-		|| browser_screen_active() || invite_prompt_active()
+		|| browser_screen_active() || invite_prompt_active() || moderation_screen_active()
 #endif
 		/* port: (nor under a map's download screen, which hides the menus) */
 		|| download_screen_active()
@@ -7288,7 +7321,11 @@ static void ui_widgets_process_mouse(
 					/* (a selection list's row is chosen by a click, not
 					by passing over it on the way to its buttons) */
 					if (!ui_mouse_selection_row(target->widget))
+					{
 						ui_mouse_give_focus(target->widget);
+						/* port: (ui_mouse_hovered_last) */
+						ui_mouse_hovered_last = TRUE;
+					}
 					break;
 				case _ui_mouse_target_list_slot:
 					ui_mouse_step_list_to_slot(target->widget);
@@ -7305,6 +7342,8 @@ static void ui_widgets_process_mouse(
 		if (!ui_mouse_press_count && ui_mouse_click_pending)
 		{
 			ui_mouse_click_pending = FALSE;
+			/* port: (ui_mouse_hovered_last) */
+			ui_mouse_hovered_last = FALSE;
 			target = ui_mouse_target_at(ui_mouse_click_x, ui_mouse_click_y);
 			if (ui_debug_targets_enabled())
 				ui_debug_log_click(ui_mouse_click_x, ui_mouse_click_y, target, ui_debug_frame - ui_debug_click_frame);
@@ -8160,6 +8199,8 @@ static void widget_instance_process_one_event_recursive(
 		event->data.button.index <= _widget_event_dpad_right)
 	{
 		ui_mouse_focused_last = FALSE;
+		/* port: (ui_mouse_hovered_last) */
+		ui_mouse_hovered_last = FALSE;
 	}
 	if (event->type == _event_type_button &&
 		event->data.button.value > 1 &&

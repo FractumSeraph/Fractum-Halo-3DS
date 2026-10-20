@@ -6,6 +6,8 @@ OBJECTS.C
 
 #include "cseries.h"
 #include "objects.h"
+#include "coop_pickups.h" /* port: the host's extra campaign pickups */
+#include "coop_vehicles.h" /* port: the host's extra campaign vehicles */
 
 #include "damage.h"
 #include "light_definitions.h"
@@ -19,6 +21,7 @@ OBJECTS.C
 #include "cseries/errors.h"
 #include "cseries/profile.h"
 #include "devices/device_definitions.h"
+#include "devices/device_machines.h" /* port: elevator movement and rider carry */
 #include "devices/devices.h"
 #include "editor/editor_stubs.h"
 #include "effects/contrail_definitions.h"
@@ -149,6 +152,7 @@ boolean network_objects_creating_host_object(void);
 boolean network_objects_may_delete(long object_index);
 /* source/networking/network_game_globals.c's */
 boolean network_game_distributed_client(void);
+boolean network_objects_client_deleting(void);
 /* port/linux/game/network_coop.c's: the scripts' attaching, on co-op's clients */
 void network_coop_note_attach(long parent_index, char const *parent_marker_name, long child_index,
 	char const *child_marker_name);
@@ -1799,12 +1803,13 @@ static void object_delete_initial_recursive(
 
 	/* port: a client deletes the host's objects on the host's word, a flag
 	the host returns or resets included, so a client's flag deletion is no
-	bug (it halted debug builds in CTF games online) */
+	bug (it halted debug builds in CTF games online); nor while OpenCE's
+	network_objects.c lets go of one first (distributed_client_delete) */
 	/* port: nor a Custom Edition map's: its scripts may destroy a weapon
 	that must be readied, which this asks for (grifball's own ball, at a
 	goal), as Halo PC's engine let them */
 	if (game_engine_running() && object->object.type == _object_type_weapon &&
-		!network_game_distributed_client() && !CACHE_FILE_TAGS_ARE_CE())
+		!network_game_distributed_client() && !network_objects_client_deleting() && !CACHE_FILE_TAGS_ARE_CE())
 	{
 		match_assert("c:\\halo\\SOURCE\\objects\\objects.c", 829, !(weapon_is_flag(object_index)));
 	}
@@ -3898,6 +3903,8 @@ static boolean object_update(
 	struct object_definition *object_definition = object_definition_get(object->definition_index);
 
 	boolean result = TRUE;
+	boolean elevator_sampled = FALSE;
+	real_point3d elevator_sample;
 	if (!TEST_FLAG(header->flags, _object_header_do_not_update_bit))
 	{
 		if (TEST_FLAG(object->object.flags, _object_garbage_bit))
@@ -3915,6 +3922,10 @@ static boolean object_update(
 			}
 		}
 
+		/* port: an elevator's node, before the machine moves it (machine_elevator_carry_riders) */
+		elevator_sampled = object->object.type == _object_type_machine &&
+			machine_elevator_sample(object_index, &elevator_sample);
+
 		object_type_update(object_index);
 		if (object_definition->object.collision_model.index!=NONE)
 		{
@@ -3926,6 +3937,11 @@ static boolean object_update(
 		if (!TEST_FLAG(object->object.flags, _object_do_not_recompute_node_matrices_bit))
 		{
 			object_compute_node_matrices(object_index);
+		}
+
+		if (elevator_sampled)
+		{
+			machine_elevator_carry_riders(object_index, &elevator_sample);
 		}
 
 		object_compute_function_values(object_index);
@@ -4022,6 +4038,9 @@ long object_new_from_scenario(
 				if (result!=NONE)
 				{
 					object_type_place(result, scenario_object);
+					/* port: only authored placements receive extra pickups and vehicles. */
+					coop_pickups_register(result, scenario_object, palette);
+					coop_vehicles_register(result, scenario_object);
 					if (scenario_object->name_index!=NONE)
 					{
 						object_name_list_new(result, scenario_object->name_index);

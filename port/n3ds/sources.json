@@ -1326,6 +1326,65 @@
     {
       "source": "port/linux/game/object_bounds_cache.c",
       "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/model_detail.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/network_rules.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/network_aim_assist.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/network_chat.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/text_filter.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/text_filter_match.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/bots.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/coop_pickups.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/coop_vehicles.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/latency_meter.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/overshield_effect.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/passenger_camera.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/structure_culling.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/src/posix_files.c",
+      "compiler": "gcc",
+      "defines": [
+        "HALO_N3DS=1"
+      ]
     }
   ],
   "runtime": [

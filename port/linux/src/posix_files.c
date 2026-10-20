@@ -73,7 +73,7 @@ int posix_set_file_times(const char *path,
 	posix_ulong access_seconds, posix_ulong access_nanoseconds,
 	posix_ulong modification_seconds, posix_ulong modification_nanoseconds)
 {
-#ifdef HALO_3DS
+#if defined(HALO_3DS) || defined(HALO_N3DS)
 	/* (the SD card's file system keeps no times to set) */
 	(void)path;
 	(void)access_seconds;
@@ -127,7 +127,7 @@ int posix_set_read_only(const char *path, int read_only)
 	struct stat st;
 	mode_t mode;
 
-#ifdef HALO_3DS
+#if defined(HALO_3DS) || defined(HALO_N3DS)
 	/* (the SD card's files have no modes: chmod fails, and a file is
 	deleted all the same; file_delete, files_windows.c) */
 	(void)read_only;
@@ -277,7 +277,7 @@ int posix_find_entry_case_insensitive(const char *directory, const char *name,
 
 /* ---------- symbols */
 
-#ifndef HALO_3DS
+#if !defined(HALO_3DS) && !defined(HALO_N3DS)
 #include <dlfcn.h>
 #endif
 #include <stdio.h>
@@ -286,7 +286,7 @@ int posix_find_entry_case_insensitive(const char *directory, const char *name,
 stack dump runs inside its own allocator's assertions). */
 void posix_describe_address(void *address, char *buffer, posix_ulong size)
 {
-#ifdef HALO_3DS
+#if defined(HALO_3DS) || defined(HALO_N3DS)
 	/* (no symbols at run time on the 3DS: the address, for the map file) */
 	snprintf(buffer, size, "%p ?????", address);
 #else

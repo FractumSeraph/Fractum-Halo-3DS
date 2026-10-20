@@ -16,6 +16,9 @@ edits and comments stay.
 
 #include "platform.h"
 #include "port_config.h"
+#include "posix.h"
+
+#include <time.h>
 #include "tomlc17.h"
 
 #include <SDL3/SDL.h>
@@ -104,6 +107,26 @@ Ctrl+D, which moving and crouching would press, from the browser) */
 #define CROUCH_KEYS "\"Left Ctrl, C\""
 #endif
 
+/* The 3D view's anti-aliasing and the objects' shadow maps: the sharpest
+picture the builds' computers draw comfortably, with the look kept
+(multisampling smooths only the edges of what is drawn; a larger shadow map
+only the steps along a shadow's edge, its blur widened to keep it as soft).
+The 64-bit desktop builds take 2 samples a pixel (on an M4 at 1920x1080,
+0.4 ms a frame more; 4 samples cost three times that, which a large display
+multiplies) and 256 (about nothing); the 32-bit builds, for older
+computers, and Android, whose picture is 480 lines, 256 and no
+anti-aliasing. The server draws nothing: the Xbox's. */
+#if defined(HALO_SERVER)
+#define DEFAULT_ANTI_ALIASING "\"off\""
+#define DEFAULT_SHADOW_RESOLUTION "128"
+#elif defined(HALO_64BIT) && !defined(HALO_ANDROID)
+#define DEFAULT_ANTI_ALIASING "\"msaa2x\""
+#define DEFAULT_SHADOW_RESOLUTION "256"
+#else
+#define DEFAULT_ANTI_ALIASING "\"off\""
+#define DEFAULT_SHADOW_RESOLUTION "256"
+#endif
+
 static const struct config_setting config_settings[] =
 {
 	{ "display.fullscreen", _config_boolean, DEFAULT_FULLSCREEN, "HALO_FULLSCREEN", _environment_value, _platform_desktop,
@@ -143,12 +166,14 @@ static const struct config_setting config_settings[] =
 	{ "display.max_fps", _config_integer, "0", "HALO_MAX_FPS", _environment_value, _platform_desktop,
 		"With vsync off, the most frames a second: 0 for twice the display's\n"
 		"refresh rate, -1 for no limit (which can hang some Intel graphics)." },
-	{ "display.anti_aliasing", _config_string, "\"off\"", "HALO_ANTI_ALIASING", _environment_value, _platform_all,
+	{ "display.anti_aliasing", _config_string, DEFAULT_ANTI_ALIASING, "HALO_ANTI_ALIASING", _environment_value,
+		_platform_all,
 		"Smoothing of jagged edges, which the Xbox did not have: \"off\"; \"fxaa\"\n"
 		"or \"smaa\" smooth the 3D view once it is drawn (the HUD and menus stay\n"
 		"sharp); \"ssaa2x\" draws at twice the resolution each way (four times\n"
 		"the work); \"msaa2x\", \"msaa4x\" or \"msaa8x\" draw with that many samples\n"
-		"a pixel. Android has \"fxaa\" for \"smaa\", and no \"ssaa2x\"." },
+		"a pixel. Android has \"fxaa\" for \"smaa\", and no \"ssaa2x\". The default:\n"
+		"\"msaa2x\" on 64-bit computers, \"off\" on 32-bit ones and Android." },
 	{ "display.interpolation", _config_boolean, "true", "HALO_INTERPOLATION", _environment_value, _platform_all,
 		"Draw a frame for every display refresh, blending between the game's 30\n"
 		"ticks a second; false keeps the original 30 frames a second." },
@@ -184,6 +209,12 @@ static const struct config_setting config_settings[] =
 		"shield's own) or a multiplayer armor color: white, black, red, blue,\n"
 		"gray, yellow, green, pink, purple, cyan, cobalt, orange, teal, sage,\n"
 		"brown, tan, maroon or salmon." },
+	{ "display.overshield_effect", _config_boolean, "false", "HALO_OVERSHIELD_EFFECT", _environment_value, _platform_all,
+		"The overshield as this machine draws it: its flare rising up the body as\n"
+		"it charges (2 seconds, 3 from a shield that was down) and staying lit,\n"
+		"its energy slower, in its own color (the powerup's), on the first-person\n"
+		"arms too with viewmodel_shield; a hit on it plays what the projectile\n"
+		"plays on an Elite's shield. Only what is drawn and heard changes." },
 
 	{ "display.far_clip_distance", _config_real, "1024.0", "HALO_FAR_CLIP_DISTANCE", _environment_value, _platform_all,
 		"How far the world is drawn: 1024 as on the Xbox, up to 10000. Raise\n"
@@ -192,6 +223,8 @@ static const struct config_setting config_settings[] =
 	{ "display.match_timer", _config_boolean, "false", "HALO_MATCH_TIMER", _environment_value, _platform_all,
 		"In a multiplayer game with a time limit, show the time left at the top\n"
 		"of the screen; false shows it only on the scoreboard, as the Xbox did." },
+	{ "display.passenger_third_person", _config_boolean, "false", "HALO_PASSENGER_THIRD_PERSON", _environment_value, _platform_all,
+		"Third-person Warthog and Scorpion passengers. Weapon zoom is disabled." },
 	{ "display.high_res_hud", _config_boolean, "true", "HALO_HIGH_RES_HUD", _environment_value, _platform_all,
 		"Draw the HUD (meters, counters, panels, motion sensor, reticles,\n"
 		"waypoints, scopes) from the high-res assets (8x the maps' bitmaps);\n"
@@ -219,10 +252,11 @@ static const struct config_setting config_settings[] =
 		_platform_all,
 		"Show this build's version (as the main menu does) in the bottom right\n"
 		"corner while playing too: handy for screenshots and bug reports." },
-	{ "display.shadow_resolution", _config_integer, "128", "HALO_SHADOW_RESOLUTION", _environment_value,
-		_platform_all,
+	{ "display.shadow_resolution", _config_integer, DEFAULT_SHADOW_RESOLUTION, "HALO_SHADOW_RESOLUTION",
+		_environment_value, _platform_all,
 		"The size the objects' shadows are drawn at, in pixels each way: 128 as\n"
-		"on the Xbox, or 256, 512 or 1024 for smoother edges, as soft." },
+		"on the Xbox, or 256 (the default), 512 or 1024 for smoother edges, as\n"
+		"soft." },
 #ifdef HALO_BROWSER
 	/* (the browser build's online play, the page's rooms and the native
 	gateway, is wired into the PC screens: Create Game and the Server Browser) */
@@ -243,6 +277,10 @@ static const struct config_setting config_settings[] =
 		"with this port's fonts and redrawn pictures, not Halo PC's files. Read\n"
 		"when the game starts: restart it after a change." },
 #endif
+	{ "display.menu_language", _config_string, "\"maps\"", "HALO_MENU_LANGUAGE", _environment_value, _platform_all,
+		"The PC menus' language: \"maps\" for the language of the Custom Edition\n"
+		"whose loc.map is in custom_maps (as that edition shows them; English\n"
+		"without one), \"english\" for English. The port's own lines are English." },
 	{ "display.player_names", _config_string, "\"all\"", "HALO_PLAYER_NAMES", _environment_value, _platform_all,
 		"In multiplayer, whose names are drawn above their heads: \"all\",\n"
 		"\"allies\", \"enemies\" or \"none\". An enemy's shows only within the\n"
@@ -252,6 +290,13 @@ static const struct config_setting config_settings[] =
 	{ "display.player_name_scale", _config_real, "1.0", "HALO_PLAYER_NAME_SCALE", _environment_value, _platform_all,
 		"How large the players' names are drawn: 1.0 three quarters of the size of\n"
 		"the HUD's text, 0.25 to 4." },
+	{ "display.text_chat", _config_boolean, "true", "HALO_TEXT_CHAT", _environment_value, _platform_all,
+		"Show the text chat of network games: false hides its lines and keeps\n"
+		"its keys (and a controller's D-pad Up) from opening it, as for purists\n"
+		"and streamers." },
+	{ "display.chat_style", _config_string, "\"colors\"", "HALO_CHAT_STYLE", _environment_value, _platform_all,
+		"The text chat's colours: \"colors\" (names in their team's colour, the\n"
+		"text a pale blue) or \"white\" (all white, as Custom Edition)." },
 	{ "display.follow_camera", _config_string, "\"long_waits\"", "HALO_FOLLOW_CAMERA", _environment_value,
 		_platform_all,
 		"In multiplayer, when a dead player's camera follows a living player\n"
@@ -283,6 +328,13 @@ static const struct config_setting config_settings[] =
 	{ "display.scoreboard_background", _config_boolean, "true", "HALO_SCOREBOARD_BACKGROUND", _environment_value,
 		_platform_all,
 		"Draw a panel behind the multiplayer scoreboard, for clearer text." },
+	{ "display.scoreboard_platforms", _config_string, "\"auto\"", "HALO_SCOREBOARD_PLATFORMS", _environment_value,
+		_platform_all,
+		"A small logo of each player's platform (Windows, macOS, Linux, Android,\n"
+		"Steam Deck, Xbox...) before their name on a network game's scoreboard,\n"
+		"for players whose client says it over Delta (none for other players):\n"
+		"\"auto\" shows them with the Chupathingy menus only (the Xbox and Gearbox\n"
+		"menus stay as the originals were), \"on\" with any menus, \"off\" never." },
 	{ "display.show_quit_players", _config_boolean, "true", "HALO_SHOW_QUIT_PLAYERS", _environment_value,
 		_platform_all,
 		"Keep players who quit on the multiplayer scoreboard, as the original game\n"
@@ -312,12 +364,56 @@ static const struct config_setting config_settings[] =
 		_environment_value, _platform_all,
 		"The banner's background colour, \"#RRGGBB\" or \"#RRGGBBAA\". Empty (or a\n"
 		"value that does not parse): the default, dark blue." },
+	{ "display.anisotropic_filtering", _config_integer, "0", "HALO_ANISOTROPIC_FILTERING", _environment_value,
+		_platform_all,
+		"Sharpen textures seen at a grazing angle (floors, walls, terrain), which\n"
+		"the Xbox did not: 2, 4, 8 or 16 times; 0 filters as the Xbox did. 4 keeps\n"
+		"most of 16's sharpness at less cost on slower GPUs." },
+	{ "display.latency_meter", _config_boolean, "false", "HALO_LATENCY_METER", _environment_value, _platform_all,
+		"In a network game, your round trip to the host in milliseconds at the\n"
+		"screen's top right, with bars (the host: its slowest player's), and\n"
+		"\"Connection problem\" when the host has sent nothing for two seconds;\n"
+		"the scoreboard's pings in the same colours, as this machine times them." },
 	{ "display.per_pixel_lighting", _config_boolean, "false", "HALO_PER_PIXEL_LIGHTING", _environment_value,
 		_platform_all,
 		"Light the models (characters, weapons, vehicles, scenery) for each\n"
 		"pixel by the lights the game gives them, without the facets the light\n"
 		"of each vertex shows across curved surfaces; false lights each vertex,\n"
 		"as the Xbox does." },
+	{ "display.structure_culling", _config_integer, "31", "HALO_STRUCTURE_CULLING", _environment_value,
+		_platform_all,
+		"Which tests skip the level's triangles the camera cannot see, as bits\n"
+		"added together: 1 outside the view, 2 groups facing away, 4 triangles\n"
+		"facing away, 8 smaller groups, 16 nearer rooms first; 0 walks them as\n"
+		"the Xbox does. The console's structure_culling changes it until the\n"
+		"game quits." },
+	{ "display.model_detail", _config_string, "\"stock\"", "HALO_MODEL_DETAIL", _environment_value, _platform_all,
+		"Which of their levels of detail models are drawn at: \"stock\" chooses by\n"
+		"their size on the Xbox's 480 lines, at any resolution; \"native\" by their\n"
+		"size on the display's, so that more detail is kept at a distance at high\n"
+		"resolutions; \"highest\" draws the models \"native\" does, each at its most\n"
+		"detailed level." },
+	{ "display.hdr", _config_boolean, "false", "HALO_HDR", _environment_value, _platform_all,
+		"Draw the 3D view into a floating-point back buffer, which keeps what\n"
+		"the game's additive effects (explosions, plasma, lights, the sun's\n"
+		"glare) add past white, and tone map it before the HUD is drawn:\n"
+		"display.hdr_tone_mapping brings it back to the display's range\n"
+		"instead of clipping it. false draws into 8 bits a channel, as the\n"
+		"Xbox does." },
+	{ "display.hdr_exposure", _config_real, "1.0", "HALO_HDR_EXPOSURE", _environment_value, _platform_all,
+		"With display.hdr, the 3D view's brightness in linear light before it\n"
+		"is tone mapped, 0.25 to 4.0." },
+	{ "display.hdr_tone_mapping", _config_string, "\"neutral\"", "HALO_HDR_TONE_MAPPING", _environment_value,
+		_platform_all,
+		"With display.hdr, the curve that brings what is past white into the\n"
+		"display's range: \"neutral\" (the picture as drawn, with only its\n"
+		"brightest parts rolled off), \"aces\" (filmic, more contrast) or\n"
+		"\"reinhard\" (softer, and darker throughout)." },
+	{ "display.hdr_output", _config_boolean, "false", "HALO_HDR_OUTPUT", _environment_value, _platform_desktop,
+		"With display.hdr, ask for a floating-point window (scRGB), so that an\n"
+		"HDR display shows what is past white brighter than the desktop's\n"
+		"white rather than tone mapped down to it; the operating system's HDR\n"
+		"must be on. Taken up when the game starts." },
 
 	{ "audio.enabled", _config_boolean, "true", "HALO_NO_AUDIO", _environment_set_is_false, _platform_all,
 		"Play sound." },
@@ -334,10 +430,17 @@ static const struct config_setting config_settings[] =
 		"rides out stalls that cut the sound out, smaller has less delay. 2048\n"
 		"(43 ms) on macOS, 1024 (21 ms) on Android, 512 (11 ms) elsewhere." },
 
+	{ "audio.channels", _config_string, "\"stereo\"", "HALO_AUDIO_CHANNELS", _environment_value, _platform_desktop,
+		"\"stereo\", \"5.1\" (surround, as the Xbox's Dolby Digital), or \"auto\"\n"
+		"for 5.1 when the sound device has six or more channels." },
 	{ "audio.reverb", _config_boolean, "true", "HALO_REVERB", _environment_value, _platform_all,
 		"Reverberate the world's sounds as the place the player is in does (the\n"
 		"maps' sound environments, as the Xbox's I3DL2 reverb did); false keeps\n"
 		"them dry." },
+	{ "audio.resampler", _config_string, "\"sinc\"", "HALO_AUDIO_RESAMPLER", _environment_value, _platform_all,
+		"How sounds are converted to the output's rate: \"sinc\" with a\n"
+		"band-limited low pass; \"linear\" between neighbouring samples,\n"
+		"brighter for the aliasing it lets through." },
 	{ "audio.voice_chat", _config_string, "\"push_to_talk\"", "HALO_VOICE_CHAT", _environment_value, _platform_all,
 		"Talking in network games' voice chat: \"push_to_talk\" (while\n"
 		"controls.push_to_talk is held; the microphone opens the first time),\n"
@@ -358,7 +461,9 @@ static const struct config_setting config_settings[] =
 		"output's 48 kHz: \"sinc\" keeps their band and nothing above it;\n"
 		"\"linear\" interpolates between their samples, as the game did before\n"
 		"OpenCE's build 130: their top octave duller, and images of their band\n"
-		"above it (a brighter, grainier sound)." },
+		"above it (a brighter, grainier sound). audio.resampler, which Audio\n"
+		"Setup's Sound Processing screen sets, is the same choice: either at\n"
+		"\"linear\" resamples linearly." },
 
 	{ "input.touch_controls", _config_string, "\"on\"", "HALO_TOUCH_CONTROLS", _environment_value, _platform_android | _platform_web,
 		"The on-screen touch controls in a game: \"on\" shows them on a\n"
@@ -371,6 +476,12 @@ static const struct config_setting config_settings[] =
 		"mouse (the bullets' own autoaim stays)." },
 	{ "input.mouse_sensitivity", _config_real, "1.0", "HALO_MOUSE_SENSITIVITY", _environment_value, _platform_desktop,
 		"How far the view turns for the mouse's movement." },
+	{ "input.playstation_kernel_driver", _config_boolean, "false", "HALO_PLAYSTATION_KERNEL_DRIVER",
+		_environment_value, _platform_desktop,
+		"Linux: a PlayStation controller (DualSense, DualShock 4) through the\n"
+		"kernel's driver of it (hid-playstation, hid-sony), which needs no setup;\n"
+		"false: through SDL's own, which needs Steam's udev rules to open it. Read\n"
+		"at start-up." },
 	{ "input.invert_mouse", _config_boolean, "false", "HALO_MOUSE_INVERT", _environment_set_is_true, _platform_desktop,
 		"Moving the mouse forward looks down." },
 	{ "input.keyboard_prompts", _config_boolean, "true", "HALO_KEYBOARD_PROMPTS", _environment_value, _platform_desktop,
@@ -474,6 +585,16 @@ static const struct config_setting config_settings[] =
 		"Saying a line to your team." },
 	{ "controls.chat_log", _config_string, "\"H\"", "HALO_KEY_CHAT_LOG", _environment_value, _platform_all,
 		"The chat's recent lines and its players, where M mutes one for you." },
+	/* (port, this fork: OpenCE's text chat's keys, none by default:
+	ChupathingyCE's chat, controls.chat_all and chat_team, is the one played,
+	and OpenCE players' lines reach it) */
+	{ "controls.chat", _config_string, "\"\"", "HALO_KEY_CHAT", _environment_value, _platform_all,
+		"OpenCE's text chat: type a line to everyone (Enter sends it, Escape lets\n"
+		"it go). None by default: controls.chat_all is the game's chat, which\n"
+		"OpenCE players' lines reach." },
+	{ "controls.team_chat", _config_string, "\"\"", "HALO_KEY_TEAM_CHAT", _environment_value, _platform_all,
+		"OpenCE's text chat: type a line to your team. None by default\n"
+		"(controls.chat_team)." },
 
 	{ "game.enhanced_animations", _config_boolean, "true", "HALO_ENHANCED_ANIMATIONS", _environment_value, _platform_all,
 		"The player bipeds' grenade throws keep their legs moving (crouched,\n"
@@ -562,6 +683,27 @@ static const struct config_setting config_settings[] =
 		"Halo PC's in maps_pc. Their tags are checked as the game's own maps'\n"
 		"are before they run. false: none of them is listed, played or\n"
 		"downloaded (OpenCE's setting)." },
+
+	{ "game.defaults_answered", _config_integer, "0", "HALO_DEFAULTS_ANSWERED", _environment_value, _platform_all,
+		"Which defaults the game has asked about: when a version changes the\n"
+		"defaults of settings you had not chosen (display.anti_aliasing,\n"
+		"display.shadow_resolution, display.menus, audio.buffer_frames on Android),\n"
+		"it asks once, \"Use the new settings\" or \"Keep mine\", and writes 1 here.\n"
+		"Keep mine writes your old values into this file. A new file has the new\n"
+		"defaults and is not asked. The dedicated server never asks." },
+	{ "bots.count", _config_integer, "0", "HALO_BOTS", _environment_value, _platform_all,
+		"Computer players (bots) in a local (split screen) Slayer game: 0 to 15\n"
+		"join its lobby with the players, as far as the game has room. Not in\n"
+		"system link or internet games. 0: none, as in the stock game." },
+	{ "bots.skill", _config_string, "\"normal\"", "HALO_BOT_SKILL", _environment_value, _platform_all,
+		"How well the bots play: \"easy\", \"normal\", \"heroic\" or \"legendary\"\n"
+		"(how soon they react, how well they aim, how far they see)." },
+	{ "bots.teams", _config_string, "\"even\"", "HALO_BOT_TEAMS", _environment_value, _platform_all,
+		"In team games: \"even\" puts the bots on both teams, evening them with\n"
+		"the players; \"against\" puts them all on the team the players are not on." },
+
+
+
 	{ "paths.data", _config_string, "\"\"", "HALO_DATA_ROOT", _environment_value, _platform_desktop,
 		"The folder holding the game data's maps folder; empty looks in the\n"
 		"working directory and its assets folder. Windows paths are easiest in\n"
@@ -745,6 +887,10 @@ static const struct config_setting config_settings[] =
 		_platform_all,
 		"Hosting: how near (world units: 1 is about 3 metres) a player must be\n"
 		"to be heard by proximity voice chat (5 to 100)." },
+	{ "network.text_chat", _config_string, "\"on\"", "HALO_NET_TEXT_CHAT", _environment_value, _platform_all,
+		"Hosting: the text chat: \"on\" (links in lines are refused), \"links\"\n"
+		"(links allowed) or \"off\", in either case. Always off in a game listed\n"
+		"in the server browser (a public internet game)." },
 	{ "network.votekick", _config_boolean, "true", "HALO_NET_VOTEKICK", _environment_value, _platform_all,
 		"Hosting: let the players vote to kick a player (the scoreboard's\n"
 		"right-click, or the console's votekick). More than half of the players\n"
@@ -765,7 +911,8 @@ static const struct config_setting config_settings[] =
 	{ "network.map_share_upload", _config_integer, "1024", "HALO_NET_MAP_SHARE_UPLOAD", _environment_value,
 		_platform_all,
 		"Hosting: the most kilobytes a second the host sends of maps (16 to\n"
-		"65536), so that the game's own traffic keeps the rest of the upload." },
+		"20480: 20 MB/s), so that the game's own traffic keeps the rest of the\n"
+		"upload." },
 	{ "network.map_seed", _config_boolean, "true", "HALO_NET_MAP_SEED", _environment_value, _platform_all,
 		"Playing in another's game: help send its map to players who join\n"
 		"without it, as a torrent's peers do (the pieces this machine has, at\n"
@@ -773,7 +920,7 @@ static const struct config_setting config_settings[] =
 	{ "network.map_seed_upload", _config_integer, "256", "HALO_NET_MAP_SEED_UPLOAD", _environment_value,
 		_platform_all,
 		"Playing in another's game: the most kilobytes a second this machine\n"
-		"sends of maps to other players (16 to 65536)." },
+		"sends of maps to other players (16 to 10240: 10 MB/s)." },
 	{ "network.map_download", _config_boolean, "true", "HALO_NET_MAP_DOWNLOAD", _environment_value, _platform_all,
 		"Joining a game on a Custom Edition map this machine does not have:\n"
 		"download it (and the resource maps it needs) from the game's players\n"
@@ -789,6 +936,21 @@ static const struct config_setting config_settings[] =
 		"\"on\", \"shields_only\" or \"explosives_only\" (FRIENDLY FIRE in\n"
 		"co-op's Server Setup > Co-op Options writes its choice here). Their AI\n"
 		"allies they always can, as in the campaign." },
+	{ "network.block_mouse_aim_assist", _config_boolean, "false", "HALO_NET_BLOCK_MOUSE_AIM_ASSIST", _environment_value,
+		_platform_all,
+		"The host's policy on aiming assist for the mouse and keyboard in a\n"
+		"game it hosts: false, each player's own setting\n"
+		"(input.mouse_aim_assist) decides; true, the view's magnetism is off\n"
+		"for a player aiming with the mouse in the game, whatever their\n"
+		"setting. The players' own settings are never changed. The host's\n"
+		"clients are told when they join and when this changes." },
+	{ "network.coop_own_friendly_fire", _config_boolean, "true", "HALO_NET_COOP_OWN_FRIENDLY_FIRE",
+		_environment_value, _platform_all,
+		"Whether this machine's players hurt, and are hurt by, the other players\n"
+		"of an online co-op game: two players hurt each other only if both have\n"
+		"it true. FRIENDLY FIRE in that game's pause menu writes its choice\n"
+		"here. A player away from the controls for over 70 seconds is hurt by\n"
+		"every player, whatever either chose." },
 	{ "network.coop_player_collisions", _config_boolean, "true", "HALO_NET_COOP_PLAYER_COLLISIONS", _environment_value,
 		_platform_all,
 		"Whether the players of an online co-op game bump into each other;\n"
@@ -802,6 +964,17 @@ static const struct config_setting config_settings[] =
 		"\"multiplier\" (each is coop_enemies_multiplier times as large, for any\n"
 		"number of players). EXTRA ENEMIES in co-op's Server Setup > Co-op\n"
 		"Options writes its choice here." },
+	{ "network.coop_pickups", _config_string, "\"none\"", "HALO_NET_COOP_PICKUPS", _environment_value, _platform_all,
+		"Extra campaign weapons, grenades, health kits, overshields and camouflage.\n"
+		"Modes: \"none\", \"per_player\" (coop_enemies percent per extra player),\n"
+		"or \"multiplier\" (coop_enemies_multiplier times as many), up to 8 times\n"
+		"the original pickups. Only safe nearby places receive copies." },
+	{ "network.coop_vehicles", _config_string, "\"none\"", "HALO_NET_COOP_VEHICLES", _environment_value, _platform_all,
+		"Extra campaign vehicles: \"none\", \"per_player\" or \"multiplier\".\n"
+		"After a player clears its unloaded starting place by both bounding\n"
+		"radii plus 15 percent, make one more there, up to\n"
+		"floor((players - 1) * coop_enemies * 2 / 300) extras, or floor((coop_enemies_multiplier - 1) * 2 / 3) in static mode.\n"
+		"The host alone creates them, and waits while the starting place is blocked." },
 	{ "network.coop_enemies", _config_integer, "50", "HALO_NET_COOP_ENEMIES", _environment_value, _platform_all,
 		"Online co-op's extra enemies per player, a percentage: for each player\n"
 		"past the first, each squad of enemies a level places gets this much of\n"
@@ -809,8 +982,9 @@ static const struct config_setting config_settings[] =
 		"Server Setup > Co-op Options writes its choice here." },
 	{ "network.coop_enemies_multiplier", _config_integer, "2", "HALO_NET_COOP_ENEMIES_MULTIPLIER", _environment_value,
 		_platform_all,
-		"Online co-op's static multiplier of its enemies: each squad of enemies\n"
-		"a level places is this many times as large (2 to 32). MULTIPLIER in\n"
+		"Online co-op's shared static multiplier (2 to 32). Pickups are capped\n"
+		"at 8 times their original count; extra vehicle growth uses two thirds\n"
+		"of (multiplier - 1), rounded down. MULTIPLIER in\n"
 		"co-op's Server Setup > Co-op Options writes its choice here." },
 	{ "network.brokers_file", _config_string, "\"brokers.txt\"",
 		"HALO_NET_BROKERS_FILE", _environment_value, _platform_all,
@@ -957,13 +1131,27 @@ static const struct config_setting config_settings[] =
 		"log without IP addresses, and on Windows a minidump): \"yes\" sends them\n"
 		"(this fork's default), \"no\" never does, \"ask\" asks after the next crash\n"
 		"and writes the answer here." },
+	{ "streamer.enabled", _config_boolean, "false", "HALO_STREAMER_MODE", _environment_value, _platform_all,
+		"Hide offensive words in names and text from other players, maps and mods\n"
+		"as stars, at the levels below (Settings > Network Setup > Streamer Mode)." },
+	{ "streamer.slurs", _config_string, "\"mild\"", "HALO_STREAMER_SLURS", _environment_value, _platform_all,
+		"With streamer.enabled, the slurs (race, sexuality, gender, disability)\n"
+		"hidden: \"off\", \"severe\", \"strong\" (and severe) or \"mild\" (all)." },
+	{ "streamer.swearing", _config_string, "\"strong\"", "HALO_STREAMER_SWEARING", _environment_value, _platform_all,
+		"With streamer.enabled, the swearing and sexual words hidden: \"off\",\n"
+		"\"severe\", \"strong\" (and severe) or \"mild\" (all)." },
+	{ "streamer.insults", _config_string, "\"off\"", "HALO_STREAMER_INSULTS", _environment_value, _platform_all,
+		"With streamer.enabled, the insults that are not slurs hidden: \"off\",\n"
+		"\"severe\", \"strong\" (and severe) or \"mild\" (all)." },
 
 	{ "debug.network_test", _config_string, "\"\"", "HALO_NETWORK_TEST", _environment_value, _platform_all,
 		"Automated system link sessions for testing (port/linux/game/network_test.c):\n"
-		"\"host:<map>\" hosts a game on that map, \"join\" joins the first game found,\n"
+		"\"host:<map>\" hosts a game on that map, \"local:<map>\" plays a local (split\n"
+		"screen) game on it, \"join\" joins the first game found,\n"
 		"\"browse\" the one with the most players the server browser lists (not\n"
 		"co-op, if it can), \"invite:<invite>\" the game of that invite (a\n"
-		"halo://join link's last part); empty for none." },
+		"halo://join link's last part), \"log\" logs the game that runs (and runs its\n"
+		"cues); empty for none." },
 	{ "debug.network_test_start", _config_real, "15.0", "HALO_NETWORK_TEST_START", _environment_value, _platform_all,
 		"Seconds after hosting that an automated test game starts." },
 	{ "debug.network_test_kill", _config_real, "0.0", "HALO_NETWORK_TEST_KILL", _environment_value, _platform_all,
@@ -1038,10 +1226,27 @@ static const struct config_setting config_settings[] =
 		"Every this many seconds an automated test host brings its last player in\n"
 		"front of its first, and a player strikes the other with the melee\n"
 		"button: the host's player, then the joining machine's, in turn; 0 never." },
+	{ "debug.network_test_chat", _config_real, "0.0", "HALO_NETWORK_TEST_CHAT", _environment_value, _platform_all,
+		"This many seconds into an automated test game each machine's player\n"
+		"says a chat line to everyone, then to the team and to the vehicle (the\n"
+		"host seats the last two players in one first), then the host mutes and\n"
+		"unmutes a player, refuses a link and turns the chat off, and the\n"
+		"clients type on the on-screen keyboard (port/linux/NETCODE.md); 0 never." },
+	{ "debug.network_test_name", _config_string, "\"\"", "HALO_NETWORK_TEST_NAME", _environment_value, _platform_all,
+		"The name this machine's player takes in an automated test game (ASCII);\n"
+		"empty keeps its profile's." },
 	{ "debug.network_test_pickup_weapon", _config_string, "\"\"", "HALO_NETWORK_TEST_PICKUP_WEAPON", _environment_value,
 		_platform_all,
 		"The weapon network_test_pickup stands the player on: the first whose tag\n"
 		"name has this in it (\"sniper\", say); empty any." },
+	{ "debug.network_test_cues", _config_string, "\"\"", "HALO_NETWORK_TEST_CUES", _environment_value, _platform_all,
+		"Console lines an automated test runs at a game second, from the first tick\n"
+		"every player of debug.network_test_cue_players has a unit:\n"
+		"\"<second> <line>|<second> <line>...\" (the host's, or a game of one machine;\n"
+		"not on the web)." },
+	{ "debug.network_test_cue_players", _config_integer, "1", "HALO_NETWORK_TEST_CUE_PLAYERS", _environment_value,
+		_platform_all,
+		"The players debug.network_test_cues waits for." },
 	{ "debug.network_test_public", _config_boolean, "false", "HALO_NETWORK_TEST_PUBLIC", _environment_value,
 		_platform_all,
 		"The network test's host lists its game in the server browser, as Create\n"
@@ -1089,7 +1294,12 @@ static const struct config_setting config_settings[] =
 	{ "debug.test_input", _config_string, "\"\"", "HALO_TEST_INPUT", _environment_value, _platform_all,
 		"\"bot:<seed>\" plays controller 1 with a scripted pattern (automated\n"
 		"network tests); \"look:<seed>\" stands still, only turning and looking\n"
-		"up and down; empty for none." },
+		"up and down; \"menu:<buttons>\" presses menu buttons one a second (a,\n"
+		"b, x, y, up, down, left, right, start, back or wait, separated by\n"
+		"spaces or commas), for testing the menus; empty for none." },
+	{ "debug.bot_trace", _config_integer, "0", "HALO_BOT_TRACE", _environment_value, _platform_all,
+		"Log each bot's state (bots.count) every this many seconds: where it is\n"
+		"and goes, its path, target and weapon; 0 never." },
 	{ "debug.update_answer", _config_string, "\"\"", "HALO_UPDATE_ANSWER", _environment_value, _platform_desktop,
 		"The answer to the new version question, for automated tests: \"yes\",\n"
 		"\"no\" or \"never\" (do not ask again, confirmed); empty asks." },
@@ -1097,8 +1307,13 @@ static const struct config_setting config_settings[] =
 		"For testing text chat (port/linux/game/chat.c): steps of\n"
 		"\"<seconds>:<all|team|server|mute|unmute|localmute|log|close|type>[:<text>]\"\n"
 		"separated by ;, from when this copy joins a game. Empty: none." },
+	{ "debug.fixed_step", _config_boolean, "false", "HALO_FIXED_STEP", _environment_set_is_true, _platform_all,
+		"A game of this machine alone runs one tick a frame, whatever time has\n"
+		"passed, so that it plays the same every time (tests); game_speed has no\n"
+		"effect." },
 	{ "debug.exit_after", _config_real, "0.0", "HALO_EXIT_AFTER", _environment_value, _platform_all,
-		"Quit this many seconds after the window opens; 0 never." },
+		"Quit this many seconds after the window opens (without a window, after\n"
+		"the first frame); 0 never." },
 	{ "debug.hidden_window", _config_boolean, "false", "HALO_HIDDEN_WINDOW", _environment_set_is_true, _platform_desktop,
 		"Keep the window hidden (and never fullscreen)." },
 	{ "debug.voice_test", _config_boolean, "false", "HALO_VOICE_TEST", _environment_set_is_true, _platform_all,
@@ -1196,6 +1411,13 @@ struct config_value
 static struct config_value config_values[NUMBER_OF_CONFIG_SETTINGS];
 /* whether the file or the environment gives the setting a value */
 static int config_given[NUMBER_OF_CONFIG_SETTINGS];
+/* the settings an existing file would see change with this version's
+defaults, until the player is asked (config_find_new_defaults): 1 for one
+that follows the default (commented out, or not there), 2 for one that an
+older version wrote as a value beside the commented one; and the old
+default each had, as written */
+static int config_pending[NUMBER_OF_CONFIG_SETTINGS];
+static const char *config_pending_old[NUMBER_OF_CONFIG_SETTINGS];
 static int config_loaded = 0;
 static pthread_mutex_t config_lock = PTHREAD_MUTEX_INITIALIZER;
 
@@ -1359,6 +1581,9 @@ static int config_write_file(const char *path, const char *text)
 before config_version, wrote every value, which kept a default a later
 version changed) */
 #define CONFIG_VERSION 2
+/* the defaults the game has asked about (game.defaults_answered): the ones
+of v0.8.0 */
+#define CONFIG_DEFAULTS_GENERATION 1
 #define CONFIG_VERSION_LINE "config_version = 2\n"
 #define CONFIG_VERSION_LINES "# The layout of this file, for the game: leave it.\n" CONFIG_VERSION_LINE
 #define CONFIG_VERSION_TEXT "\n" CONFIG_VERSION_LINES
@@ -1592,7 +1817,7 @@ static char *config_add_missing(const char *text, toml_datum_t table)
 		const char *insert = NULL;
 
 		if (!(setting->platforms & CONFIG_PLATFORM) || !dot || toml_seek(table, setting->name).type != TOML_UNKNOWN ||
-			config_text_has_key(current, setting->name, 1))
+			config_pending[index] || config_text_has_key(current, setting->name, 1))
 			continue;
 		snprintf(header, sizeof(header), "[%.*s]", (int)(dot - setting->name), setting->name);
 		/* the end of the section's last line that is not blank */
@@ -1922,16 +2147,37 @@ static const struct
 	/* whether a file of the current layout holding it is moved to the
 	current default too (the value was never a choice a player made) */
 	int follow;
+	/* for an existing file that has the setting at the old default (or not
+	set): the change in words, to ask about it (config_find_new_defaults) */
+	const char *change;
 } config_old_defaults[] =
 {
 	/* upstream's, which ChupathingyCE kept until v0.5.2b */
-	{ "display.menus", "\"pc\"", 0 },
+	{ "display.menus", "\"pc\"", 0, NULL },
 	/* the Xbox's menus, the default until v0.8.0 (a file that names them
 	keeps them) */
-	{ "display.menus", "\"xbox\"", 0 },
+#ifndef HALO_BROWSER
+	/* (port, this fork: not the browser's, whose default is the PC menus) */
+	{ "display.menus", "\"xbox\"", 0,
+		"The Chupathingy menus (the Xbox's look, with Halo PC's screens added where they help)" },
+#endif
+	/* the Xbox's, until the per-platform defaults of v0.8.0 (a file that
+	names them keeps them) */
+	{ "display.anti_aliasing", "\"off\"", 0, "Smoother edges (2x multisampling)" },
+	{ "display.shadow_resolution", "128", 0, "Sharper shadows (256)" },
+#if defined(HALO_ANDROID) && !defined(HALO_BROWSER)
+	/* (port, this fork: not the browser's, which keeps 512) */
+	{ "audio.buffer_frames", "512", 0, "A larger audio buffer, against crackling (1024)" },
+#endif
 	/* OpenCE's Discord application, which ChupathingyCE kept until v0.7.5c
 	(Discord showed "OpenCE" as being played) */
-	{ "discord.application_id", "\"1553978809840050229\"", 1 },
+	{ "discord.application_id", "\"1553978809840050229\"", 1, NULL },
+#ifdef HALO_BROWSER
+	/* the browser's internet play, which its page turned off until 2026-10-18
+	(its machinery is still off: p2p_native_online): never a player's choice,
+	shown again as the default */
+	{ "network.online", "false", 1, NULL },
+#endif
 };
 
 #define NUMBER_OF_CONFIG_OLD_DEFAULTS (sizeof(config_old_defaults) / sizeof(config_old_defaults[0]))
@@ -1996,7 +2242,7 @@ static void config_report_commented(const char *text, toml_datum_t table)
 			{
 				continue;
 			}
-			if (toml_seek(table, setting->name).type != TOML_UNKNOWN)
+			if (toml_seek(table, setting->name).type != TOML_UNKNOWN || config_pending[index])
 				break;
 			/* (the value read as TOML: 1.0 is 1.00) */
 			value = (const char *)memchr(line, '=', (size_t)(end - line)) + 1;
@@ -2126,6 +2372,256 @@ static char *config_update_layout(const char *text, toml_datum_t table)
 	return out.buffer;
 }
 
+/* whether the value is the setting's default, or one an earlier version had */
+static int config_datum_is_a_default(toml_datum_t datum, const struct config_setting *setting)
+{
+	size_t old;
+
+	if (config_datum_is(datum, setting->type, setting->default_value))
+		return 1;
+	for (old = 0; old < NUMBER_OF_CONFIG_OLD_DEFAULTS; old++)
+	{
+		if (!strcmp(config_old_defaults[old].name, setting->name) &&
+			config_datum_is(datum, setting->type, config_old_defaults[old].default_value))
+		{
+			return 1;
+		}
+	}
+	return 0;
+}
+
+/* whether text has the setting commented out at a default in its section,
+"# key = ..." */
+static int config_text_has_commented_key(const char *text, const char *name)
+{
+	const char *dot = strchr(name, '.');
+	char section[64], current[64] = "";
+	const char *line;
+
+	snprintf(section, sizeof(section), "%.*s", (int)(dot - name), name);
+	for (line = text; *line;)
+	{
+		const char *end = line + strcspn(line, "\n");
+
+		if (!config_line_section(line, end, current, sizeof(current)) && !strcmp(current, section) &&
+			config_line_commented_key(line, end, dot + 1))
+		{
+			return 1;
+		}
+		line = *end ? end + 1 : end;
+	}
+	return 0;
+}
+
+/* whether the line (from its '#') is a setting commented out, "# key = ..." */
+static int config_line_is_commented_setting(const char *line)
+{
+	const char *start;
+
+	line++;
+	while (*line == ' ' || *line == '\t')
+		line++;
+	start = line;
+	while ((*line >= 'a' && *line <= 'z') || (*line >= '0' && *line <= '9') || *line == '_')
+		line++;
+	if (line == start)
+		return 0;
+	while (*line == ' ' || *line == '\t')
+		line++;
+	return *line == '=';
+}
+
+/* a version from before config_version, run on a file of this layout, sees
+the settings commented out at their default as missing, and adds each as a
+value at its own default (with its comment, after a blank line) at the end
+of its section: the file then holds the setting twice, "# key = default"
+from this layout and "key = value" from the older version, and the value
+pins the older version's default. Such a value that is a default, this
+version's or an older one, is taken out with its comment, so that the
+setting follows this version's default again; a value that is no default
+stays, being the player's. Returns the new text, or NULL if there was none */
+static char *config_drop_added_defaults(const char *text, toml_datum_t table)
+{
+	toml_datum_t version = toml_seek(table, "config_version");
+	int lines[NUMBER_OF_CONFIG_SETTINGS];
+	struct config_text out = { NULL, 0, 0 };
+	int line_number = 1, dropped = 0, any = 0;
+	const char *line;
+	size_t index;
+
+	if (version.type != TOML_INT64 || version.u.int64 < 2)
+		return NULL;
+	for (index = 0; index < NUMBER_OF_CONFIG_SETTINGS; index++)
+	{
+		const struct config_setting *setting = &config_settings[index];
+		toml_datum_t datum = toml_seek(table, setting->name);
+
+		lines[index] = 0;
+		if (datum.type != TOML_UNKNOWN && config_datum_is_a_default(datum, setting) &&
+			config_text_has_commented_key(text, setting->name))
+		{
+			lines[index] = datum.lineno;
+			any = 1;
+		}
+	}
+	if (!any)
+		return NULL;
+	for (line = text; *line; line_number++)
+	{
+		const char *end = line + strcspn(line, "\n");
+		const char *next = *end ? end + 1 : end;
+		int drop = 0;
+
+		for (index = 0; index < NUMBER_OF_CONFIG_SETTINGS && !drop; index++)
+		{
+			drop = lines[index] == line_number &&
+				config_line_key(line, end, strchr(config_settings[index].name, '.') + 1);
+		}
+		if (drop)
+		{
+			/* (its comment above it, and the blank line before that) */
+			while (out.length)
+			{
+				size_t start = out.length - 1;
+				const char *first;
+
+				while (start > 0 && out.buffer[start - 1] != '\n')
+					start--;
+				for (first = out.buffer + start; *first == ' ' || *first == '\t'; first++)
+				{
+				}
+				/* (not another setting's line, "# key = value") */
+				if (*first != '#' || config_line_is_commented_setting(first))
+					break;
+				out.length = start;
+				out.buffer[start] = 0;
+			}
+			if (out.length >= 2 && out.buffer[out.length - 1] == '\n' && out.buffer[out.length - 2] == '\n')
+				out.buffer[--out.length] = 0;
+			dropped++;
+		}
+		else
+		{
+			char *copy = config_copy(line, (size_t)(next - line));
+
+			if (copy)
+				config_append(&out, copy);
+			free(copy);
+		}
+		line = next;
+	}
+	platform_log("settings: config.toml held %d settings twice, commented out and as a default an older version "
+		"added; those values are taken out, to follow this version's defaults", dropped);
+	return out.buffer;
+}
+
+/* a default's text without its quotes, as config_write takes it */
+static void config_unquote(const char *text, char *out, size_t size)
+{
+	size_t length = strlen(text);
+
+	if (length >= 2 && text[0] == '"')
+	{
+		text++;
+		length -= 2;
+	}
+	if (length >= size)
+		length = size - 1;
+	memcpy(out, text, length);
+	out[length] = 0;
+}
+
+#ifndef HALO_SERVER
+/* whether the setting is commented out in text ("# key = ...") at the value
+(a default as written): 1 if so, 0 if at another, -1 if it is not there */
+static int config_commented_value_is(const char *text, const struct config_setting *setting, const char *value_text)
+{
+	const char *dot = strchr(setting->name, '.');
+	char section[64], current[64] = "";
+	const char *line;
+
+	snprintf(section, sizeof(section), "%.*s", (int)(dot - setting->name), setting->name);
+	for (line = text; *line;)
+	{
+		const char *end = line + strcspn(line, "\n");
+
+		if (!config_line_section(line, end, current, sizeof(current)) && !strcmp(current, section) &&
+			config_line_commented_key(line, end, dot + 1))
+		{
+			const char *value = (const char *)memchr(line, '=', (size_t)(end - line)) + 1;
+			size_t probe_size = (size_t)(end - value) + 8;
+			char *probe = malloc(probe_size);
+			toml_result_t parsed;
+			int same;
+
+			if (!probe)
+				return 0;
+			snprintf(probe, probe_size, "v = %.*s\n", (int)(end - value), value);
+			parsed = toml_parse(probe, (int)strlen(probe));
+			same = parsed.ok && config_datum_is(toml_seek(parsed.toptab, "v"), setting->type, value_text);
+			toml_free(parsed);
+			free(probe);
+			return same;
+		}
+		line = *end ? end + 1 : end;
+	}
+	return -1;
+}
+
+#endif
+
+/* An existing file (text, parsed as table) whose settings this version's
+defaults would change: those at an older default that follow the default (at
+the old one, commented out, or not there at all, the file being from before
+the setting), and those an older version wrote as a value beside the
+commented one (config_drop_added_defaults). They are listed in
+config_pending, to be asked about once (config_new_defaults_pending); the
+file is left as it is, and the settings keep their old values, until the
+player answers. A file that was answered (game.defaults_answered) has none.
+The dedicated server keeps its own defaults and is never asked. */
+static void config_find_new_defaults(const char *text, toml_datum_t table)
+{
+#ifndef HALO_SERVER
+	toml_datum_t version = toml_seek(table, "config_version");
+	toml_datum_t answered = toml_seek(table, "game.defaults_answered");
+	size_t old;
+
+	if (answered.type == TOML_INT64 && answered.u.int64 >= CONFIG_DEFAULTS_GENERATION)
+		return;
+	for (old = 0; old < NUMBER_OF_CONFIG_OLD_DEFAULTS; old++)
+	{
+		long index = config_old_defaults[old].change ? config_setting_index(config_old_defaults[old].name) : -1;
+		const struct config_setting *setting;
+		toml_datum_t datum;
+
+		if (index < 0)
+			continue;
+		setting = &config_settings[index];
+		if (!(setting->platforms & CONFIG_PLATFORM) || !strcmp(config_old_defaults[old].default_value, setting->default_value))
+			continue;
+		datum = toml_seek(table, setting->name);
+		if (datum.type != TOML_UNKNOWN)
+		{
+			if (version.type == TOML_INT64 && version.u.int64 >= 2 &&
+				config_datum_is(datum, setting->type, config_old_defaults[old].default_value) &&
+				config_text_has_commented_key(text, setting->name))
+			{
+				config_pending[index] = 2;
+			}
+		}
+		else if (config_commented_value_is(text, setting, config_old_defaults[old].default_value) != 0)
+		{
+			config_pending[index] = 1;
+		}
+		if (config_pending[index])
+			config_pending_old[index] = config_old_defaults[old].default_value;
+	}
+#else
+	(void)text;
+	(void)table;
+#endif
+}
+
 /* whether the line is blank */
 static int config_line_blank(const char *line, const char *end)
 {
@@ -2243,8 +2739,8 @@ written here), and another is said once in the log */
 static const struct
 {
 	const char *name;
-	/* NULL ended; "" where empty is one */
-	const char *words[8];
+	/* NULL ended; "" where empty is one (display.shield_color's are 19) */
+	const char *words[24];
 	/* what the game does with another, for the log (NULL: what reads the
 	setting says it) */
 	const char *otherwise;
@@ -2256,6 +2752,7 @@ static const struct
 	{ "display.menus", { "xbox", "gearbox", "pc", "chupathingy", NULL }, NULL },
 	{ "display.player_names", { "all", "allies", "allys", "enemies", "none", NULL }, "\"all\"" },
 	{ "display.scoreboard_team_layout", { "teams", "score", NULL }, "\"teams\"" },
+	{ "display.scoreboard_platforms", { "auto", "on", "off", NULL }, "\"auto\"" },
 	{ "display.follow_camera", { "long_waits", "always", "off", NULL }, "\"long_waits\"" },
 	{ "display.texture_decode", { "auto", "gpu", "cpu", NULL }, "\"auto\"" },
 	{ "audio.resampling", { "sinc", "linear", NULL }, "\"sinc\"" },
@@ -2272,6 +2769,20 @@ static const struct
 	{ "network.coop_friendly_fire", { "off", "on", "shields_only", "explosives_only", NULL }, NULL },
 	{ "network.coop_enemies_mode", { "none", "per_player", "multiplier", NULL }, "\"none\"" },
 	{ "crash_reports.upload", { "ask", "yes", "no", NULL }, "\"yes\"" },
+	{ "display.hud_button_style", { "classic", "gems", "menu_gems", NULL }, NULL },
+	{ "display.chat_style", { "colors", "white", NULL }, NULL },
+	{ "display.shield_glow_intensity", { "default", "light_show", NULL }, NULL },
+	{ "display.shield_color", { "default", "white", "black", "red", "blue", "gray", "yellow", "green", "pink",
+		"purple", "cyan", "cobalt", "orange", "teal", "sage", "brown", "tan", "maroon", "salmon", NULL }, NULL },
+	{ "audio.resampler", { "sinc", "linear", NULL }, NULL },
+	{ "audio.voice_chat", { "push_to_talk", "open_mic", "off", NULL }, NULL },
+	{ "game.language", { "", "ja", "de", "fr", "es", "it", NULL }, NULL },
+	{ "network.text_chat", { "on", "links", "off", NULL }, NULL },
+	{ "network.voice_mode", { "off", "team_proximity", "team_enemy_proximity", "team_global",
+		"team_global_enemy_proximity", NULL }, NULL },
+	{ "streamer.slurs", { "off", "severe", "strong", "mild", NULL }, NULL },
+	{ "streamer.swearing", { "off", "severe", "strong", "mild", NULL }, NULL },
+	{ "streamer.insults", { "off", "severe", "strong", "mild", NULL }, NULL },
 };
 
 #define NUMBER_OF_CONFIG_WORDS (sizeof(config_words) / sizeof(config_words[0]))
@@ -2550,7 +3061,7 @@ static void config_load(void)
 			char *updated = config_update_layout(text, result.toptab);
 			char *completed;
 
-			if (joined)
+			if (joined && !skipped)
 			{
 				if (config_write_file(path, text))
 					platform_log("settings: joined the sections %s had twice", path);
@@ -2599,10 +3110,23 @@ static void config_load(void)
 					}
 				}
 			}
+			config_find_new_defaults(text, result.toptab);
 			for (index = 0; index < NUMBER_OF_CONFIG_SETTINGS; index++)
 			{
 				config_set_from_file(&config_values[index], &config_settings[index], result.toptab);
 				config_given[index] = toml_seek(result.toptab, config_settings[index].name).type != TOML_UNKNOWN;
+			}
+			/* (until the player is asked, the values stay what they were: the
+			new defaults take effect only when they say so) */
+			for (index = 0; index < NUMBER_OF_CONFIG_SETTINGS; index++)
+			{
+				if (config_pending[index])
+				{
+					char old[64];
+
+					config_unquote(config_pending_old[index], old, sizeof(old));
+					config_set_from_text(&config_values[index], config_settings[index].type, old);
+				}
 			}
 			config_report_unknown_keys(result.toptab);
 			platform_log("settings: %s", path);
@@ -2623,8 +3147,8 @@ static void config_load(void)
 		}
 		else
 		{
-			platform_log("config.toml cannot be read (%s): every setting is at its default until that is fixed",
-				result.errmsg);
+			platform_log("config.toml cannot be read (%s): every setting is at its default until that is fixed "
+				"(a word value needs quotes: menus = \"pc\")", result.errmsg);
 		}
 		toml_free(result);
 		free(text);
@@ -2819,6 +3343,157 @@ int config_write(const char *name, const char *value)
 	return succeeded;
 }
 
+/* the file's lines "# key = <an older default>" for a setting, at the
+current default again, so that the file reads as this version writes it
+(NULL if there is none) */
+static char *config_refresh_commented(const char *text, const struct config_setting *setting)
+{
+	const char *dot = strchr(setting->name, '.');
+	struct config_text out = { NULL, 0, 0 };
+	char section[64], current[64] = "", buffer[256];
+	const char *line;
+	int changed = 0;
+
+	snprintf(section, sizeof(section), "%.*s", (int)(dot - setting->name), setting->name);
+	for (line = text; *line;)
+	{
+		const char *end = line + strcspn(line, "\n");
+		const char *next = *end ? end + 1 : end;
+
+		config_line_section(line, end, current, sizeof(current));
+		if (!strcmp(current, section) && config_line_commented_key(line, end, dot + 1))
+		{
+			snprintf(buffer, sizeof(buffer), "# %s = %s\n", dot + 1, setting->default_value);
+			config_append(&out, buffer);
+			changed = 1;
+		}
+		else
+		{
+			char *copy = config_copy(line, (size_t)(next - line));
+
+			if (copy)
+				config_append(&out, copy);
+			free(copy);
+		}
+		line = next;
+	}
+	if (!changed)
+	{
+		free(out.buffer);
+		return NULL;
+	}
+	return out.buffer;
+}
+
+int config_new_defaults_pending(char *text, size_t size)
+{
+	size_t old;
+	int count = 0;
+
+	if (size)
+		text[0] = 0;
+	/* (the file read first) */
+	config_value("game.defaults_answered", _config_integer);
+	pthread_mutex_lock(&config_lock);
+	for (old = 0; old < NUMBER_OF_CONFIG_OLD_DEFAULTS; old++)
+	{
+		long index = config_old_defaults[old].change ? config_setting_index(config_old_defaults[old].name) : -1;
+		size_t used = strlen(text);
+
+		if (index >= 0 && config_pending[index] && config_pending_old[index] == config_old_defaults[old].default_value)
+		{
+			snprintf(text + used, size - used, "%s%s", count ? "\n" : "", config_old_defaults[old].change);
+			count++;
+		}
+	}
+	pthread_mutex_unlock(&config_lock);
+	return count;
+}
+
+void config_new_defaults_answer(int use_new)
+{
+	int pending[NUMBER_OF_CONFIG_SETTINGS];
+	const char *old_value[NUMBER_OF_CONFIG_SETTINGS];
+	size_t index;
+	char path[1024];
+
+	config_value("game.defaults_answered", _config_integer);
+	pthread_mutex_lock(&config_lock);
+	memcpy(pending, config_pending, sizeof(pending));
+	memcpy(old_value, config_pending_old, sizeof(old_value));
+	memset(config_pending, 0, sizeof(config_pending));
+	pthread_mutex_unlock(&config_lock);
+	if (use_new)
+	{
+		size_t size = 0;
+		char *text;
+
+		config_path(path, sizeof(path));
+		text = config_read_file(path, &size);
+		if (text)
+		{
+			toml_result_t result = toml_parse(text, (int)size);
+			char *changed = NULL;
+
+			/* (the values an older version added beside the commented ones,
+			which pinned the old defaults, taken out; the commented lines
+			at the old defaults written at the new ones) */
+			if (result.ok)
+				changed = config_drop_added_defaults(text, result.toptab);
+			toml_free(result);
+			for (index = 0; index < NUMBER_OF_CONFIG_SETTINGS; index++)
+			{
+				if (pending[index])
+				{
+					char *refreshed = config_refresh_commented(changed ? changed : text, &config_settings[index]);
+
+					if (refreshed)
+					{
+						free(changed);
+						changed = refreshed;
+					}
+				}
+			}
+			if (changed && !config_write_file(path, changed))
+				platform_log("settings: cannot write %s", path);
+			free(changed);
+			free(text);
+		}
+		pthread_mutex_lock(&config_lock);
+		for (index = 0; index < NUMBER_OF_CONFIG_SETTINGS; index++)
+		{
+			if (pending[index])
+			{
+				char value[64];
+
+				config_unquote(config_settings[index].default_value, value, sizeof(value));
+				config_set_from_text(&config_values[index], config_settings[index].type, value);
+				platform_log("settings: %s follows this version's default (%s) now", config_settings[index].name,
+					config_settings[index].default_value);
+			}
+		}
+		config_change_count++;
+		pthread_mutex_unlock(&config_lock);
+	}
+	else
+	{
+		for (index = 0; index < NUMBER_OF_CONFIG_SETTINGS; index++)
+		{
+			if (pending[index])
+			{
+				char value[64];
+
+				config_unquote(old_value[index], value, sizeof(value));
+				/* (a value an older version wrote is there already) */
+				if (pending[index] == 1)
+					config_write(config_settings[index].name, value);
+				platform_log("settings: %s = %s is kept", config_settings[index].name, old_value[index]);
+			}
+		}
+	}
+	config_write("game.defaults_answered", "1");
+}
+
 int config_write_boolean(const char *name, int value)
 {
 	long index = config_setting_index(name);
@@ -2879,8 +3554,101 @@ char *config_file_read(const char *path, size_t *size)
 	return config_read_file(path, size);
 }
 
+/* the settings config.toml changes while the game runs, edited by hand
+(Settings writes them through config_write): the volumes, which their
+readers read again when config_changes moves (dsound_sdl.c,
+sound_manager.c). The rest still take effect from the next start */
+static const char *const config_live_settings[] =
+{
+	"audio.volume",
+	"audio.music_volume",
+	"audio.effects_volume",
+};
+
+enum
+{
+	/* config.toml's time looked at no more often than this (seconds; the
+	C library's clock, which the dedicated server, without SDL, has too) */
+	CONFIG_FOLLOW_INTERVAL_SECONDS = 1
+};
+
+/* config.toml changed on disk since it was last looked at: its live
+settings read again from it (one given by the environment kept), and
+config_changes moved if any is different */
+static void config_follow_file(void)
+{
+	static time_t looked_at;
+	static posix_ulong modified, modified_nanoseconds, modified_size;
+	static int looked;
+	static char path[1024];
+	time_t now = time(NULL);
+	struct posix_file_information info;
+	size_t size = 0;
+	char *text;
+	toml_result_t result;
+	size_t live;
+	int changed = 0;
+
+	if (!config_loaded || (looked && now - looked_at < CONFIG_FOLLOW_INTERVAL_SECONDS))
+		return;
+	looked_at = now;
+	if (!path[0])
+		config_path(path, sizeof(path));
+	if (posix_stat(path, &info) != 0)
+		return;
+	/* (the first look keeps the file as it was read; the size too, for a
+	file system whose times are whole seconds) */
+	if (!looked || (info.modification_seconds == modified &&
+		info.modification_nanoseconds == modified_nanoseconds && info.size_low == modified_size))
+	{
+		looked = 1;
+		modified = info.modification_seconds;
+		modified_nanoseconds = info.modification_nanoseconds;
+		modified_size = info.size_low;
+		return;
+	}
+	modified = info.modification_seconds;
+	modified_nanoseconds = info.modification_nanoseconds;
+	modified_size = info.size_low;
+	text = config_read_file(path, &size);
+	if (!text)
+		return;
+	result = toml_parse(text, (int)size);
+	if (result.ok)
+	{
+		pthread_mutex_lock(&config_lock);
+		for (live = 0; live < sizeof(config_live_settings) / sizeof(config_live_settings[0]); live++)
+		{
+			long index = config_setting_index(config_live_settings[live]);
+			const struct config_setting *setting;
+			struct config_value value;
+
+			if (index < 0)
+				continue;
+			setting = &config_settings[index];
+			if (getenv(setting->environment))
+				continue;
+			memset(&value, 0, sizeof(value));
+			config_set_from_text(&value, setting->type, setting->default_value);
+			config_set_from_file(&value, setting, result.toptab);
+			if (value.real != config_values[index].real)
+			{
+				config_values[index].real = value.real;
+				platform_log("settings: config.toml changed: %s = %g", setting->name, value.real);
+				changed = 1;
+			}
+		}
+		if (changed)
+			config_change_count++;
+		pthread_mutex_unlock(&config_lock);
+	}
+	toml_free(result);
+	free(text);
+}
+
 unsigned long config_changes(void)
 {
+	config_follow_file();
 	return config_change_count;
 }
 
@@ -2907,6 +3675,15 @@ int config_default(const char *name, char *text, size_t size)
 int config_boolean(const char *name)
 {
 	return config_value(name, _config_boolean)->boolean;
+}
+
+int halo_fixed_step(void)
+{
+	static int fixed_step = -1;
+
+	if (fixed_step < 0)
+		fixed_step = config_boolean("debug.fixed_step") != 0;
+	return fixed_step;
 }
 
 long config_integer(const char *name)
