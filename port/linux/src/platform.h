@@ -306,7 +306,7 @@ int halo_3ds_pthread_equal(pthread_t a, pthread_t b);
 TIMER_ABSTIME, which macOS lacks) */
 static inline void platform_sleep_until(const struct timespec *deadline)
 {
-#if !defined(__APPLE__) && !defined(HALO_3DS)
+#if !defined(__APPLE__) && !defined(HALO_3DS) && !defined(HALO_N3DS)
 	clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, deadline, NULL);
 #else
 	for (;;)

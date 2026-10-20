@@ -19,3 +19,11 @@ BOOL WINAPI QueryPerformanceFrequency(LARGE_INTEGER *frequency)
     frequency->QuadPart = n3ds_engine_tick_frequency();
     return TRUE;
 }
+
+/* (the fork's Winsock layer, port/linux/src/xnet.c, times its delayed sends
+ * by it) */
+DWORD WINAPI GetTickCount(void)
+{
+    long long frequency = n3ds_engine_tick_frequency();
+    return frequency ? (DWORD)(n3ds_engine_ticks() * 1000 / frequency) : 0;
+}

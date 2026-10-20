@@ -252,13 +252,6 @@ void transport_pop_key(
 short transport_initialize(
 	void)
 {
-#ifdef HALO_N3DS
-	/* No Xbox secure-network backend is available on this port. Campaign
-	 * ignores this status; retain the uninitialized state so callers cannot
-	 * mistake local Wi-Fi connectivity for a usable Xbox transport. */
-	error(_error_log, "Xbox transport unavailable on Nintendo 3DS; offline play only");
-	return _transport_error_not_initialized;
-#else
 	if (!transport_initialized)
 	{
 		WSADATA info = { 0 };
@@ -326,7 +319,6 @@ short transport_initialize(
 	}
 
 	return _transport_error_none;
-#endif
 }
 
 void transport_client_stop(
@@ -343,9 +335,6 @@ void transport_client_stop(
 short transport_server_initialize(
 	void)
 {
-#ifdef HALO_N3DS
-	return _transport_error_not_initialized;
-#else
 	XNKEY key;
 	XNKID key_id;
 
@@ -358,7 +347,6 @@ short transport_server_initialize(
 	XNetCreateKey(&key_id, &key);
 	transport_push_key(&key, &key_id);
 	return _transport_error_none;
-#endif
 }
 
 short transport_server_terminate(
@@ -373,10 +361,6 @@ short transport_server_terminate(
 short transport_dispose(
 	void)
 {
-#ifdef HALO_N3DS
-	/* No native transport resources were acquired. */
-	return _transport_error_not_initialized;
-#else
 	short result = _transport_error_none;
 
 	if (transport_initialized)
@@ -391,7 +375,6 @@ short transport_dispose(
 	}
 
 	return result;
-#endif
 }
 
 boolean transport_network_available(

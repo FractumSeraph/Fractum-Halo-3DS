@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <malloc.h>
 #include <time.h>
 #include "engine_textures.h"
 #include "engine_renderer.h"
@@ -80,6 +81,16 @@ int main(void)
     /* Retain capacity for two A10 corridor views and their effects, while
      * keeping every draw and the live command-capacity checks. */
     n3ds_parallel_initialize();
+    /* The console's socket service, for system link and internet play (the
+     * fork's Winsock layer, port/linux/src/xnet.c). Without it the game runs
+     * offline: the transport reports no network. */
+    static u32 *soc_buffer;
+    soc_buffer = memalign(0x1000, 0x100000);
+    Result soc_result = soc_buffer ? socInit(soc_buffer, 0x100000) : -1;
+    if (R_FAILED(soc_result)) {
+        char text[96];snprintf(text,sizeof(text),"NETWORK: socket service unavailable (%08lx); offline",(unsigned long)soc_result);
+        n3ds_log(text);free(soc_buffer);soc_buffer=NULL;
+    } else n3ds_log("NETWORK: socket service started (1 MiB buffer)");
     int gpu_ready = C3D_Init(8 * C3D_DEFAULT_CMDBUF_SIZE);
     if (gpu_ready) n3ds_log("GPU command buffer: 2097152 bytes (two-eye capacity)");
     int programs_ready = gpu_ready && n3ds_gpu_programs_initialize();
@@ -102,6 +113,7 @@ int main(void)
         fflush(stdout);flush_console();
     }
     n3ds_log(result ? "RESULT: FAIL" : "RESULT: PASS");
+    if (soc_buffer) {socExit();free(soc_buffer);soc_buffer=NULL;}
     n3ds_parallel_shutdown();log_async_finish();
     if (log_file) {fclose(log_file);log_file=NULL;}
     while (result && aptMainLoop()) {

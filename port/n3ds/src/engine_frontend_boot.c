@@ -55,6 +55,8 @@ void n3ds_log(const char *);
 void __attribute__((weak)) n3ds_frontend_fixture_seed(void) {}
 void n3ds_main_frontend_initialize(void);
 void n3ds_main_frontend_services(void);
+void n3ds_main_network_start_frame(void);
+void n3ds_main_network_end_frame(void);
 void n3ds_main_mission_save_step(boolean);
 void player_control_update(real);
 void event_manager_update(void);
@@ -280,11 +282,15 @@ int halo_engine_boot(void)
         if(frame%30==0 || memcmp(&sample,&prior,sizeof(sample))) {
             snprintf(message,sizeof(message),"FRONTEND INPUT: frame=%ld held=%08x circle=%d,%d look=%d,%d enabled=%d cinematic=%d skip=%d touch=%u,%u",frame+1,sample.held,sample.circle_x,sample.circle_y,sample.cstick_x,sample.cstick_y,player_input_enabled(),cinematic_in_progress(),cinematic_can_be_skipped(),sample.touch_x,sample.touch_y);n3ds_log(message);prior=sample;
         }
-        event_manager_update();n3ds_frontend_trace("widgets");process_ui_widgets();bink_playback_update();
+        event_manager_update();
+        /* The network game's frame (main.c, as the original main loop has it):
+         * system link and internet play, before the menus are processed. */
+        n3ds_frontend_trace("network");n3ds_main_network_start_frame();
+        n3ds_frontend_trace("widgets");process_ui_widgets();bink_playback_update();
         n3ds_frontend_trace("simulation");
         long long simulation_start=n3ds_engine_ticks();
         if(game_in_progress()) {
-            player_control_update(1.f/30.f);game_time_update(1.f/30.f);
+            player_control_update(1.f/30.f);n3ds_main_network_end_frame();game_time_update(1.f/30.f);
             director_update(1.f/30.f);observer_update(1.f/30.f);
             n3ds_main_mission_save_step(FALSE);
         }

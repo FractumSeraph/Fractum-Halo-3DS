@@ -8,52 +8,52 @@ with the host ABI.
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
-#ifndef HALO_3DS
+#if !defined(HALO_3DS) && !defined(HALO_N3DS)
 #include <ifaddrs.h>
 #endif
 #include <limits.h>
-#ifndef HALO_3DS
+#if !defined(HALO_3DS) && !defined(HALO_N3DS)
 #include <net/if.h>
 #endif
 #include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <poll.h>
-#ifndef HALO_3DS
+#if !defined(HALO_3DS) && !defined(HALO_N3DS)
 #include <spawn.h>
 #endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#ifndef HALO_3DS
+#if !defined(HALO_3DS) && !defined(HALO_N3DS)
 #include <sys/ioctl.h>
 #endif
 #ifdef __APPLE__
 #include <crt_externs.h>
 #include <uuid/uuid.h>
 #include <stdlib.h>
-#elif defined(HALO_3DS)
+#elif defined(HALO_3DS) || defined(HALO_N3DS)
 /* the 3DS (port/3ds): libctru's sockets (soc), its random numbers (ps) */
 #include <3ds.h>
 #else
 #include <sys/random.h>
 #include <sys/random.h>
 #endif
-#ifndef HALO_3DS
+#if !defined(HALO_3DS) && !defined(HALO_N3DS)
 #include <spawn.h>
 #endif
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <time.h>
-#ifndef HALO_3DS
+#if !defined(HALO_3DS) && !defined(HALO_N3DS)
 #include <sys/un.h>
 #include <sys/wait.h>
 #endif
 #include <unistd.h>
 
 #include "posix.h"
-#ifdef HALO_3DS
+#if defined(HALO_3DS)
 /* port: the 3DS's watchdog (port/3ds/include/n3ds_watch.h) */
 #include "n3ds_watch.h"
 #else
@@ -64,7 +64,7 @@ with the host ABI.
 #include "../../web/src/web_loopback_net.h"
 #endif
 
-#ifdef HALO_3DS
+#if defined(HALO_3DS) || defined(HALO_N3DS)
 /* what libctru's sockets have not (the option is refused when set) */
 #ifndef SO_KEEPALIVE
 #define SO_KEEPALIVE 0x0008
@@ -158,7 +158,7 @@ static int fail(void)
 	case ECONNREFUSED: last_error = WSAECONNREFUSED; break;
 	case EHOSTUNREACH: last_error = WSAEHOSTUNREACH; break;
 	default:
-#ifdef HALO_3DS
+#if defined(HALO_3DS) || defined(HALO_N3DS)
 		/* (the 3DS's socket service: which errors it gives, once each) */
 		{
 			static int logged[8];
@@ -248,7 +248,7 @@ static void from_host_address(void *address, int *address_length)
 the trace, once a call */
 static int fail_at(const char *where)
 {
-#ifdef HALO_3DS
+#if defined(HALO_3DS) || defined(HALO_N3DS)
 	if (errno == EINVAL)
 	{
 		static const char *logged[8];
@@ -466,7 +466,7 @@ int posix_socket_recvfrom(int socket, void *buffer, int length, int flags,
 	N3DS_CALL("recvfrom", NULL);
 #ifdef HALO_BROWSER
 	return succeed(web_net_recvfrom(socket, buffer, length, flags, address, address_length));
-#elif defined(HALO_3DS)
+#elif defined(HALO_3DS) || defined(HALO_N3DS)
 	/* (no recvmsg in libctru's sockets: a datagram larger than the buffer
 	is cut without a word) */
 	socklen_t host_length = address && address_length ? (socklen_t)*address_length : 0;
@@ -547,7 +547,7 @@ int posix_socket_bytes_available(int socket, posix_ulong *count)
 {
 #ifdef HALO_BROWSER
 	return succeed(web_net_bytes_available(socket, count));
-#elif defined(HALO_3DS)
+#elif defined(HALO_3DS) || defined(HALO_N3DS)
 	/* (no FIONREAD in libctru's sockets: a peek, as far as a datagram goes) */
 	static unsigned char scratch[2048];
 	/* (the socket is non-blocking, which fcntl set: MSG_DONTWAIT, which
@@ -609,7 +609,7 @@ int posix_socket_setsockopt(int socket, int level, int name, const void *value, 
 	}
 #ifdef HALO_BROWSER
 	return succeed(web_net_setsockopt(socket, host_level, host_name, value, length));
-#elif defined(HALO_3DS)
+#elif defined(HALO_3DS) || defined(HALO_N3DS)
 	{
 		int result = setsockopt(socket, host_level, host_name, value, (socklen_t)length);
 
@@ -805,7 +805,7 @@ int posix_socket_select(int *read, int *read_count, int *write, int *write_count
 #endif
 }
 
-#if defined(HALO_3DS)
+#if defined(HALO_3DS) || defined(HALO_N3DS)
 /* the 3DS has one interface, its wireless one: its address (network
 order), or 0 while it has none */
 static posix_ulong interface_address(unsigned int flags)
@@ -895,7 +895,7 @@ void posix_random_bytes(void *buffer, posix_ulong size)
 {
 #ifdef __APPLE__
 	arc4random_buf(buffer, size);
-#elif defined(HALO_3DS)
+#elif defined(HALO_3DS) || defined(HALO_N3DS)
 	/* the system's random numbers (the PS service); the keys and invites
 	made from these must not be guessable */
 	static int ps_ready;
@@ -1134,7 +1134,7 @@ int posix_user_secret(unsigned char *secret, int size)
 #endif
 }
 
-#if !defined(__ANDROID__) && !defined(__APPLE__) && !defined(HALO_BROWSER) && !defined(HALO_3DS)
+#if !defined(__ANDROID__) && !defined(__APPLE__) && !defined(HALO_BROWSER) && !defined(HALO_3DS) && !defined(HALO_N3DS)
 /* runs a program with its arguments and waits for it; its exit status, or -1 */
 static int run_program(char *const arguments[])
 {
@@ -1152,7 +1152,7 @@ static int run_program(char *const arguments[])
 
 int posix_register_url_scheme(const char *scheme, const char *description)
 {
-#if defined(__ANDROID__) || defined(__APPLE__) || defined(HALO_BROWSER) || defined(HALO_3DS)
+#if defined(__ANDROID__) || defined(__APPLE__) || defined(HALO_BROWSER) || defined(HALO_3DS) || defined(HALO_N3DS)
 	(void)scheme;
 	(void)description;
 #ifdef __APPLE__
@@ -1226,7 +1226,7 @@ int posix_register_url_scheme(const char *scheme, const char *description)
 
 int posix_discord_connect(void)
 {
-#if defined(__ANDROID__) || defined(HALO_BROWSER) || defined(HALO_3DS)
+#if defined(__ANDROID__) || defined(HALO_BROWSER) || defined(HALO_3DS) || defined(HALO_N3DS)
 	return -1;
 #else
 	/* where Discord (and its Flatpak and Snap packages) put discord-ipc-N */

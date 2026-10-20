@@ -1405,6 +1405,13 @@ boolean cache_files_map_present(
 		{
 			if (cache_files_precache_map_loaded(map_name))
 				return TRUE;
+#ifdef HALO_N3DS
+			/* port: (the 3DS) a map prepared on the SD card (Halo3DS's setup) */
+			(void)handle;
+			(void)path;
+			if (n3ds_engine_map_installed(file))
+				return TRUE;
+#else
 			snprintf(path, sizeof(path), "%s%s.map", cache_files_map_directory(), file);
 			handle = CreateFileA(path, GENERIC_READ, 0, NULL, OPEN_EXISTING, 0, NULL);
 			if (handle != INVALID_HANDLE_VALUE)
@@ -1412,6 +1419,7 @@ boolean cache_files_map_present(
 				CloseHandle(handle);
 				return TRUE;
 			}
+#endif
 #ifdef HALO_CUSTOM_EDITION
 			/* (a host that names a Halo PC map as the game's own maps are
 			named: OpenCE's builds before build-145) */

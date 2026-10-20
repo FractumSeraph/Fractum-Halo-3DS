@@ -1344,7 +1344,7 @@ struct network_game_server *network_game_server_create(
 		{
 			int i;
 
-#ifdef xbox
+#if defined(xbox) || defined(HALO_N3DS) /* port: (the 3DS) built without -Dxbox */
 			transport_server_initialize();
 #endif
 
@@ -1486,10 +1486,10 @@ void network_game_server_dispose(
 	if (server->connection)
 		network_connection_delete(server->connection);
 
-#ifdef xbox
+#if defined(xbox) || defined(HALO_N3DS) /* port: (the 3DS) built without -Dxbox */
 	/* port: native transports flush before closing sockets, and unregistering
 	an XNet key is a stub. Preserve the original grace period on other builds. */
-#if !defined(HALO_WINDOWS) && !defined(HALO_ANDROID) && !defined(__linux__)
+#if !defined(HALO_WINDOWS) && !defined(HALO_ANDROID) && !defined(__linux__) && !defined(HALO_N3DS)
 	SleepEx(MILLISECONDS_PER_SECOND, FALSE);
 #endif
 	transport_server_terminate();
@@ -3617,7 +3617,9 @@ void network_game_generate_join_game_token(
 	memcpy(join_token, join_token_initializer,
 		MIN(NETWORK_JOIN_GAME_TOKEN_SIZE, sizeof(join_token_initializer)));
 
-#ifndef DEBUG
+/* port: (the 3DS) as the fork's builds, all built with -DDEBUG: the token
+without the build's time and tags in it */
+#if !defined(DEBUG) && !defined(HALO_N3DS)
 	{
 		char *build_timestamp = __DATE__ __TIME__;
 		int i, j, length = strlen(build_timestamp);

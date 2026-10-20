@@ -24,6 +24,13 @@
 /* (the fork's socket sets: room for its 128 machines, halo_port_limits.h) */
 #define FD_SETSIZE 256
 #include "platform.h"
+/* The engine's Xbox Winsock calls go to the fork's Winsock layer
+ * (port/linux/src/xnet.c), under its private names: libctru's BSD socket
+ * functions have the same names but other structures. The platform layer's
+ * own units (HALO_LINUX_PLATFORM_LAYER) take the names as the system's. */
+#ifndef HALO_LINUX_PLATFORM_LAYER
+#include "halo_linux_winsock_names.h"
+#endif
 /* These declarations are also used by the upstream ARM port. Variadic calls
  * must see their real prototypes on ARM hard-float. */
 union real_argb_color;

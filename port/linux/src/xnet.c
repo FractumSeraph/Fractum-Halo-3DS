@@ -394,7 +394,7 @@ SOCKET WSAAPI halo_ws_socket(int family, int type, int protocol)
 	return (SOCKET)result;
 }
 
-#ifdef HALO_3DS
+#if defined(HALO_3DS) || defined(HALO_N3DS)
 /* the sockets connected, by descriptor (the 3DS's: the Azahar emulator's
 socket service halts on getpeername of a socket that is not, whose empty
 address it converts all the same; the game asks every endpoint's peer,
@@ -424,7 +424,7 @@ int WSAAPI halo_ws_closesocket(SOCKET socket)
 	int type = SOCK_STREAM;
 	int type_length = sizeof(type);
 
-#ifdef HALO_3DS
+#if defined(HALO_3DS) || defined(HALO_N3DS)
 	n3ds_socket_connected(socket, 0);
 #endif
 	posix_socket_getsockopt((int)socket, SOL_SOCKET, SO_TYPE, &type, &type_length);
@@ -483,7 +483,7 @@ int WSAAPI halo_ws_connect(SOCKET socket, const struct sockaddr *address, int ad
 		struct sockaddr_in bound;
 		int bound_length = sizeof(bound);
 
-#ifdef HALO_3DS
+#if defined(HALO_3DS) || defined(HALO_N3DS)
 		/* (the 3DS: no getsockname of an unbound socket, whose empty address
 		the Azahar emulator's socket service halts on; bound to the address,
 		port 0, at once: a socket bound already refuses it, and stays as it
@@ -503,7 +503,7 @@ int WSAAPI halo_ws_connect(SOCKET socket, const struct sockaddr *address, int ad
 	}
 	result = posix_socket_connect((int)socket, address, address_length);
 	error = result < 0 ? posix_socket_last_error() : 0;
-#ifdef HALO_3DS
+#if defined(HALO_3DS) || defined(HALO_N3DS)
 	/* (a stream's connection under way is one too, once made) */
 	if (result >= 0 || error == WSAEWOULDBLOCK || error == WSAEINPROGRESS)
 		n3ds_socket_connected(socket, 1);
@@ -541,7 +541,7 @@ SOCKET WSAAPI halo_ws_accept(SOCKET socket, struct sockaddr *address, int *addre
 	}
 	posix_socket_set_nodelay(result);
 	peer_incoming_address(1, address, address_length);
-#ifdef HALO_3DS
+#if defined(HALO_3DS) || defined(HALO_N3DS)
 	n3ds_socket_connected((SOCKET)result, 1);
 #endif
 	return (SOCKET)result;
@@ -561,6 +561,23 @@ int WSAAPI halo_ws_sendto(SOCKET socket, const char *buffer, int length, int fla
 	unsigned short source_port = socket_port(socket);
 	int result;
 	int send_error;
+
+#ifdef HALO_N3DS_NET_TRACE
+	/* (development: the first datagrams sent, logged) */
+	{
+		static int traced;
+
+		if (traced < 60 && address && address_length >= (int)sizeof(struct sockaddr_in))
+		{
+			const struct sockaddr_in *to = (const struct sockaddr_in *)address;
+			unsigned long a = halo_ws_ntohl(to->sin_addr.s_addr);
+
+			traced++;
+			platform_log("NET TRACE: sendto socket %u (port %u): %d bytes to %lu.%lu.%lu.%lu:%u", (unsigned)socket, source_port,
+				length, a >> 24, (a >> 16) & 255, (a >> 8) & 255, a & 255, halo_ws_ntohs(to->sin_port));
+		}
+	}
+#endif
 
 	if (address && address->sa_family == AF_INET && address_length >= (int)sizeof(struct sockaddr_in) &&
 		((const struct sockaddr_in *)address)->sin_addr.s_addr == INADDR_BROADCAST)
@@ -1002,6 +1019,29 @@ int WSAAPI halo_ws_recvfrom(SOCKET socket, char *buffer, int length, int flags,
 	if (delayed_enabled())
 		return delayed_receive(socket, buffer, length, flags, address, address_length, 1);
 	result = posix_socket_recvfrom((int)socket, buffer, length, flags, address, address_length);
+#ifdef HALO_N3DS_NET_TRACE
+	/* (development: the first datagrams received, logged) */
+	{
+		static int traced;
+		static unsigned long calls, empty;
+
+		calls++;
+		if (result < 0)
+			empty++;
+		if (calls % 900 == 0)
+			platform_log("NET TRACE: recvfrom calls %lu, %lu empty (last socket %u, port %u)", calls, empty,
+				(unsigned)socket, socket_port(socket));
+		if (result >= 0 && traced < 60 && address)
+		{
+			const struct sockaddr_in *from = (const struct sockaddr_in *)address;
+			unsigned long a = halo_ws_ntohl(from->sin_addr.s_addr);
+
+			traced++;
+			platform_log("NET TRACE: recvfrom socket %u: %d bytes from %lu.%lu.%lu.%lu:%u (port %u)", (unsigned)socket, result,
+				a >> 24, (a >> 16) & 255, (a >> 8) & 255, a & 255, halo_ws_ntohs(from->sin_port), socket_port(socket));
+		}
+	}
+#endif
 	if (result >= 0)
 		peer_incoming_address(0, address, address_length);
 	return winsock_result(result);
@@ -1045,7 +1085,7 @@ int WSAAPI halo_ws_getpeername(SOCKET socket, struct sockaddr *address, int *add
 {
 	int result;
 
-#ifdef HALO_3DS
+#if defined(HALO_3DS) || defined(HALO_N3DS)
 	if (!n3ds_socket_is_connected(socket))
 	{
 		WSASetLastError(WSAENOTCONN);
@@ -1097,6 +1137,21 @@ int WSAAPI halo_ws_select(int descriptor_count, halo_ws_fd_set *read_set, halo_w
 		write_set ? write : NULL, &write_count,
 		error_set ? error : NULL, &error_count,
 		timeout ? timeout->tv_sec : 0, timeout ? timeout->tv_usec : 0, timeout == NULL);
+#ifdef HALO_N3DS_NET_TRACE
+	/* (development: how often select is asked, and finds something) */
+	{
+		static unsigned long calls, ready, failed;
+
+		calls++;
+		if (result > 0)
+			ready++;
+		if (result < 0)
+			failed++;
+		if (calls % 900 == 0)
+			platform_log("NET TRACE: select calls %lu, %lu ready, %lu failed (last: %d to read, first %d)", calls, ready, failed,
+				asked_count, asked_count ? asked[0] : -1);
+	}
+#endif
 	if (result < 0)
 		return winsock_result(result);
 	/* (debug.network_latency: what is held back and due is there to read) */

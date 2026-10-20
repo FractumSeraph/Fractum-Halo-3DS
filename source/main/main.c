@@ -2359,6 +2359,63 @@ void n3ds_main_frontend_services(void)
 	if(main_globals.skip) main_skip_private();
 	if(main_globals.queue_map) main_queue_map_private();
 }
+/* port: the network's part of a frame, as main_loop has it, for Halo3DS's
+frame loop (engine_frontend_boot.c): the system link tests, voice, map
+sharing and team changes, then the network game's start of frame (a client's,
+and a host's own client and server), before the menus are processed */
+void n3ds_main_network_start_frame(void)
+{
+	short connection;
+
+	network_test_update(main_globals.main_menu_scenario_loaded, main_globals.seconds_elapsed);
+	{
+		void network_voice_update(void);
+
+		network_voice_update();
+	}
+	map_share_update();
+	team_change_update();
+	connection = main_globals.connection;
+	if (connection == _game_connection_network_client)
+	{
+		if (!network_game_client_start_frame())
+		{
+			display_error_when_main_menu_loaded(6);
+			error(_error_silent, "the game host went down");
+			network_game_abort();
+		}
+	}
+	else if (connection == _game_connection_network_server)
+	{
+		if (!network_game_client_start_frame())
+		{
+			display_error_when_main_menu_loaded(1);
+			error(_error_silent, "the game host went down");
+			network_game_abort();
+		}
+		else if (!network_game_server_start_frame())
+		{
+			display_error_when_main_menu_loaded(1);
+			error(_error_silent, "the game host went down");
+			network_game_abort();
+		}
+	}
+}
+
+/* ... and its end of frame, after the players' controls and before the
+game's time is updated */
+void n3ds_main_network_end_frame(void)
+{
+	short connection = main_globals.connection;
+
+	if (connection > _game_connection_local && connection <= _game_connection_network_server &&
+		!network_game_client_end_frame())
+	{
+		display_error_when_main_menu_loaded(1);
+		network_game_abort();
+	}
+}
+
 long n3ds_main_mission_script_ticks(void)
 {
 	long before=game_time_get();

@@ -659,10 +659,6 @@
       "compiler": "gcc"
     },
     {
-      "source": "port/n3ds/src/engine_socket_errors.c",
-      "compiler": "gcc"
-    },
-    {
       "source": "source/game/game.c",
       "compiler": "clang",
       "defines": [
@@ -762,20 +758,6 @@
     },
     {
       "source": "port/n3ds/src/engine_hud.c",
-      "compiler": "clang",
-      "defines": [
-        "HALO_N3DS_FRONTEND=1"
-      ]
-    },
-    {
-      "source": "port/n3ds/src/engine_network.c",
-      "compiler": "clang",
-      "defines": [
-        "HALO_N3DS_FRONTEND=1"
-      ]
-    },
-    {
-      "source": "port/n3ds/tests/src/engine_network_tests.c",
       "compiler": "clang",
       "defines": [
         "HALO_N3DS_FRONTEND=1"
@@ -1255,6 +1237,95 @@
     {
       "source": "port/n3ds/src/engine_fork_stubs.c",
       "compiler": "clang"
+    },
+    {
+      "source": "port/linux/src/xnet.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
+    },
+    {
+      "source": "port/linux/src/posix_net.c",
+      "compiler": "gcc",
+      "defines": [
+        "HALO_N3DS=1"
+      ]
+    },
+    {
+      "source": "port/linux/src/port_config.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
+    },
+    {
+      "source": "port/third_party/tomlc17/tomlc17.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "port/n3ds/src/engine_fork_sdl.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "port/linux/game/network_distributed.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/network_objects.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/network_damage.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/network_actors.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/network_fairplay.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/network_votekick.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/team_change.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/network_coop.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/coop_scripts.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/coop_enemies.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/coop_spectate.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/follow_camera.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/sightjack.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/network_test.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/object_bounds_cache.c",
+      "compiler": "clang"
     }
   ],
   "runtime": [
@@ -1462,6 +1533,7 @@
     "port/n3ds/include/engine_shims/models",
     "port/n3ds/include/engine_shims/rasterizer",
     "port/n3ds/include/engine_shims/render",
-    "port/n3ds/include/engine_shims/units"
+    "port/n3ds/include/engine_shims/units",
+    "port/third_party/tomlc17"
   ]
 }

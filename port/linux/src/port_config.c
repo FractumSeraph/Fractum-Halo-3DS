@@ -1240,6 +1240,12 @@ int platform_app_folder(char *path, unsigned long size)
 	snprintf(path, (size_t)size, "%s", "sdmc:/3ds/halo");
 	SDL_CreateDirectory(path);
 	return 1;
+#elif defined(HALO_N3DS)
+	/* the 3DS (Halo3DS's frontend, port/n3ds): its data folder on the SD
+	card, which its setup fills, holds the settings file */
+	snprintf(path, (size_t)size, "%s", "sdmc:/halo-source");
+	SDL_CreateDirectory(path);
+	return 1;
 #else
 	(void)path;
 	(void)size;

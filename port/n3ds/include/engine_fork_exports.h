@@ -32,4 +32,11 @@ void reset_last_player1_profile_index(void);
 /* (rasterizer_environment.h's, which Halo3DS's code takes from rasterizer.h) */
 void rasterizer_environment_diffuse_textures_begin(void);
 
+/* (halo_map_families.h's, which declares it only with HALO_CUSTOM_EDITION:
+ * the fork's network test calls it unguarded; this port finds no Custom
+ * Edition maps until Phase 4, engine_fork_stubs.c) */
+#ifndef HALO_CUSTOM_EDITION
+unsigned char map_family_find(short family, char const *file, char *path, long size);
+#endif
+
 #endif
