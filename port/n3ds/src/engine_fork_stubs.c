@@ -32,21 +32,6 @@ boolean ce_hud_overlays_blocked(void)
 {
 	return 0;
 }
-/* port/linux/include/halo_port_limits.h */
-int delta_legacy_announce(void)
-{
-	return HALO_PORT_NETWORK_VERSION;
-}
-/* port/linux/include/halo_port_limits.h */
-int delta_legacy_maximum(void)
-{
-	return HALO_PORT_NETWORK_VERSION_MAXIMUM;
-}
-/* port/linux/include/halo_port_limits.h */
-int delta_legacy_minimum(void)
-{
-	return HALO_PORT_NETWORK_VERSION_MINIMUM;
-}
 /* port/linux/game/download_screen.c */
 boolean download_screen_active(void)
 {
@@ -156,11 +141,6 @@ struct bitmap_data const * hud_hires_sprite_bitmap(struct bitmap_data const *bit
 void hud_hires_tags_unloaded(void)
 {
 }
-/* port/linux/src/log_address.h */
-const char * log_address(const unsigned char *bytes, int length, int port, char *text, int size)
-{
-	return NULL;
-}
 /* port/linux/game/map_share.h */
 boolean map_share_downloading(char const *level_name)
 {
@@ -240,18 +220,6 @@ boolean network_voice_machine_speaking(long machine_index)
 }
 /* port/linux/game/network_voice.h */
 void network_voice_mute_machine(long machine_index, boolean mute)
-{
-}
-/* port/linux/src/p2p.h */
-void p2p_set_game_player_counts(int count, int maximum)
-{
-}
-/* port/linux/src/p2p.h */
-void p2p_set_hosting_allowed(int allowed)
-{
-}
-/* port/linux/src/p2p.h */
-void p2p_set_hosting_public(int public)
 {
 }
 /* port/linux/game/pal_tags.c */
@@ -461,71 +429,11 @@ boolean viewmodel_shield_is_visible(void)
 
 /* ---------- internet play (port/linux/src/p2p.c, Phase 3): no peers, so
    every address is not a peer's (0) and a broadcast reaches none */
-/* port/linux/src/p2p.h */
-int p2p_broadcast_datagram(unsigned short source_port, unsigned short port, const void *data, int size)
-{
-	return 0;
-}
-/* port/linux/src/p2p.h */
-int p2p_broadcast_targets(unsigned short port, unsigned long *addresses, unsigned short *ports, int maximum_count)
-{
-	return 0;
-}
-/* port/linux/src/p2p.h */
-int p2p_incoming(int stream, unsigned long *address, unsigned short *port)
-{
-	return 0;
-}
-/* port/linux/src/p2p.h */
-int p2p_outgoing(int stream, int socket, unsigned long *address, unsigned short *port)
-{
-	return 0;
-}
-/* port/linux/src/p2p.h */
-int p2p_peer_address(const unsigned char *identifier, unsigned long *address)
-{
-	return 0;
-}
-/* port/linux/src/p2p.h */
-void p2p_port_taken(int stream, unsigned short port)
-{
-}
-/* port/linux/src/p2p.h */
-int p2p_send_datagram(unsigned short source_port, unsigned long address, unsigned short port, const void *data, int size)
-{
-	return 0;
-}
-/* port/linux/src/p2p.h */
-void p2p_socket_closed(int socket, unsigned short datagram_port)
-{
-}
-/* port/linux/src/p2p.h */
-void p2p_socket_port(int socket, int stream, int listening, unsigned short port)
-{
-}
-/* port/linux/src/p2p.h: internet play starts with p2p.c (Phase 3) */
-void p2p_initialize(unsigned long local_address)
-{
-	(void)local_address;
-}
 /* port/linux/src/p2p.h: this machine's identifier, which its XNADDR carries:
    until p2p.c (whose identifier comes from its internet play key), a random
    one for each run, made like a locally administered unicast MAC address as
    the fork's is (p2p_identifier_from_hash) */
 void posix_random_bytes(void *buffer, unsigned long size); /* (posix.h's posix_ulong) */
-const unsigned char *p2p_identifier(void)
-{
-	static unsigned char identifier[6];
-	static int made;
-
-	if (!made)
-	{
-		posix_random_bytes(identifier, sizeof(identifier));
-		identifier[0] = (unsigned char)((identifier[0] & 0xFC) | 0x02);
-		made = 1;
-	}
-	return identifier;
-}
 /* port/linux/game/map_share.h */
 void map_share_update(void)
 {
@@ -533,26 +441,6 @@ void map_share_update(void)
 /* port/linux/src/p2p.h */
 /* (until p2p.c, whose id is the machine's lasting one: one for each run,
    32 hex digits, as a host logs and its ban lists hold it) */
-void p2p_hardware_id(char *hex, int size)
-{
-	static char made[33];
-	int i;
-
-	if (!made[0])
-	{
-		unsigned char bytes[16];
-
-		posix_random_bytes(bytes, sizeof(bytes));
-		for (i = 0; i < 16; i++)
-			snprintf(made + i * 2, 3, "%02x", bytes[i]);
-	}
-	if (hex && size > 0)
-		snprintf(hex, (size_t)size, "%s", made);
-}
-/* port/linux/src/p2p.h */
-void p2p_set_game_listing(const char *name, const char *map, const char *gametype, int engine_type, int open, int in_progress, int has_teams)
-{
-}
 /* port/linux/game/network_voice.h */
 void network_voice_update(void)
 {
@@ -664,21 +552,6 @@ short map_family_from_wire_name(char const *wire, char *map, long size)
 		snprintf(map, (size_t)size, "%s", wire);
 	return map_family_parse(wire, NULL, 0);
 }
-/* port/linux/src/p2p.c's: the hex digits of a hardware id, lowercase, 32 at most */
-void p2p_hardware_id_sanitize(char *destination, int size, const char *source)
-{
-	int length = 0;
-
-	for (; source && *source && length < size - 1 && length < 2 * 16; source++)
-	{
-		char character = *source >= 'A' && *source <= 'F' ? *source - 'A' + 'a' : *source;
-
-		if ((character >= '0' && character <= '9') || (character >= 'a' && character <= 'f'))
-			destination[length++] = character;
-	}
-	if (size > 0)
-		destination[length] = 0;
-}
 /* port/linux/src/msvc_crt.c's: the MSVC name of strdup, which the fork's
    settings unit calls (port_config.c) */
 char *_strdup(const char *text)
@@ -734,54 +607,6 @@ void network_recording_move(short player_index, byte kind, real amount)
 void network_recording_new_game(void)
 {
 }
-/* port/linux/src/p2p.h */
-void p2p_discord_identity(char *id, int id_size, char *name, int name_size)
-{
-	/* (no Discord on the 3DS: none signed in, as p2p.c says when it is not
-	   running) */
-	if (id_size > 0)
-		id[0] = 0;
-	if (name_size > 0)
-		name[0] = 0;
-}
-/* port/linux/src/p2p.h */
-void p2p_discord_sanitize(char *destination, int size, const char *source, int name)
-{
-	/* (p2p_discord.c's: the characters allowed, no longer than size) */
-	int length = 0;
-
-	for (; source && *source && length < size - 1; source++)
-	{
-		char character = *source;
-
-		if ((character >= '0' && character <= '9') ||
-			(name && ((character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
-				character == '_' || character == '.' || character == '-')))
-		{
-			destination[length++] = character;
-		}
-	}
-	destination[length] = 0;
-}
-/* port/linux/src/p2p.h */
-int p2p_join_invite(const char *text)
-{
-	return 0;
-}
-/* port/linux/src/p2p.h */
-void p2p_lobby_browse(int on)
-{
-}
-/* port/linux/src/p2p.h */
-int p2p_lobby_games(struct p2p_listing *games, int maximum_count)
-{
-	return 0;
-}
-/* port/linux/src/p2p.h */
-unsigned long p2p_peer_endpoint_address(unsigned long virtual_address)
-{
-	return 0;
-}
 /* port/linux/game/network_objects.c */
 void render_interpolation_correct_object(long object_index, real_vector3d const *offset)
 {
@@ -824,22 +649,29 @@ int halo_chat_touch_layout(void)
 {
 	return 0;
 }
-/* port/linux/src/p2p.h */
-int p2p_hosting_listed(void)
-{
-	return 0;
-}
-/* port/linux/src/p2p.h */
-int p2p_join_listing(const struct p2p_listing *listing)
-{
-	return 0;
-}
-/* port/linux/src/p2p.h */
-int p2p_joined_listed_host(void)
-{
-	return 0;
-}
 /* port/linux/game/network_test.c */
 void test_input_press(unsigned long buttons)
 {
+}
+/* port/linux/src/platform.h's: the folder of the fork's own files that last
+   (internet play's lasting invite key, the ban lists): this port's data
+   folder on the SD card, where its settings are */
+const char *platform_save_root(void)
+{
+	return "sdmc:/halo-source";
+}
+/* port/linux/src/discord_activity.h's: no Discord on the 3DS (a negative size:
+   nothing to send) */
+int discord_activity_json(char *json, int size, unsigned long nonce, unsigned long process_id,
+	const void *game, const void *options, const char *party, const char *join_url)
+{
+	(void)nonce;
+	(void)process_id;
+	(void)game;
+	(void)options;
+	(void)party;
+	(void)join_url;
+	if (json && size > 0)
+		json[0] = 0;
+	return -1;
 }

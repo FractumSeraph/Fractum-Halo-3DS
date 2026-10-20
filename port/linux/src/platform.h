@@ -302,7 +302,7 @@ void memory_watch_begin_frame(void);
 
 A thread made without attributes gets the C library's default stack, which
 on the 3DS is a few KB: n3ds_posix_libc.c gives such threads 256 KB. */
-#ifdef HALO_3DS
+#if defined(HALO_3DS) || defined(HALO_N3DS) /* (this port: port/n3ds/src/engine_fork_threads.c) */
 int halo_3ds_pthread_create(pthread_t *thread, const pthread_attr_t *attributes, void *(*start)(void *), void *argument);
 int halo_3ds_pthread_detach(pthread_t thread);
 int halo_3ds_pthread_join(pthread_t thread, void **result);

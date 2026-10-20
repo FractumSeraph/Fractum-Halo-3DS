@@ -1385,6 +1385,148 @@
       "defines": [
         "HALO_N3DS=1"
       ]
+    },
+    {
+      "source": "port/linux/src/p2p.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
+    },
+    {
+      "source": "port/linux/src/p2p_copies.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
+    },
+    {
+      "source": "port/linux/src/p2p_crypto.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
+    },
+    {
+      "source": "port/linux/src/p2p_discord.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
+    },
+    {
+      "source": "port/linux/src/p2p_lobby.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
+    },
+    {
+      "source": "port/linux/src/p2p_probe.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
+    },
+    {
+      "source": "port/linux/src/p2p_signal.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
+    },
+    {
+      "source": "port/linux/src/delta.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
+    },
+    {
+      "source": "port/linux/src/delta_chat.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
+    },
+    {
+      "source": "port/linux/src/delta_chat_words.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
+    },
+    {
+      "source": "port/linux/src/delta_compat.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
+    },
+    {
+      "source": "port/linux/src/delta_maps.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
+    },
+    {
+      "source": "port/linux/src/delta_peer.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
+    },
+    {
+      "source": "port/linux/src/delta_peer_game.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
+    },
+    {
+      "source": "port/linux/src/delta_wire.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
+    },
+    {
+      "source": "port/linux/src/log_address.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
+    },
+    {
+      "source": "port/third_party/kcp/ikcp.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "port/third_party/monocypher/monocypher.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "port/third_party/monocypher/monocypher-ed25519.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "port/n3ds/src/engine_fork_threads.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "port/n3ds/src/engine_webrtc_none.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/src/engine_fork_posix.c",
+      "compiler": "gcc",
+      "defines": [
+        "HALO_N3DS=1"
+      ]
     }
   ],
   "runtime": [
@@ -1593,6 +1735,8 @@
     "port/n3ds/include/engine_shims/rasterizer",
     "port/n3ds/include/engine_shims/render",
     "port/n3ds/include/engine_shims/units",
-    "port/third_party/tomlc17"
+    "port/third_party/tomlc17",
+    "port/third_party/kcp",
+    "port/third_party/monocypher"
   ]
 }
