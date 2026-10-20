@@ -52,6 +52,10 @@ platform.
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef HALO_N3DS
+#include "engine_tls_roots.h"
+#endif
+
 #define BROWSER_USER_AGENT "chupathingyce-browser"
 #define TIMEOUT_MILLISECONDS 10000
 
@@ -105,6 +109,14 @@ static void load_certificates(void)
 		}
 	}
 	(void)index;
+#elif defined(HALO_N3DS)
+	/* the 3DS: the SD card's bundle, if the player put one there, then the
+	ones built in (port/n3ds/include/engine_tls_roots.h) */
+	(void)index;
+	if (mbedtls_x509_crt_parse_file(&certificates, "sdmc:/halo-source/cacert.pem") >= 0)
+		certificates_loaded = 1;
+	if (mbedtls_x509_crt_parse(&certificates, (const unsigned char *)n3ds_tls_roots, sizeof(n3ds_tls_roots)) >= 0)
+		certificates_loaded = 1;
 #else
 #ifdef __ANDROID__
 	/* Android's: a folder of them (the app runs the requests in its host,

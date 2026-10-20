@@ -79,6 +79,10 @@ def main():
     for shader in shaders.values(): digest.update(Path(shader['binary']).read_bytes())
     build_id = int(digest.hexdigest()[:8],16)
     defines = [f'-DHALO_N3DS_CHECKPOINT_BUILD=0x{build_id:08x}u','-DHALO_N3DS_CHECKPOINT_FEATURE=1',f'-DHALO_N3DS_MISSION_TICKS={args.test_frames}']
+    # (the FractumSeraph/OpenCE fork's ChupathingyCE edition, as its released
+    # games are built: the Online Games browser, Bomb, Delta Peer with
+    # ChupathingyCE hosts; docs/MULTIPLAYER-PLAN.md)
+    defines.append('-DHALO_GAME_BROWSER')
     if args.diagnostics: defines.append('-DHALO_N3DS_RENDERER_TESTS=1')
     if args.original_memory: defines.append('-DHALO_N3DS_LOW_MEMORY_TEST=1')
     native = [str(gcc),*COMMON,'-D__3DS__','-I',str(args.libctru/'include'),'-I',str(args.citro3d/'include')]
@@ -113,6 +117,8 @@ def main():
             # (the FractumSeraph/OpenCE fork's engine, as its other builds take it:
             # its pointer type mismatches are warnings there, same-layout types)
             command+=['-Wno-error=incompatible-pointer-types','-Wno-error=incompatible-function-pointer-types']
+        # (a unit's own include folders: a third-party library's, port/n3ds/sources.json)
+        for folder in entry.get('include_dirs',[]): command+=['-I',str(ROOT/folder)]
         command+=['-D'+d for d in entry.get('defines',[])]+['-MMD','-MF',str(obj.with_suffix('.d')),'-c',str(source),'-o',str(obj)]
         stamp=hashlib.sha256((digest.hexdigest()+json.dumps(command)).encode()).hexdigest()
         old=cache.get(entry['source'],{})

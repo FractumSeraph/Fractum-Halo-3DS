@@ -1508,7 +1508,21 @@ long scenario_tags_load(
 	char const *scenario_name)
 {
 #ifdef HALO_N3DS
-	return n3ds_engine_tags_load(scenario_name);
+	{
+		long result = n3ds_engine_tags_load(scenario_name);
+
+#ifdef HALO_GAME_BROWSER
+		/* port: (the 3DS) the Multiplayer menu's ONLINE GAMES, as the fork's
+		load adds it to the menus' tags (interface/ui_widget.c) */
+		if (result != NONE)
+		{
+			extern void ui_widget_online_games_tags_loaded(void);
+
+			ui_widget_online_games_tags_loaded();
+		}
+#endif
+		return result;
+	}
 #else
 	long result;
 	char const *stripped_scenario_name;

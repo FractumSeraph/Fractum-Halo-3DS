@@ -39,6 +39,9 @@ HALO_BUILD_FLAVOR.
 #if defined(HALO_BROWSER)
 /* (the browser build: compiled with the Android build's game flags) */
 #define BUILD_IDENTITY_PLATFORM "Web"
+#elif defined(HALO_3DS) || defined(HALO_N3DS)
+/* (the Nintendo 3DS: the fork's port/3ds, and Halo3DS's frontend, port/n3ds) */
+#define BUILD_IDENTITY_PLATFORM "3DS"
 #elif defined(HALO_ANDROID)
 #define BUILD_IDENTITY_PLATFORM "Android"
 #elif defined(_WIN32)
@@ -52,6 +55,8 @@ HALO_BUILD_FLAVOR.
 /* (the Android game's code is arm64_32, on an arm64 device) */
 #if defined(__wasm__)
 #define BUILD_IDENTITY_ARCHITECTURE "wasm32"
+#elif defined(HALO_3DS) || defined(HALO_N3DS)
+#define BUILD_IDENTITY_ARCHITECTURE "arm"
 #elif defined(__aarch64__) || defined(__arm64__) || defined(HALO_ANDROID)
 #define BUILD_IDENTITY_ARCHITECTURE "arm64"
 #elif defined(__x86_64__) || defined(_M_X64)

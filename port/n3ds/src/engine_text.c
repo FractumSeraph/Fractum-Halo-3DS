@@ -60,7 +60,12 @@ void rasterizer_text_draw_character(const struct dynamic_screen_vertex *vertices
         output[i].color[2]=(color&255)/255.f;
         output[i].color[3]=(color>>24)/255.f;
     }
-    assert(n3ds_gpu_text_draw(output));
+    /* port: a frame's text past what the buffer holds is left out (logged
+     * once), not fatal: the fork's screens over the menus draw much more */
+    if(!n3ds_gpu_text_draw(output)) {
+        static int reported;
+        if(!reported) {reported=1;extern void n3ds_log(const char *);n3ds_log("TEXT: a frame's text was more than the buffer holds; the rest left out");}
+    }
 }
 void rasterizer_text_end(void)
 {

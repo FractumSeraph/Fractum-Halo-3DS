@@ -8,7 +8,10 @@
 #include "engine_renderer.h"
 #include "engine_text_shader.h"
 
-enum { TEXT_VERTICES=6144 };
+/* port: (the fork's Online Games, engine_ui_overlay.c) about three times
+ * the original 1024 glyphs a frame: its game list draws more text than any
+ * menu (16384 vertices: 512 KB of linear memory) */
+enum { TEXT_VERTICES=16384 };
 static DVLB_s *shader;
 static shaderProgram_s program;
 static int program_ready,matrix_location;

@@ -12,11 +12,6 @@
 
 void posix_random_bytes(void *buffer, unsigned long size); /* (posix.h's posix_ulong) */
 
-/* port/linux/src/build_identity.h */
-const char * build_identity(void)
-{
-	return "Halo3DS multiplayer (FractumSeraph/OpenCE engine)";
-}
 /* source/cache_files.h */
 boolean cache_file_tags_are_ce(void)
 {
@@ -237,18 +232,8 @@ short pal_tags_first_person_frames(long graph_index, short animation_index, shor
 {
 	return frames;
 }
-/* port/linux/game/menu_tags.c */
-boolean pc_menu_button_key_cap(long bitmap_tag_index, short x0, short y0, short x1, short y1, float alpha)
-{
-	return 0;
-}
 /* port/linux/game/menu_functions.c */
 boolean pc_menu_event_function_invoke(struct widget_instance *widget, struct event_record *event, long function_index, boolean *widget_deleted)
-{
-	return 0;
-}
-/* port/linux/game/menu_tags.c */
-boolean pc_menu_frame_placement(struct bitmap_data const *bitmap, short *x, short *y, short *width, short *height, short *texel_y)
 {
 	return 0;
 }
@@ -261,25 +246,10 @@ unsigned char pc_menu_split_players(void)
 {
 	return 0;
 }
-/* port/linux/game/menu_tags.c */
-boolean pc_menu_tag(long tag_index)
-{
-	return 0;
-}
 /* port/linux/game/menu_functions.c */
 boolean pc_menu_text_color(struct widget_instance const *widget, real_rgb_color *rgb)
 {
 	return 0;
-}
-/* port/linux/game/menu_tags.c */
-char const * pc_menus_root_name(void)
-{
-	return "ui\\shell\\main_menu\\main_menu"; /* (the Xbox's) */
-}
-/* port/linux/include/halo_linux_source_fixups.h */
-char const * pc_menus_screen(char const *name)
-{
-	return name; /* (as it is: the fork's unit is not built yet) */
 }
 /* source/physical_memory_map.h */
 void * physical_memory_get_tag_cache_base_address(void)
@@ -451,59 +421,11 @@ void network_voice_update(void)
 static const char *const n3ds_map_family_suffixes[] = { "", "@ce", "@md", "@pc" };
 static const char *const n3ds_map_family_badges[] = { "", "HALO PC", "HALOMD", "HALO PC RETAIL" };
 int _stricmp(const char *a, const char *b);
-short map_family_parse(char const *map, char *file, long size)
-{
-	char const *base = map;
-	char const *cursor;
-	long length;
-	short family;
-
-	for (cursor = map; *cursor; cursor++)
-	{
-		if (*cursor == '\\' || *cursor == '/')
-			base = cursor + 1;
-	}
-	length = (long)strlen(base);
-	for (family = 3; family > 0; family--)
-	{
-		long suffix_length = (long)strlen(n3ds_map_family_suffixes[family]);
-
-		if (length > suffix_length && !_stricmp(base + length - suffix_length, n3ds_map_family_suffixes[family]))
-		{
-			length -= suffix_length;
-			break;
-		}
-	}
-	if (file && size > 0)
-		snprintf(file, (size_t)size, "%.*s", (int)length, base);
-	return family;
-}
-char const *map_family_suffix(short family)
-{
-	return family > 0 && family < 4 ? n3ds_map_family_suffixes[family] : "";
-}
-char const *map_family_badge(short family)
-{
-	return family > 0 && family < 4 ? n3ds_map_family_badges[family] : "";
-}
 /* ... and its names in the game's protocol (map_families.c's
    map_family_wire_names): an Xbox map's is its own; a Custom Edition map's
    custom_maps\<file>, HaloMD's maps_md\<file>.md, Halo PC's maps_pc\<file>.pc */
 static const char *const n3ds_map_family_wire_folders[] = { "", "custom_maps\\", "maps_md\\", "maps_pc\\" };
 static const char *const n3ds_map_family_wire_endings[] = { "", "", ".md", ".pc" };
-void map_family_wire_name(char const *map, char *wire, long size)
-{
-	char file[64]; /* (map_families.c's MAP_FAMILY_FILE_LENGTH) */
-	short family = map_family_parse(map, file, sizeof(file));
-
-	if (size <= 0)
-		return;
-	if (family == 0)
-		snprintf(wire, (size_t)size, "%s", map);
-	else
-		snprintf(wire, (size_t)size, "%s%s%s", n3ds_map_family_wire_folders[family], file,
-			n3ds_map_family_wire_endings[family]);
-}
 static int n3ds_prefix_is(const char *text, const char *prefix, size_t length)
 {
 	size_t i;
@@ -517,40 +439,6 @@ static int n3ds_prefix_is(const char *text, const char *prefix, size_t length)
 			return 0;
 	}
 	return 1;
-}
-short map_family_from_wire_name(char const *wire, char *map, long size)
-{
-	short family;
-
-	for (family = 1; family < 4; family++)
-	{
-		const char *folder = n3ds_map_family_wire_folders[family];
-		const char *ending = n3ds_map_family_wire_endings[family];
-		size_t folder_length = strlen(folder);
-		size_t ending_length = strlen(ending);
-		size_t length = strlen(wire);
-		const char *file = wire + folder_length;
-		size_t file_length;
-
-		if (length <= folder_length + ending_length || !n3ds_prefix_is(wire, folder, folder_length) ||
-			!n3ds_prefix_is(wire + length - ending_length, ending, ending_length))
-		{
-			continue;
-		}
-		file_length = length - folder_length - ending_length;
-		/* (a file's name alone: no folder in it, nor a family's suffix) */
-		if (file_length >= 64 || memchr(file, '\\', file_length) || memchr(file, '/', file_length) ||
-			memchr(file, '@', file_length))
-		{
-			continue;
-		}
-		if (size > 0)
-			snprintf(map, (size_t)size, "%.*s%s", (int)file_length, file, n3ds_map_family_suffixes[family]);
-		return family;
-	}
-	if (size > 0)
-		snprintf(map, (size_t)size, "%s", wire);
-	return map_family_parse(wire, NULL, 0);
 }
 /* port/linux/src/msvc_crt.c's: the MSVC name of strdup, which the fork's
    settings unit calls (port_config.c) */
@@ -575,38 +463,6 @@ unsigned char map_family_find(short family, char const *file, char *path, long s
 }
 /* port/linux/src/map_download.h */
 #include "../../linux/src/map_download.h" /* (its progress structure) */
-void map_download_get(struct map_download_progress *progress)
-{
-	/* (no download: MAP_DOWNLOAD_IDLE, nothing received) */
-	if (progress)
-		memset(progress, 0, sizeof(*progress));
-}
-/* port/linux/src/map_download.h */
-int map_download_start(const char *name, unsigned int version)
-{
-	return 0;
-}
-/* port/linux/include/halo_map_families.h */
-boolean map_is_downloaded(char const *map_name)
-{
-	return 0;
-}
-/* port/linux/game/network_recording.h */
-void network_recording_hit(short shooter_index, short victim_index, real_point3d const *impact, byte verdict, real angle, real distance)
-{
-}
-/* port/linux/game/network_recording.h */
-void network_recording_host_tick(void)
-{
-}
-/* port/linux/game/network_recording.h */
-void network_recording_move(short player_index, byte kind, real amount)
-{
-}
-/* port/linux/game/network_recording.h */
-void network_recording_new_game(void)
-{
-}
 /* port/linux/game/network_objects.c */
 void render_interpolation_correct_object(long object_index, real_vector3d const *offset)
 {
@@ -674,4 +530,125 @@ int discord_activity_json(char *json, int size, unsigned long nonce, unsigned lo
 	if (json && size > 0)
 		json[0] = 0;
 	return -1;
+}
+/* ---------- the ChupathingyCE edition's pieces a 3DS client does without */
+/* server/src/dedicated.c's: this is never the dedicated server */
+int dedicated_server_active(void)
+{
+	return 0;
+}
+/* port/linux/src/updater.c's: 3DS builds are copied to the SD card by hand
+   (the updater is not built), and name no updater version */
+const char *updater_version(void)
+{
+	return "";
+}
+/* port/linux/src/sdl_platform.c's: no web browser to open a page in, nor a
+   clipboard to take an invite from */
+int platform_open_url(const char *url)
+{
+	(void)url;
+	return 0;
+}
+int platform_take_clipboard_invite(char *invite, int size)
+{
+	if (invite && size > 0)
+		invite[0] = 0;
+	return 0;
+}
+/* port/linux/src/map_torrents.c's: no BitTorrent on the 3DS (nor Custom
+   Edition maps yet) */
+void map_torrents_cancel(void)
+{
+}
+/* port/linux/src/posix_ui_font.c's JPEG decoding (the game list's map
+   pictures): none yet; the browser draws its cards for the maps instead */
+unsigned char *posix_ui_image_decode(const unsigned char *data, int size, int *width, int *height)
+{
+	(void)data;
+	(void)size;
+	if (width)
+		*width = 0;
+	if (height)
+		*height = 0;
+	return NULL;
+}
+void posix_ui_image_free(unsigned char *pixels)
+{
+	(void)pixels;
+}
+/* port/linux/src/map_download.c's Custom Edition map downloader: not on the
+   3DS until it plays those maps (Phase 4): "never" downloads, none runs */
+int map_download_setting(void)
+{
+	return MAP_DOWNLOADS_NEVER;
+}
+void map_download_set_setting(int setting)
+{
+	(void)setting;
+}
+int map_download_possible(const char *name)
+{
+	(void)name;
+	return 0;
+}
+int map_download_start(const char *name, unsigned int version)
+{
+	(void)name;
+	(void)version;
+	return 0;
+}
+void map_download_cancel(void)
+{
+}
+void map_download_reset(void)
+{
+}
+/* port/linux/src/map_torrents.c's: none */
+int map_torrents_fetch(const char *level_name, unsigned long version, const char *files)
+{
+	(void)level_name;
+	(void)version;
+	(void)files;
+	return 0;
+}
+int map_torrents_fetching(char *status, int size)
+{
+	if (status && size > 0)
+		status[0] = 0;
+	return 0;
+}
+int map_torrents_download_progress(float *fraction, char *name, int size)
+{
+	if (fraction)
+		*fraction = 0;
+	if (name && size > 0)
+		name[0] = 0;
+	return 0;
+}
+int map_torrents_take_ready(char *level_name, int size)
+{
+	if (level_name && size > 0)
+		level_name[0] = 0;
+	return 0;
+}
+/* port/linux/game/map_share_files.c's (map sharing comes with Phase 4):
+   no map's hash known */
+unsigned char map_share_map_hash(char const *path, unsigned char *hash)
+{
+	(void)path;
+	(void)hash;
+	return 0;
+}
+/* port/linux/game/menu_functions.c's (the PC menus, not this port's): no
+   profile editor to open */
+unsigned char pc_menu_profile_edit_begin(void)
+{
+	return 0;
+}
+void map_download_get(struct map_download_progress *progress)
+{
+	/* (no download: MAP_DOWNLOAD_IDLE, nothing received) */
+	if (progress)
+		memset(progress, 0, sizeof(*progress));
 }

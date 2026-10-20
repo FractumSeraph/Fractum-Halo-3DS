@@ -1527,6 +1527,1829 @@
       "defines": [
         "HALO_N3DS=1"
       ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/aes.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/aesce.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/aesni.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/aria.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/asn1parse.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/asn1write.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/base64.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/bignum.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/bignum_core.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/bignum_mod.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/bignum_mod_raw.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/block_cipher.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/camellia.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/ccm.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/chacha20.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/chachapoly.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/cipher.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/cipher_wrap.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/cmac.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/constant_time.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/ctr_drbg.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/debug.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/des.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/dhm.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/ecdh.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/ecdsa.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/ecjpake.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/ecp.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/ecp_curves.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/ecp_curves_new.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/entropy.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/entropy_poll.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/error.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/gcm.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/hkdf.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/hmac_drbg.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/lmots.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/lms.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/md.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/md5.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/memory_buffer_alloc.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/mps_reader.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/mps_trace.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/nist_kw.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/oid.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/padlock.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/pem.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/pk.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/pk_ecc.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/pk_wrap.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/pkcs12.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/pkcs5.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/pkcs7.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/pkparse.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/pkwrite.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/platform.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/platform_util.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/poly1305.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/psa_crypto.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/psa_crypto_aead.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/psa_crypto_cipher.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/psa_crypto_client.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/psa_crypto_driver_wrappers_no_static.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/psa_crypto_ecp.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/psa_crypto_ffdh.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/psa_crypto_hash.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/psa_crypto_mac.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/psa_crypto_pake.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/psa_crypto_random.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/psa_crypto_rsa.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/psa_crypto_se.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/psa_crypto_slot_management.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/psa_crypto_storage.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/psa_its_file.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/psa_util.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/ripemd160.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/rsa.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/rsa_alt_helpers.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/sha1.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/sha256.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/sha3.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/sha512.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/ssl_cache.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/ssl_ciphersuites.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/ssl_client.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/ssl_cookie.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/ssl_debug_helpers_generated.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/ssl_msg.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/ssl_ticket.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/ssl_tls.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/ssl_tls12_client.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/ssl_tls12_server.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/ssl_tls13_client.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/ssl_tls13_generic.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/ssl_tls13_keys.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/ssl_tls13_server.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/threading.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/version.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/version_features.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/x509.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/x509_create.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/x509_crl.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/x509_crt.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/x509_csr.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/x509write.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/x509write_crt.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/third_party/mbedtls/library/x509write_csr.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include",
+        "port/third_party/mbedtls/library"
+      ]
+    },
+    {
+      "source": "port/linux/src/posix_browser.c",
+      "compiler": "gcc",
+      "defines": [
+        "HALO_N3DS=1",
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include"
+      ]
+    },
+    {
+      "source": "port/n3ds/src/engine_mbedtls_net.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include"
+      ]
+    },
+    {
+      "source": "port/linux/src/browser.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
+    },
+    {
+      "source": "port/linux/src/browser_ping.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
+    },
+    {
+      "source": "port/linux/game/browser_screen.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/third_party/qrcodegen/qrcodegen.c",
+      "compiler": "gcc"
+    },
+    {
+      "source": "source/game/game_engine_bomb.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/chat.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/game_events.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/game_stats.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/invite_prompt.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/moderation_screen.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/network_recording.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/menu_tags.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/map_families.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/ui_map_list.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/src/map_archive.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
+    },
+    {
+      "source": "port/linux/src/map_art.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
+    },
+    {
+      "source": "port/third_party/zlib/adler32.c",
+      "compiler": "gcc",
+      "defines": [
+        "Z_PREFIX",
+        "z_errmsg=z_port_errmsg"
+      ],
+      "include_dirs": [
+        "port/third_party/zlib"
+      ]
+    },
+    {
+      "source": "port/third_party/zlib/crc32.c",
+      "compiler": "gcc",
+      "defines": [
+        "Z_PREFIX",
+        "z_errmsg=z_port_errmsg"
+      ],
+      "include_dirs": [
+        "port/third_party/zlib"
+      ]
+    },
+    {
+      "source": "port/third_party/zlib/inffast.c",
+      "compiler": "gcc",
+      "defines": [
+        "Z_PREFIX",
+        "z_errmsg=z_port_errmsg"
+      ],
+      "include_dirs": [
+        "port/third_party/zlib"
+      ]
+    },
+    {
+      "source": "port/third_party/zlib/inflate.c",
+      "compiler": "gcc",
+      "defines": [
+        "Z_PREFIX",
+        "z_errmsg=z_port_errmsg"
+      ],
+      "include_dirs": [
+        "port/third_party/zlib"
+      ]
+    },
+    {
+      "source": "port/third_party/zlib/inftrees.c",
+      "compiler": "gcc",
+      "defines": [
+        "Z_PREFIX",
+        "z_errmsg=z_port_errmsg"
+      ],
+      "include_dirs": [
+        "port/third_party/zlib"
+      ]
+    },
+    {
+      "source": "port/third_party/zlib/uncompr.c",
+      "compiler": "gcc",
+      "defines": [
+        "Z_PREFIX",
+        "z_errmsg=z_port_errmsg"
+      ],
+      "include_dirs": [
+        "port/third_party/zlib"
+      ]
+    },
+    {
+      "source": "port/third_party/zlib/zutil.c",
+      "compiler": "gcc",
+      "defines": [
+        "Z_PREFIX",
+        "z_errmsg=z_port_errmsg"
+      ],
+      "include_dirs": [
+        "port/third_party/zlib"
+      ]
+    },
+    {
+      "source": "port/linux/src/build_identity.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
+    },
+    {
+      "source": "port/linux/src/event_log.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
+    },
+    {
+      "source": "port/linux/src/event_gzip.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/src/engine_ui_overlay.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/src/map_file_hash.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
+    },
+    {
+      "source": "port/n3ds/src/engine_win32_files.c",
+      "compiler": "gcc"
     }
   ],
   "runtime": [
@@ -1737,6 +3560,8 @@
     "port/n3ds/include/engine_shims/units",
     "port/third_party/tomlc17",
     "port/third_party/kcp",
-    "port/third_party/monocypher"
+    "port/third_party/monocypher",
+    "port/third_party/qrcodegen",
+    "port/third_party/zlib"
   ]
 }
