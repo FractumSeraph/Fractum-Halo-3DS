@@ -204,8 +204,8 @@ and a joined game's map is downloaded (3e8dea4).
 - **Not yet.** Chicago shaders of types or flags no Xbox map uses are not
   drawn (logged once each, `CHICAGO PC:`); other shader kinds may still
   stop on what Halo PC maps alone use. The HTTPS repositories'
-  downloads (for a host that does not share its map) are built but
-  untested. No BitTorrent. HaloMD maps are not tried. The hardware run.
+  downloads (for a host that does not share its map) work since the
+  map repositories' root certificates were added (below). No BitTorrent. HaloMD maps are not tried. The hardware run.
 - **Test files.** `build/sdcard/halo-source/custom_maps` holds copies of
   ChaosGulch and Custom Edition's resource maps, for the emulator only;
   downloads made in tests are deleted after each run.
@@ -330,6 +330,16 @@ The first runs on a New 3DS (124 MB for the game; `CE MAPS: playable`):
 - **Profiles.** The loaded map's name was "" on the 3DS, so the main menu's
   own functions (making, editing, deleting a profile) were refused as a
   foreign map's. `scenario_tags_load` sets it now.
+- **HTTPS map downloads.** The map repositories (maps.halonet.net and
+  its mirrors) are certified by Google Trust Services (WE1 under GTS Root
+  R4), which the 3DS's built-in roots lacked: "certificate is not
+  correctly signed by the trusted CA". GTS Root R1, R3 and R4 are built
+  in now (`engine_tls_roots.h`). Tested with map sharing turned off
+  (`network.map_download = false`, `map_downloads = "always"`): joining
+  Haloss1 Hugeass downloaded its 23.5 MB zip, unpacked hugeass.map
+  (59 MB, size and CRC checked, the host's version) into maps_ce, and
+  joined again. That join reached the host but did not complete: the
+  server most likely still held the 3DS's first session.
 - **A test of the socket service as the console has it.** With
   `halo-source/soc-serial.txt` present, every socket call is made under one
   lock (`engine_soc_serial.c`, wrapped at link time: `port/n3ds/build.py`).
