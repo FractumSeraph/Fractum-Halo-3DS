@@ -22,9 +22,17 @@ boolean create_thread(word flags,unsigned long (__stdcall *function)(void *),voi
     *reference=(struct thread_reference *)(unsigned long)token;
     return TRUE;
 }
+void n3ds_engine_sleep(unsigned int milliseconds);
 boolean thread_has_exited(struct thread_reference *reference)
 {
-    return n3ds_thread_exited((unsigned long)reference);
+    /* port: a thread still running leaves the asker asleep for 1 ms: the
+     * engine's waits for its threads are empty loops on this (the profiles'
+     * writes, player_profile.c, playlist_profile.c), and on the 3DS's one
+     * core a loop that never sleeps keeps the thread it waits for, below
+     * the game thread, from ever running: the game would stop there */
+    if(n3ds_thread_exited((unsigned long)reference)) return TRUE;
+    n3ds_engine_sleep(1);
+    return FALSE;
 }
 void dispose_thread(struct thread_reference *reference)
 {
