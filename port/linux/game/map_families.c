@@ -393,6 +393,53 @@ static boolean cache_file_header_is(
 		}
 	}
 #endif
+#ifdef HALO_N3DS
+	/* port: (the 3DS) a map's header read once a run: a map file is never
+	changed where it is (a download is another name), and the menus' lists
+	read each map's header for each family and list, which a large SD
+	card's file calls make slow. Only headers read whole are kept: a file
+	not there yet (a download to come) is looked for again */
+	{
+		enum { KEPT_HEADERS = 64 };
+		static struct
+		{
+			char path[256];
+			unsigned long header[(CACHE_HEADER_CHECKSUM_OFFSET + 4) / 4];
+		} kept[KEPT_HEADERS];
+		static long kept_count, kept_next;
+		long index;
+
+		for (index = 0; index < kept_count; index++)
+		{
+			if (!_stricmp(kept[index].path, path))
+			{
+				memcpy(header, kept[index].header, sizeof(header));
+				if (checksum)
+					*checksum = header[CACHE_HEADER_CHECKSUM_OFFSET / 4];
+				return header[0] == CACHE_HEADER_SIGNATURE && header[1] == (unsigned long)version &&
+					(type == CACHE_TYPE_ANY || (header[CACHE_HEADER_TYPE_OFFSET / 4] & 0xffff) == (unsigned short)type);
+			}
+		}
+		file = CreateFileA(path, GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+		if (file == INVALID_HANDLE_VALUE)
+			return FALSE;
+		if (ReadFile(file, header, sizeof(header), &bytes_read, NULL) && bytes_read == sizeof(header))
+		{
+			result = header[0] == CACHE_HEADER_SIGNATURE && header[1] == (unsigned long)version &&
+				(type == CACHE_TYPE_ANY || (header[CACHE_HEADER_TYPE_OFFSET / 4] & 0xffff) == (unsigned short)type);
+			if (checksum)
+				*checksum = header[CACHE_HEADER_CHECKSUM_OFFSET / 4];
+			if (strlen(path) < sizeof(kept[0].path))
+			{
+				index = kept_count < KEPT_HEADERS ? kept_count++ : (kept_next++ % KEPT_HEADERS);
+				snprintf(kept[index].path, sizeof(kept[index].path), "%s", path);
+				memcpy(kept[index].header, header, sizeof(header));
+			}
+		}
+		CloseHandle(file);
+		return result;
+	}
+#else
 	file = CreateFileA(path, GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 	if (file == INVALID_HANDLE_VALUE)
 		return FALSE;
@@ -405,6 +452,7 @@ static boolean cache_file_header_is(
 	}
 	CloseHandle(file);
 	return result;
+#endif
 }
 
 static boolean cache_file_is(
@@ -955,6 +1003,15 @@ static void family_list(
 		HANDLE find;
 		size_t suffix_length = strlen(places[index].suffix);
 
+#ifdef HALO_N3DS
+		/* port: (the 3DS) not the maps folder itself: it is the data folder,
+		which holds Halo3DS's own converted Xbox maps alone (Halo PC maps go
+		in custom_maps or maps_ce: README.md), and listing it, a directory
+		entry at a time, for each family and list (six times a refresh) made
+		the menus' map list take seconds, more on a large SD card */
+		if (places[index].root == _place_maps && !places[index].folder[0])
+			continue;
+#endif
 		if (!place_folder(&places[index], folder, sizeof(folder)))
 			continue;
 		snprintf(pattern, sizeof(pattern), "%s*.map", folder);

@@ -317,6 +317,19 @@ The first runs on a New 3DS (124 MB for the game; `CE MAPS: playable`):
   4 KB (the 3DS's files may give no time). A map is read whole once, not
   each run. Hosting ChaosGulch@ce now gives its version 6 s after the
   network game is set up (about 30 s before).
+- **The menus' map list, 5.8 s to 1.1 s** (Azahar; logged when over
+  250 ms).
+  - It no longer lists the data folder (the setup's 24 Xbox maps) for the
+    Halo PC families, which it did six times a refresh, a directory entry
+    at a time (about 28 ms each there).
+  - The Xbox maps' installed checks are kept for the run.
+  - A map's header is read once a run (`map_families.c`; map files are
+    never changed in place).
+
+  Opening the list again takes under 250 ms.
+- **Profiles.** The loaded map's name was "" on the 3DS, so the main menu's
+  own functions (making, editing, deleting a profile) were refused as a
+  foreign map's. `scenario_tags_load` sets it now.
 - **A test of the socket service as the console has it.** With
   `halo-source/soc-serial.txt` present, every socket call is made under one
   lock (`engine_soc_serial.c`, wrapped at link time: `port/n3ds/build.py`).

@@ -1108,8 +1108,29 @@ static void file_found(
 /* the list anew: the Xbox's maps (the game's thirteen names, in its order),
 then the Custom Edition maps found, then HaloMD's, then Halo PC retail's;
 and apart from them each family's campaign maps */
+#ifdef HALO_N3DS
+/* port: (the 3DS) the refresh timed: it opens each of the SD card's maps,
+and a large card's file calls are slow; a slow one is logged */
+static void ui_map_list_refresh_timed(char *const *xbox_maps);
+
 void ui_map_list_refresh(
 	char *const *xbox_maps)
+{
+	unsigned long began = system_milliseconds();
+	unsigned long took;
+
+	ui_map_list_refresh_timed(xbox_maps);
+	took = system_milliseconds() - began;
+	if (took >= 250)
+		error(_error_silent, "the menus' map list took %lu ms to look over the SD card's maps", took);
+}
+
+static void ui_map_list_refresh_timed(
+	char *const *xbox_maps)
+#else
+void ui_map_list_refresh(
+	char *const *xbox_maps)
+#endif
 {
 	static struct found_files found;
 	/* (the counts last logged, to log each change once) */

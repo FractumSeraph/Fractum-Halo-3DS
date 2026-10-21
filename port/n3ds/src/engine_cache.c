@@ -294,17 +294,35 @@ int n3ds_engine_map_is_pc(void)
 /* Listing must not deserialize every level while a menu is opening. Check
  * the small header pair and extents here; actual selection/loading retains
  * the complete tag CRC, relocation and scenario validation below. */
+static boolean xbox_map_installed(const char *name);
 boolean n3ds_engine_map_installed(const char *name)
 {
-    struct cache_file_header header;
-    struct relocation_header relocation;
-    const char *base=name,*scan;
-    char path[128];FILE *file;long size;
+    /* port: an Xbox map's answer kept for the run: the setup's maps do not
+     * change while the game runs, and each answer opens two files, which a
+     * large SD card makes slow (the menus' map list asks for all 13 each
+     * time it opens). A Halo PC map's is asked each time: downloads add them */
+    enum { KEPT=32 };
+    static struct { char name[64]; boolean installed; } kept[KEPT];
+    static unsigned int kept_count;
+    unsigned int i;
+    boolean installed;
     if(!name) return FALSE;
 #ifdef HALO_CUSTOM_EDITION
     /* port: a Halo PC map (its name's family: <file>@ce, @md) */
     if(map_family_parse(name,NULL,0)!=_map_family_xbox) return n3ds_engine_ce_map_installed(name);
 #endif
+    if(strlen(name)>=sizeof(kept[0].name)) return xbox_map_installed(name);
+    for(i=0;i<kept_count;++i) if(!strcmp(kept[i].name,name)) return kept[i].installed;
+    installed=xbox_map_installed(name);
+    if(kept_count<KEPT) {snprintf(kept[kept_count].name,sizeof(kept[0].name),"%s",name);kept[kept_count++].installed=installed;}
+    return installed;
+}
+static boolean xbox_map_installed(const char *name)
+{
+    struct cache_file_header header;
+    struct relocation_header relocation;
+    const char *base=name,*scan;
+    char path[128];FILE *file;long size;
     for(scan=name;*scan;++scan) if(*scan=='/' || *scan=='\\') base=scan+1;
     if(!*base || strlen(base)>=32) return FALSE;
     for(scan=base;*scan;++scan) if(!((*scan>='a' && *scan<='z') || (*scan>='A' && *scan<='Z') || (*scan>='0' && *scan<='9') || *scan=='_')) return FALSE;
