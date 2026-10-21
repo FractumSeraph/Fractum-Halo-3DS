@@ -353,6 +353,15 @@ The first runs on a New 3DS (124 MB for the game; `CE MAPS: playable`):
   heap and 32 MB of linear memory) loaded Blood Gulch with 16 MB of the
   heap in use and 12.5 MB of linear memory free, and listed Online Games'
   64 servers with 20 MB in use. Not tried on an Original 3DS.
+- **Waits on engine threads.** The profiles' saves wait for their writing
+  thread with empty loops (`while (!thread_has_exited(...)) {}`), which on
+  one core never let that thread run: a save while the last one was still
+  writing would have stopped the game. `thread_has_exited` sleeps 1 ms when
+  the thread is still running.
+- **Still to do.** Custom Edition HUD messages draw no controller buttons:
+  the fork reads the icons from the Xbox's compressed ui.map, and the
+  setup's is uncompressed (33.5 MB). Its tag data and the icons' pixels
+  could be read from it instead, once Halo3DS's HUD is shown to draw them.
 - **A test of the socket service as the console has it.** With
   `halo-source/soc-serial.txt` present, every socket call is made under one
   lock (`engine_soc_serial.c`, wrapped at link time: `port/n3ds/build.py`).
