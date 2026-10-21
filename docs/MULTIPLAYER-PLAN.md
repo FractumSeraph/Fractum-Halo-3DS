@@ -210,6 +210,38 @@ and a joined game's map is downloaded (3e8dea4).
   ChaosGulch and Custom Edition's resource maps, for the emulator only;
   downloads made in tests are deleted after each run.
 
+## Phase 5: on a New 3DS (2026-10-21)
+
+The first runs on a New 3DS (124 MB for the game; `CE MAPS: playable`):
+
+- **Found and fixed.**
+  - The console's socket service refuses a bind to port 0, which Azahar
+    takes, so internet play's tunnel did not open. Every bind to port 0 now
+    picks a dynamic port (`posix_socket_bind`, 55ba0b4). The fork's own 3DS
+    port does this for the tunnel alone.
+  - Socket buffers are capped at 64 KB (4b0d745). The game asks 1 MB per
+    socket, and all of them share socInit's 1 MiB.
+- **Seen.** A crash opening Online Games. No logs yet.
+- **Checked in Azahar since.** The screen opens with internet play off, with
+  the 3D slider up (two views), with the game list unreachable or its name
+  unknown, and with the clock in 2010 (the certificate refused, said in the
+  log). None stops the game.
+- **Looked over and clean.**
+  - Every thread goes through the 256 KB-stack wrapper.
+  - There are no 64-bit atomics.
+  - No byte buffer is cast to a wider type in the network, browser or map
+    sharing code.
+  - The renderer gives the GPU only its own linear buffers, never tag
+    memory (a Halo PC map's space is ordinary heap).
+  - The fork's socket layer already has its 3DS changes. libctru defines
+    `SO_BROADCAST` as 0, so the one refusal in the log is expected.
+- **To find a crash.**
+  - An empty `halo-source/sync-log.txt` writes the engine log line by line.
+  - Luma's dump is in `luma/dumps/arm11`. Its PC is mapped with the
+    matching ELF, which `build/symbols/Halo3DS-<sha256 prefix>.elf` keeps
+    for each build handed over. The last 96 bytes of the dump's code end
+    at the PC, and searching the ELF's `.text` for them confirms the build.
+
 ## Phases
 
 1. **The fork's engine under Halo3DS.** `source/` becomes the fork's, with
