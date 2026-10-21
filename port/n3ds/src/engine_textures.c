@@ -674,6 +674,20 @@ static void *load_bitmap_now(struct bitmap_data *bitmap, boolean block, boolean 
 #ifdef HALO_N3DS_ARCHIVE_VERIFY
     if(archive_reference) {assert(!memcmp(archive_reference,tiled,output_bytes));free(archive_reference);}
 #endif
+#ifdef HALO_CUSTOM_EDITION
+    /* port: a Halo PC map's model multipurpose map (port/linux/game/ce_models.c):
+     * its specular (blue), self-illumination (green), color change (alpha) and
+     * auxiliary mask (red) moved where the Xbox's model shaders read them, red,
+     * green, blue and alpha, as the fork's renderer swizzles them (xbox_textures.c) */
+    {
+        extern boolean ce_models_bitmap_is_multipurpose(void const *bitmap);
+        if(n3ds_engine_map_is_pc() && ce_models_bitmap_is_multipurpose(bitmap))
+            for(i=0;i<target_width*target_height;++i) {
+                unsigned int c=tiled[i];
+                tiled[i]=((c>>8)&0xffu)<<24 | (c&0x00ff0000u) | (c&0xffu)<<8 | c>>24;
+            }
+    }
+#endif
     /* Decoder input and full-size RGBA are dead now. Returning them before
      * C3D_TexInit avoids holding both decode scratch and final GPU storage. */
     texture_scratch_free(compressed,compressed_linear);compressed=NULL;compressed_linear=FALSE;

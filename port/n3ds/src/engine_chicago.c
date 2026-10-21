@@ -125,6 +125,21 @@ int halo_engine_chicago_numeric_tests(void)
         if(numeric_frame(cases[i].frames,cases[i].limit,cases[i].digit,cases[i].value)!=cases[i].expected) return 1;
     n3ds_log("PASS: Chicago numeric compass/digit selection: 14 CPU vectors");return 0;
 }
+/* port: a Halo PC map's chicago shader this does not draw (n3ds_engine_map_is_pc):
+ * named once in the log, then left out */
+static void chicago_unsupported(const struct n3ds_cache_view *view,const struct shader *shader,const struct chicago_shader *material)
+{
+    static const struct shader *said[32];static unsigned int count;
+    for(unsigned int i=0;i<count;++i) if(said[i]==shader) return;
+    if(count<32) said[count++]=shader;
+    char message[240];
+    for(long t=0;t<view->tag_header->tag_count;++t) if(view->instances[t].base_address==shader) {
+        snprintf(message,sizeof(message),"CHICAGO PC: not drawn: tag=%08lx type=%d maps=%ld flags=%02x fade=%d/%d name=%.120s",
+            view->instances[t].tag_index,material->type,material->maps.count,material->flags,material->fade_mode,material->fade_source,
+            view->instances[t].name);
+        n3ds_log(message);return;
+    }
+}
 void n3ds_generic_model_draw(const struct shader *,short,const struct rasterizer_model_begin_parameters *,
     const void *,unsigned int,short,const unsigned short *,unsigned int);
 void n3ds_chicago_model_draw(const struct shader *shader,short permutation,
@@ -153,7 +168,16 @@ void n3ds_chicago_model_draw(const struct shader *shader,short permutation,
          * stages exist. This is a defined path, not a fallback for other stages. */
         assert(!g->stages.count && material->maps.count==1);
     }
-    assert(material->type==0 && material->maps.count>=1 && material->maps.count<=4 && !material->extra_layers.count);
+    /* port: a Halo PC map's may be what no Xbox map's is: its extra layers
+     * left out (its own maps are drawn), and what else this does not draw
+     * left out whole (chicago_unsupported) */
+    if(n3ds_engine_map_is_pc() && (material->type!=0 || material->maps.count<1 || material->maps.count>4 ||
+        (material->flags&((1<<3)|(1<<6))) || material->fade_mode<0 || material->fade_mode>2 ||
+        material->fade_source<0 || material->fade_source>4 || (material->fade_source && !parameters->animation.values))) {
+        chicago_unsupported(view,shader,material);return;
+    }
+    assert(material->type==0 && material->maps.count>=1 && material->maps.count<=4 &&
+        (!material->extra_layers.count || n3ds_engine_map_is_pc()));
     if((material->flags&((1<<3)|(1<<6))) || (material->fade_mode && material->blend!=3)) {
         char message[240];
         for(long t=0;t<view->tag_header->tag_count;++t) if(view->instances[t].base_address==shader) {

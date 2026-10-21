@@ -282,6 +282,15 @@ fail:
 /* (Halo PC maps: Custom Edition's, HaloMD's) */
 #include "engine_ce_cache.inl"
 
+int n3ds_engine_map_is_pc(void)
+{
+#ifdef HALO_CUSTOM_EDITION
+    return native_tags.tags && native_is_ce;
+#else
+    return 0;
+#endif
+}
+
 /* Listing must not deserialize every level while a menu is opening. Check
  * the small header pair and extents here; actual selection/loading retains
  * the complete tag CRC, relocation and scenario validation below. */

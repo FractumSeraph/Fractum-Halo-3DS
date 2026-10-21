@@ -26,6 +26,10 @@ int n3ds_engine_cache_stream_tests(void);
 int n3ds_engine_cache_stream_live(void);
 /* Read-only diagnostics for bounds/lifetime verification. */
 const struct n3ds_cache_view *n3ds_engine_cache_view(int bsp);
+/* Nonzero while a Halo PC map (Custom Edition's) is loaded: its shaders
+ * may use what no Xbox map's does, which the renderer then leaves out
+ * rather than stopping (engine_ce_cache.inl). */
+int n3ds_engine_map_is_pc(void);
 unsigned int n3ds_engine_cache_generation(void);
 unsigned int n3ds_engine_tag_generation(void);
 int halo_engine_relocation_tests(void);
