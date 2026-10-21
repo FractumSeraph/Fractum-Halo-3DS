@@ -1600,7 +1600,15 @@ long scenario_tags_load(
 {
 #ifdef HALO_N3DS
 	{
-		long result = n3ds_engine_tags_load(scenario_name);
+		long result;
+
+		/* port: the map being loaded, by its name (cache_file_loaded_map_name,
+		as the fork's load sets it below): the main menu's widgets may run
+		its functions only on ui.map (ui_widget_function_denied), and it was
+		"" here, so a profile could not be made, edited or deleted */
+		csstrncpy(cache_file_loaded_name, tag_name_strip_path(scenario_name), sizeof(cache_file_loaded_name) - 1);
+		cache_file_loaded_name[sizeof(cache_file_loaded_name) - 1] = 0;
+		result = n3ds_engine_tags_load(scenario_name);
 
 #ifdef HALO_GAME_BROWSER
 		/* port: (the 3DS) the Multiplayer menu's ONLINE GAMES, as the fork's
