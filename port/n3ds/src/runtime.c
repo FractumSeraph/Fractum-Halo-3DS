@@ -8,6 +8,7 @@ char temporary[256];
 #endif
 void n3ds_log(const char *message);
 
+static char fatal_text[320];
 void display_assert(char *information, char *file, long line, boolean fatal)
 {
     /* Ship useful file/line diagnostics without the builder's home directory. */
@@ -17,8 +18,15 @@ void display_assert(char *information, char *file, long line, boolean fatal)
     char text[512];
     snprintf(text, sizeof(text), "%s: %s:%ld: %s", fatal ? "FATAL" : "WARNING", file, line, information ? information : "halt");
     n3ds_log(text);
+    /* port: (the stop said on the screen before the game leaves: system_exit) */
+    if(fatal) snprintf(fatal_text,sizeof(fatal_text),"%s:%ld:\n%s",file,line,information?information:"halt");
 }
-void system_exit(long code) { exit((int)code); }
+void n3ds_fatal_screen(const char *what);
+void system_exit(long code)
+{
+    if(fatal_text[0]) n3ds_fatal_screen(fatal_text);
+    exit((int)code);
+}
 void halt_and_catch_fire(void) { abort(); }
 void *debug_malloc(unsigned int size, boolean clear, const char *file, long line)
 {

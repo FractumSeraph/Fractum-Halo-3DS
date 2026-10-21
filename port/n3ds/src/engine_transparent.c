@@ -173,7 +173,7 @@ static unsigned int effect_merged;
 static void effect_flush(void)
 {
     if(!pending_count) return;
-    assert(rasterizer_set_texture_bitmap_data(0,pending_bitmap));
+    if(!rasterizer_set_texture_bitmap_data(0,pending_bitmap)) {pending_count=pending_index_count=0;return;} /* port: (a texture not had: a full cache on a large map, or a format not taken) not drawn, not a stop */
     assert(n3ds_gpu_effect_packed_indexed_draw(effect_packed,pending_count,packed_indices,pending_index_count,pending_blend,
         pending_shader,pending_sampler,pending_geometry,(pending_geometry&(1u<<5))?pending_rows:NULL));
     ++effect_batches;pending_count=pending_index_count=0;primary_state_active=1;
@@ -299,10 +299,10 @@ static void effect_draw(const struct transparent_geometry_group *group)
     }
     effect_close();
     assert(group->triangle_count>0 && group->triangle_count<=131072);
-    assert(rasterizer_set_texture_bitmap_data(0,group->lightmap));
+    if(!rasterizer_set_texture_bitmap_data(0,group->lightmap)) return; /* port: (a texture not had: a full cache on a large map, or a format not taken) not drawn, not a stop */
     real_vector4d secondary_transform[2];
     if(secondary) {
-        assert(rasterizer_set_texture_direct(1,shader->secondary_map.index,group->shader_permutation_index));
+        if(!rasterizer_set_texture_direct(1,shader->secondary_map.index,group->shader_permutation_index)) return;
         shader_texture_animation_evaluate(&shader->secondary_map_animation,group->animation,
             group->model_base_map_scale.i,group->model_base_map_scale.j,0,0,0,
             global_frame_parameters.game_time_sec,secondary_transform,secondary_transform+1);

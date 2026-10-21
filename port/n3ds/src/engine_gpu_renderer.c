@@ -2474,7 +2474,7 @@ static void controls_dispose(void){if(controls_white)n3ds_gpu_texture_destroy(co
 
 static void loading_text(void)
 {
-    static const char *lines[]={"Halo3DS", "Loading game data...", "Initial loading may take a while."};
+    static const char *lines[]={"Fractum Halo", "Loading game data...", "Initial loading may take a while."};
     status_text(lines,3,0);
 }
 void n3ds_gpu_campaign_help(void)

@@ -225,7 +225,7 @@ void n3ds_glass_model_draw(const struct shader *shader,short permutation,
         if(pass==1 && !cube) continue;
         if(pass==2 && g->diffuse_map.index==NONE) continue;
         long bitmap=pass==0?g->tint_map.index:pass==2?g->diffuse_map.index:NONE;
-        if(bitmap!=NONE) { assert(rasterizer_set_texture_direct(0,bitmap,permutation)); }
+        if(bitmap!=NONE) { if(!rasterizer_set_texture_direct(0,bitmap,permutation)) continue; } /* port: (a texture not had: a full cache on a large map, or a format not taken) not drawn, not a stop */
         else assert(n3ds_gpu_texture_bind(0,NULL));
         struct native_render_vertex *v=n3ds_gpu_model_vertices_allocate(count);assert(v);
         const struct model_vertex_uncompressed *cached=type==5?n3ds_model_decode_stream(data,count):NULL;

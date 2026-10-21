@@ -380,6 +380,36 @@ The first runs on a New 3DS (124 MB for the game; `CE MAPS: playable`):
 - **The map list's kept headers** are forgotten when map sharing adds or
   deletes a map. Hosting retries the map's identity every 3 s while it's
   not found.
+- **Fractum Halo.** The build embeds an SMDH (`port/n3ds/build.py`,
+  smdhtool): title "Fractum Halo", author "FractumSeraph", and the fork's
+  icon at 48 pixels (`port/n3ds/art/icon-48.png`, taken from the fork's
+  `port/windows/halo.ico`). The loading and stop screens say Fractum Halo.
+  The file name and folder stay Halo3DS's, for its setup tool.
+- **Custom Edition maps played through in Azahar** (20 from HaloWeb's
+  assets): what stopped them is fixed.
+  - Plasma (shields, teleporters): a Halo PC map's 3D textures aren't
+    swizzled, and are often A8R8G8B8 (format 11) where the Xbox's are A8Y8.
+    Both are read, at the first mip level that fits the 64 KB buffer (16³
+    for format 11). Anything else skips the plasma, logged once.
+  - A texture that fails to bind (a full cache, or a format not handled)
+    skips that draw. Eleven asserts stopped the game on it.
+  - Water with values out of range, a zero normal, or data outside the BSP
+    is pinned or skipped.
+  - A big map's BSP vertices can go in heap blocks when the tag cache's
+    free room runs out (`ce_bsp.c`, coldsnap). `n3ds_cache_resolve` now
+    accepts those blocks for the BSP's view (`ce_bsp_vertex_memory_holds`).
+    A material whose vertices are still nowhere known is left out and
+    logged ("MISSION RENDER: ... left out"). Before, the whole render failed.
+  - A tag block or tag that isn't word-aligned, or that points outside the
+    space, is made empty. The console's VFP faults on unaligned floats,
+    and nothing is mapped at the map's own addresses.
+- **A stop now shows on the bottom screen.** A failed assert shows the file,
+  line and check, mutes the sound and waits for START before leaving.
+  Before, the game quit with nothing on screen.
+- **The socket service closes safely.** After `n3ds_soc_close` begins,
+  every socket call fails with ENETDOWN, and `socExit` waits up to 2 s for
+  calls in progress. Before, a network thread's poll after `socExit` read
+  freed memory (null), which Azahar logged and a console would crash on.
 - **A test of the socket service as the console has it.** With
   `halo-source/soc-serial.txt` present, every socket call is made under one
   lock (`engine_soc_serial.c`, wrapped at link time: `port/n3ds/build.py`).

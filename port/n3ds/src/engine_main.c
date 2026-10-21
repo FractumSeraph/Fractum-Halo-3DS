@@ -94,11 +94,33 @@ void n3ds_log(const char *message)
     }
     flush_console();
 }
+/* port: a stop the game cannot go on from (an assert: runtime.c's
+ * system_exit after a FATAL): said on the bottom screen, the sound stopped,
+ * the log written, until START. Before, the game left at once, the player
+ * seeing nothing (and its other threads, still running as the services were
+ * closed, could take the console down with it) */
+void n3ds_fatal_screen(const char *what)
+{
+    static volatile int shown;
+    if(shown++) for(;;) svcSleepThread(1000000000LL);
+    ndspSetMasterVol(0.f);
+    error_console=1;graphics_owned=0;gfxSet3D(false);gfxSetDoubleBuffering(GFX_BOTTOM,false);
+    consoleInit(GFX_BOTTOM,NULL);
+    printf("Fractum Halo stopped.\n\n%.300s\n\nThe last lines are in\nhalo-source-engine.log and\nhalo-source-fatal.log on the SD card.\n\nPress START to exit.\n",what?what:"");
+    fflush(stdout);flush_console();
+    if(log_thread) log_async_finish();
+    if(log_file) fflush(log_file);
+    while(aptMainLoop()) {
+        hidScanInput();
+        if(hidKeysDown()&KEY_START) break;
+        flush_console();gspWaitForVBlank();
+    }
+}
 #include "engine_log_tests.inl"
 int main(void)
 {
     gfxInitDefault(); gfxSetDoubleBuffering(GFX_BOTTOM, false); consoleInit(GFX_BOTTOM, NULL);
-    printf("\n\n             Halo3DS\n\n\n          Loading game data...\n\n    Initial loading may take a while.\n");
+    printf("\n\n           Fractum Halo\n\n\n          Loading game data...\n\n    Initial loading may take a while.\n");
     fflush(stdout);flush_console();
     remove("sdmc:/halo-source-engine.previous.log");
     rename("sdmc:/halo-source-engine.log","sdmc:/halo-source-engine.previous.log");
@@ -161,11 +183,12 @@ int main(void)
          * after GPU shutdown so a startup failure cannot look like a freeze. */
         error_console=1;graphics_owned=0;gfxSet3D(false);gfxSetDoubleBuffering(GFX_BOTTOM,false);
         consoleInit(GFX_BOTTOM,NULL);
-        printf("Halo3DS stopped during startup.\n\nSee halo-source-engine.log\non the SD card for details.\n\nPress START to exit.\n");
+        printf("Fractum Halo stopped during startup.\n\nSee halo-source-engine.log\non the SD card for details.\n\nPress START to exit.\n");
         fflush(stdout);flush_console();
     }
     n3ds_log(result ? "RESULT: FAIL" : "RESULT: PASS");
-    if (soc_buffer) {socExit();free(soc_buffer);soc_buffer=NULL;}
+    /* port: (the service closed once no thread is in it: engine_soc_serial.c) */
+    if (soc_buffer) {extern void n3ds_soc_close(void);n3ds_soc_close();free(soc_buffer);soc_buffer=NULL;}
     n3ds_parallel_shutdown();log_async_finish();
     if (log_file) {fclose(log_file);log_file=NULL;}
     while (result && aptMainLoop()) {

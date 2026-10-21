@@ -87,6 +87,33 @@ void rasterizer_geometry_compress_vertices(short type, long count, void *compres
 /* the contiguous memory of the loaded BSP's vertices, freed with it */
 static void **ce_bsp_vertex_memory;
 static long ce_bsp_vertex_memory_count;
+#ifdef HALO_N3DS
+/* port: (the 3DS) each one's size, for the renderer to know a material's
+vertices kept outside the tag cache (ce_bsp_vertex_memory_holds) */
+static unsigned long *ce_bsp_vertex_memory_sizes;
+
+/* port: whether these bytes are all in one of the BSP's vertex blocks made
+outside the tag cache (when its free room had run out): the renderer reads
+a material's vertices there as in the space (port/n3ds/src/cache_reader.c's
+n3ds_cache_resolve) */
+int ce_bsp_vertex_memory_holds(
+	const void *address,
+	unsigned long bytes)
+{
+	long index;
+
+	for (index = 0; index < ce_bsp_vertex_memory_count; index++)
+	{
+		unsigned long start = (unsigned long)ce_bsp_vertex_memory[index];
+		unsigned long at = (unsigned long)address;
+
+		if (at >= start && at - start <= ce_bsp_vertex_memory_sizes[index] &&
+			bytes <= ce_bsp_vertex_memory_sizes[index] - (at - start))
+			return 1;
+	}
+	return 0;
+}
+#endif
 /* the tag cache's room before the loaded BSP's vertex buffers took theirs */
 static unsigned long ce_bsp_free_mark;
 
@@ -333,6 +360,21 @@ void ce_bsp_loaded(
 					return;
 				}
 				ce_bsp_vertex_memory = grown;
+#ifdef HALO_N3DS
+				{
+					unsigned long *sizes = realloc(ce_bsp_vertex_memory_sizes,
+						(ce_bsp_vertex_memory_count + 1) * sizeof(*sizes));
+
+					if (!sizes)
+					{
+						XPhysicalFree(compressed);
+						error(_error_silent, "Custom Edition maps: no memory for a BSP material's vertices");
+						return;
+					}
+					ce_bsp_vertex_memory_sizes = sizes;
+					sizes[ce_bsp_vertex_memory_count] = (unsigned long)size;
+				}
+#endif
 				ce_bsp_vertex_memory[ce_bsp_vertex_memory_count++] = compressed;
 			}
 			ce_unit_vectors(uncompressed, vertex_count, ENVIRONMENT_VERTEX_UNCOMPRESSED_SIZE,
@@ -381,6 +423,10 @@ void ce_bsp_unloaded(
 		free(ce_bsp_vertex_memory);
 	ce_bsp_vertex_memory = NULL;
 	ce_bsp_vertex_memory_count = 0;
+#ifdef HALO_N3DS
+	free(ce_bsp_vertex_memory_sizes);
+	ce_bsp_vertex_memory_sizes = NULL;
+#endif
 	/* (its vertex buffers' room, for the next BSP's) */
 	ce_resources_free_to(ce_bsp_free_mark);
 	ce_bsp_free_mark = 0;

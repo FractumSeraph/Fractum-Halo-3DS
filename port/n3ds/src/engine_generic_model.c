@@ -157,7 +157,7 @@ void n3ds_generic_model_draw(const struct shader *shader,short permutation,
                 snprintf(message,sizeof(message),"GENERIC MAP BIND: bitmap=%08lx map=%d permutation=%d name=%.130s",m->bitmap.index,i,permutation,view->instances[t].name);n3ds_log(message);break;
             }
         }
-        assert(bound);
+        if(!bound) return; /* port: (a texture not had: a full cache on a large map, or a format not taken) not drawn, not a stop */
         bake.textures[i]=n3ds_gpu_texture_bound(0);
         bake.point[i]=!!(m->flags&1);bake.clamp_u[i]=!!(m->flags&2);bake.clamp_v[i]=!!(m->flags&4);
         float u=m->u,v=m->v;

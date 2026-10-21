@@ -137,11 +137,20 @@ static int ce_walk(struct n3ds_ce_space *space, short type, unsigned long at, in
 			if (count > CE_MAXIMUM_BLOCK)
 				return 0;
 			first = ce_pointer(space, pos + 4, (unsigned long)count * size);
+			/* port: (a block not on a word: its elements' floats would be
+			   read unaligned, which the console's VFP stops on (the Azahar
+			   emulator reads them); counted as outside the space) */
+			if (first >= 0 && (first & 3))
+				first = -1;
 			if (first < 0)
 			{
 				/* (a block outside the space: a map that would read
-				   memory it has not; refused) */
+				   memory it has not; refused. port: made empty, its count
+				   and address 0: left, its address the map's, which
+				   nothing is at on the console, was a stop when read) */
 				space->bad_blocks++;
+				ce_put_u32(space->native + pos, 0);
+				ce_put_u32(space->native + pos + 4, 0);
 				break;
 			}
 			for (element = 0; element < count; element++)
@@ -286,7 +295,8 @@ int n3ds_ce_relocate_tags(struct n3ds_ce_space *space, unsigned long tag_bytes, 
 			continue;
 		}
 		body = ce_pointer(space, entry + 20, ce_schema_types[root].size);
-		if (body < 0)
+		/* port: (a tag not on a word: as a block's, ce_walk) */
+		if (body < 0 || (body & 3))
 		{
 			space->bad_blocks++;
 			continue;

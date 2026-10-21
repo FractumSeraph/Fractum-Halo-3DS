@@ -242,7 +242,7 @@ void n3ds_chicago_model_draw(const struct shader *shader,short permutation,
         if(!bound) {
             char text[192]; snprintf(text,sizeof(text),"CHICAGO BITMAP: stage=%ld tag=%08lx permutation=%d cache_count=%u cache_bytes=%u",m,map->bitmap.index,permutation,n3ds_engine_texture_count(),n3ds_engine_texture_bytes()); n3ds_log(text);
         }
-        assert(bound);
+        if(!bound) return; /* port: (a texture not had: a full cache on a large map, or a format not taken) not drawn, not a stop */
         if(four) {
             bake.textures[m]=n3ds_gpu_texture_bound(0);
             bake.point[m]=!!(map->flags&1);bake.clamp_u[m]=!!(map->flags&4);bake.clamp_v[m]=!!(map->flags&8);

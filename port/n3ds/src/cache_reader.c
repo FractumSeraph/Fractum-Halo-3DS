@@ -59,14 +59,24 @@ _Static_assert(sizeof(struct cache_file_header) == 2048, "Xbox cache header ABI"
 _Static_assert(sizeof(struct cache_file_tag_header) == 36, "Xbox tag header ABI");
 _Static_assert(sizeof(struct cache_file_tag_instance) == 32, "Xbox directory ABI");
 
+/* port: memory a view's data points to outside it that may be read as its
+ * own: a Halo PC map's BSP vertices the conversion kept outside the tag cache
+ * (engine_ce_cache.inl sets it); none if NULL */
+int (*n3ds_cache_resolve_outside)(const struct n3ds_cache_view *view, const void *address, unsigned long bytes);
+
 void *n3ds_cache_resolve(const struct n3ds_cache_view *view, const void *xbox_address, unsigned long bytes)
 {
     unsigned long address = (unsigned long)xbox_address;
     unsigned long offset;
-    if (!view->tags || address < view->xbox_base) return NULL;
+    if (!view->tags) return NULL;
+    if (address < view->xbox_base) goto outside;
     offset = address - view->xbox_base;
-    if (offset > view->tag_bytes || bytes > view->tag_bytes - offset) return NULL;
+    if (offset > view->tag_bytes || bytes > view->tag_bytes - offset) goto outside;
     return view->tags + offset;
+outside:
+    if (address && n3ds_cache_resolve_outside && n3ds_cache_resolve_outside(view, xbox_address, bytes))
+        return (void *)xbox_address;
+    return NULL;
 }
 
 void n3ds_cache_close(struct n3ds_cache_view *view)

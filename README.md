@@ -1,4 +1,11 @@
-# Halo3DS
+# Fractum Halo
+
+Fractum Halo, by FractumSeraph, is Generalkidd's [Halo3DS](https://github.com/Generalkidd/Halo3DS)
+with the multiplayer of the FractumSeraph/OpenCE fork: system link, internet
+play, the server browser, and Custom Edition maps with their downloads (on a
+New 3DS). The Homebrew Launcher lists it as **Fractum Halo**. Its file keeps
+Halo3DS's name and place, `3ds/Halo3DS/Halo3DS.3dsx`, so Halo3DS's setup tool
+still installs and updates it.
 
 Halo 3DS is a port of Halo Combat Evolved from the OG Xbox using recently decompiled source code from the OpenCE project!
 It supports all models of the 3DS family including both the OG and New models as well as 2DS models. 
@@ -23,7 +30,7 @@ setup instructions follow.
 3. Open the tool and select your **Xbox ISO/XISO** or **dumped maps folder**.
 4. Select your SD card's drive, such as `H:\`, and click **Prepare SD card**.
    Leave the card connected until setup finishes.
-5. Safely eject the card, put it back in your console, and launch **Halo3DS**
+5. Safely eject the card, put it back in your console, and launch **Fractum Halo**
    from the Homebrew Launcher. The first load may take a while.
 
 Use the English North American retail Xbox release. If you're using a maps
@@ -98,7 +105,7 @@ you don't need to run the full setup again.
 
 Include your console model, build version, mission/map, difficulty, whether 3D
 was on, and what happened. For a crash or freeze, power off before removing
-the SD card and copy the logs before launching Halo3DS again:
+the SD card and copy the logs before launching Fractum Halo again:
 
 - `halo-source-engine.log` and `halo-source-engine.previous.log` at the SD root
 - `halo-source-fatal.log` and `halo-source-stall.log`, if present

@@ -39,40 +39,68 @@ static const struct shader *reported;
 static unsigned int test_draws;
 unsigned int n3ds_plasma_test_draws(void) {return test_draws;}
 #endif
+static void volume_refused(long tag,int line)
+{
+    static long last_tag=NONE;
+    if(tag==last_tag) return;
+    last_tag=tag;
+    char text[96];snprintf(text,sizeof(text),"NATIVE PLASMA VOLUME: tag=%08lx not loaded (engine_plasma.c:%d); not drawn",tag,line);n3ds_log(text);
+}
 static const struct plasma_volume *volume_load(long tag,short permutation,const struct plasma_volume *keep)
 {
+    /* port: a volume not had is a plasma not drawn (n3ds_plasma_model_draw),
+     * not a stopped game: a Halo PC map's may be of a format or size this
+     * does not take. Its own layout taken: its levels not swizzled
+     * (N3DS_BITMAP_PC_LAYOUT_FLAG), as the fork's conversion leaves them */
+#define VOLUME_CHECK(e) do { if(!(e)) { volume_refused(tag,__LINE__);return NULL; } } while(0)
     const struct n3ds_cache_view *view=n3ds_engine_cache_view(0);
     const struct bitmap_group *group=bitmap_group_get(tag);
-    assert(group && group->bitmaps.count>0 && permutation>=0);
+    VOLUME_CHECK(group && group->bitmaps.count>0 && permutation>=0);
     const struct bitmap_data *b=bitmap_group_try_and_get_bitmap(tag,permutation%group->bitmaps.count);
     for(int i=0;i<2;++i) if(volumes[i].bitmap==b) return volumes+i;
     struct plasma_volume *v=keep==volumes?volumes+1:volumes;
-    assert(n3ds_cache_resolve(view,b,sizeof(*b))==b && b->signature=='bitm');
-    assert(b->type==1 && (b->flags&0x88)==0x88 && b->format>=0 && b->format<=3);
-    v->stride=b->format==3?2:1;unsigned int skip=0,bytes;int level=0;
+    VOLUME_CHECK(b && n3ds_cache_resolve(view,b,sizeof(*b))==b && b->signature=='bitm');
+    int pc=!!(b->flags&N3DS_BITMAP_PC_LAYOUT_FLAG);
+    /* (format 11, A8R8G8B8: a Halo PC map's noise, where the Xbox's is A8Y8;
+     * its red and alpha read as the Xbox's luminance and alpha) */
+    int known=(b->format>=0 && b->format<=3) || b->format==11;
+    static long last_logged=NONE;
+    if(!(b->type==1 && (b->flags&0x80) && (pc || (b->flags&0x08)) && known) && tag!=last_logged) {
+        last_logged=tag;
+        char text[128];snprintf(text,sizeof(text),"NATIVE PLASMA VOLUME: tag=%08lx type=%d flags=%04x format=%d size=%dx%dx%d mips=%d",
+            tag,(int)b->type,(unsigned)b->flags,(int)b->format,(int)b->width,(int)b->height,(int)b->depth,(int)b->mipmap_count);
+        n3ds_log(text);
+    }
+    VOLUME_CHECK(b->type==1 && (b->flags&0x80) && (pc || (b->flags&0x08)) && known);
+    v->bitmap=NULL;v->stride=b->format==11?4:b->format==3?2:1;unsigned int skip=0,bytes;int level=0;
     v->size[0]=b->width;v->size[1]=b->height;v->size[2]=b->depth;
-    for(int c=0;c<3;++c) assert(v->size[c]>0 && v->size[c]<=256 && !(v->size[c]&(v->size[c]-1)));
-    while(MAX(v->size[0],MAX(v->size[1],v->size[2]))>32) {
-        assert(level++<b->mipmap_count);skip+=v->size[0]*v->size[1]*v->size[2]*v->stride;
+    for(int c=0;c<3;++c) VOLUME_CHECK(v->size[c]>0 && v->size[c]<=256 && !(v->size[c]&(v->size[c]-1)));
+    /* (a level that fits: 32 texels a side at most, and its bytes the
+     * buffer's, which a 4-byte format's 32 a side are not) */
+    while(MAX(v->size[0],MAX(v->size[1],v->size[2]))>32 ||
+        (unsigned long)v->size[0]*v->size[1]*v->size[2]*v->stride>sizeof(v->pixels)) {
+        VOLUME_CHECK(level++<b->mipmap_count);skip+=v->size[0]*v->size[1]*v->size[2]*v->stride;
         for(int c=0;c<3;++c) v->size[c]=MAX(1,v->size[c]/2);
     }
     bytes=v->size[0]*v->size[1]*v->size[2]*v->stride;
-    assert(b->pixels_offset>=2048 && b->pixels_size>0 && skip+bytes<=(unsigned long)b->pixels_size);
-    assert(n3ds_engine_bitmap_read(b,b->pixels_offset+skip,bytes,v->pixels));
+    VOLUME_CHECK(b->pixels_offset>=2048 && b->pixels_size>0 && skip+bytes<=(unsigned long)b->pixels_size);
+    VOLUME_CHECK(n3ds_engine_bitmap_read(b,b->pixels_offset+skip,bytes,v->pixels));
     for(int c=0;c<3;++c) for(int i=0;i<v->size[c];++i) {
         long xyz[3]={0},address[3];xyz[c]=i;
         bitmap_swizzle_vector3d(v->size[0],v->size[1],v->size[2],xyz[0],xyz[1],xyz[2],address);
+        if(pc) {address[0]=xyz[0];address[1]=xyz[1]*v->size[0];address[2]=xyz[2]*v->size[0]*v->size[1];}
         v->address[c][i]=address[c];
     }
     v->bitmap=b;
     char message[160];snprintf(message,sizeof(message),"NATIVE PLASMA VOLUME: tag=%08lx size=%d,%d,%d bytes=%u mip=%d",tag,v->size[0],v->size[1],v->size[2],bytes,level);n3ds_log(message);
     return v;
+#undef VOLUME_CHECK
 }
 static void volume_sample(const struct plasma_volume *v,const float xyz[3],float out[2])
 {
     int ix[3];float f[3];
     for(int c=0;c<3;++c) {
-        assert(isfinite(xyz[c]));float x=(xyz[c]-floorf(xyz[c]))*v->size[c]-.5f;
+        float x=!isfinite(xyz[c])?0:(xyz[c]-floorf(xyz[c]))*v->size[c]-.5f;
         ix[c]=(int)floorf(x);f[c]=x-ix[c];
     }
     out[0]=out[1]=0;
@@ -87,7 +115,8 @@ static void volume_sample(const struct plasma_volume *v,const float xyz[3],float
 static float animation_value(const struct render_animation *a,int source,float exponent,float fallback)
 {
     if(!a->values || source<1 || source>4) return fallback;
-    float value=a->values[source-1];assert(isfinite(value) && isfinite(exponent));
+    float value=a->values[source-1];
+    if(!isfinite(value) || !isfinite(exponent)) return fallback; /* port: (a map's, not a stop) */
     /* A depleted shield stays invisible, including malformed negative inputs. */
     if(value<=0) return 0;
     float result=powf(value,exponent);return isfinite(result)?PIN(result,0.f,1.f):0;
@@ -121,8 +150,10 @@ void n3ds_plasma_model_draw(const struct shader *shader,short permutation,
     const real_rgb_color *tint=global_real_rgb_white;
     if(p->animation.colors && s->color_source>=1 && s->color_source<=4) tint=p->animation.colors+s->color_source-1;
     const struct plasma_volume *primary=volume_load(s->primary_map.index,permutation,NULL);
-    const struct plasma_volume *secondary=volume_load(s->secondary_map.index,permutation,primary);
-    assert(isfinite(s->primary_period) && s->primary_period!=0 && isfinite(s->secondary_period) && s->secondary_period!=0);
+    const struct plasma_volume *secondary=primary?volume_load(s->secondary_map.index,permutation,primary):NULL;
+    /* port: (its maps not had, or its periods none: not drawn) */
+    if(!primary || !secondary || !isfinite(s->primary_period) || s->primary_period==0 ||
+        !isfinite(s->secondary_period) || s->secondary_period==0) return;
     float time[2]={global_frame_parameters.game_time_sec/s->primary_period,global_frame_parameters.game_time_sec/s->secondary_period};
     const struct model_vertex_uncompressed *cached=type==5?n3ds_model_decode_stream(data,count):NULL;
     const real_vector2d unit={1,1};

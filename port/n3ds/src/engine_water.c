@@ -83,21 +83,30 @@ static int water_native(const struct water_shader *w,short permutation,
     return 1;
 }
 
+static void water_refused(const void *shader,int line)
+{
+    static const void *last;
+    if(shader==last) return;
+    last=shader;
+    char text[96];snprintf(text,sizeof(text),"NATIVE WATER: a shader not drawn (engine_water.c:%d)",line);n3ds_log(text);
+}
 void n3ds_water_model_draw(const struct shader *shader,short permutation,
     const struct rasterizer_model_begin_parameters *p,const void *data,
     unsigned int count,short type,const unsigned short *indices,unsigned int index_count)
 {
     const struct n3ds_cache_view *view=n3ds_engine_cache_view(0);
     const struct water_shader *w=(const void *)shader;
-    assert(n3ds_cache_resolve(view,w,sizeof(*w))==w && w->type==0 && !(w->flags&~15));
-    assert(isfinite(w->scale) && isfinite(w->angle) && isfinite(w->velocity));
+    /* port: (a map's water this does not take: not drawn, engine_water.c's
+     * n3ds_water_bsp_draw) */
+    if(n3ds_cache_resolve(view,w,sizeof(*w))!=w || w->type!=0 || (w->flags&~15) ||
+        !isfinite(w->scale) || !isfinite(w->angle) || !isfinite(w->velocity)) {water_refused(shader,__LINE__);return;}
     if(water_native(w,permutation,p,data,count,type,indices,index_count)) return;
     const byte *cube=w->reflection_map.index!=NONE?n3ds_cube_load(w->reflection_map.index,permutation):NULL;
     struct native_generic_material sample={.maps=1};
     sample.transform[0][0][0]=sample.transform[0][1][1]=1;
     sample.clamp_u[0]=sample.clamp_v[0]=1;
     if(w->base_map.index!=NONE) {
-        assert(rasterizer_set_texture_direct(0,w->base_map.index,permutation));
+        if(!rasterizer_set_texture_direct(0,w->base_map.index,permutation)) return; /* port: (a texture not had: a full cache on a large map, or a format not taken) not drawn, not a stop */
         sample.textures[0]=n3ds_gpu_texture_bound(0);
     }
     const struct model_vertex_uncompressed *cached=type==5?n3ds_model_decode_stream(data,count):NULL;
@@ -189,32 +198,40 @@ static void water_bsp_decode(const struct vertex_buffer *source,unsigned int i,s
     real_vector3d n;
     if(source->type==1) {unsigned long packed;memcpy(&packed,p+12,4);n=uncompress_int32_to_real_vector3d(packed);}
     else memcpy(n.n,p+12,12);
-    float length=dot_product3d(&n,&n);assert(isfinite(length) && length>1e-12f);
+    /* port: a map's vertex not finite, or its normal none, made one that is
+     * (up), rather than stopping the game */
+    float length=dot_product3d(&n,&n);
+    if(!isfinite(length) || length<=1e-12f) {n.n[0]=n.n[1]=0;n.n[2]=1;length=1;}
     float inverse=1/sqrtf(length);
-    for(int c=0;c<3;++c) {assert(isfinite(v->position[c]));v->color[c]=n.n[c]*inverse;}
-    assert(isfinite(v->uv[0]) && isfinite(v->uv[1]));
+    for(int c=0;c<3;++c) {if(!isfinite(v->position[c])) v->position[c]=0;v->color[c]=n.n[c]*inverse;}
+    for(int c=0;c<2;++c) if(!isfinite(v->uv[c])) v->uv[c]=0;
 }
 void n3ds_water_bsp_draw(const struct transparent_geometry_group *group)
 {
+    /* port: a Halo PC map's water this does not take is not drawn, rather
+     * than stopping the game */
+#define WATER_CHECK(e) do { if(!(e)) { water_refused(group->shader,__LINE__);return; } } while(0)
     const struct vertex_buffer *source=group->vertex_buffer;
     const struct triangle_buffer *triangles=group->triangle_buffer;
     const struct n3ds_cache_view *bsp=n3ds_engine_cache_view(1);
     const struct water_shader *w=(const void *)group->shader;
-    assert(n3ds_cache_resolve(n3ds_engine_cache_view(0),w,sizeof(*w))==w && w->type==0 && !(w->flags&~15));
-    assert(isfinite(w->scale) && isfinite(w->angle) && isfinite(w->velocity));
-    assert(source && n3ds_cache_resolve(bsp,source,sizeof(*source))==source && source->type>=0 && source->type<=1);
-    assert(source->count>0 && source->count<=65535 && source->base_address);
+    WATER_CHECK(n3ds_cache_resolve(n3ds_engine_cache_view(0),w,sizeof(*w))==w && w->type==0 && !(w->flags&~15));
+    WATER_CHECK(isfinite(w->scale) && isfinite(w->angle) && isfinite(w->velocity));
+    WATER_CHECK(source && n3ds_cache_resolve(bsp,source,sizeof(*source))==source && source->type>=0 && source->type<=1);
+    WATER_CHECK(source->count>0 && source->count<=65535 && source->base_address);
     unsigned int count=source->count,bytes=count*(source->type==1?32:56);
-    assert(n3ds_cache_resolve(bsp,source->base_address,bytes)==source->base_address);
-    assert(triangles && triangles->type==0 && triangles->count>0 && triangles->count<=0x7fffffff/6);
+    WATER_CHECK(n3ds_cache_resolve(bsp,source->base_address,bytes)==source->base_address);
+    WATER_CHECK(triangles && triangles->type==0 && triangles->count>0 && triangles->count<=0x7fffffff/6);
     unsigned int index_count=triangles->count*3;const unsigned short *indices=triangles->base_address;
-    assert(indices && n3ds_cache_resolve(bsp,indices,index_count*2)==indices);
+    WATER_CHECK(indices && n3ds_cache_resolve(bsp,indices,index_count*2)==indices);
     if(water_bsp_generation!=n3ds_engine_cache_generation()) {n3ds_water_bsp_release();water_bsp_generation=n3ds_engine_cache_generation();}
     struct native_water_material material={.flags=w->flags};
     for(int c=0;c<4;++c) {
         material.perpendicular[c]=c==3?w->perpendicular.alpha:w->perpendicular.rgb.n[c];
         material.parallel[c]=c==3?w->parallel.alpha:w->parallel.rgb.n[c];
-        assert(material.perpendicular[c]>=0 && material.perpendicular[c]<=1 && material.parallel[c]>=0 && material.parallel[c]<=1);
+        /* port: (a map's out of 0 to 1: pinned) */
+        material.perpendicular[c]=isfinite(material.perpendicular[c])?PIN(material.perpendicular[c],0.f,1.f):0;
+        material.parallel[c]=isfinite(material.parallel[c])?PIN(material.parallel[c],0.f,1.f):0;
     }
     if(w->reflection_map.index!=NONE && !(material.cube=n3ds_engine_bitmap_resource(w->reflection_map.index,group->shader_permutation_index))) return;
     if(w->base_map.index!=NONE && !(material.base=n3ds_engine_bitmap_resource(w->base_map.index,group->shader_permutation_index))) return;
@@ -224,7 +241,7 @@ void n3ds_water_bsp_draw(const struct transparent_geometry_group *group)
         if(!water_bsp[i].source && !empty) empty=water_bsp+i;
     }
     if(!entry) {
-        for(unsigned int i=0;i<index_count;++i) assert(indices[i]<count);
+        for(unsigned int i=0;i<index_count;++i) WATER_CHECK(indices[i]<count);
         if(empty && count*sizeof(struct native_water_wave_vertex)<=WATER_BSP_BYTES-water_bsp_bytes) {
             empty->base=malloc(count*sizeof(*empty->base));
             if(empty->base) {
@@ -278,4 +295,5 @@ void n3ds_water_bsp_draw(const struct transparent_geometry_group *group)
         } else ++water_bsp_uncached;
     }
     assert(n3ds_gpu_water_draw(out,gpu_indices,index_count,&material));++water_bsp_draws;
+#undef WATER_CHECK
 }

@@ -173,6 +173,20 @@ static int prepare(void)
             if(group=='swat' && !n3ds_cache_tag(n3ds_engine_cache_view(0),m->shader.index,'swat')) { ++excluded; continue; }
             CHECK(count<batch_capacity && m->surface_count>0 && m->first_surface_index>=0);
             CHECK(m->surface_count<=bsp->surfaces.count && m->first_surface_index<=bsp->surfaces.count-m->surface_count);
+            /* port: a material whose vertices are not in the BSP's view (a
+             * Halo PC map's the conversion did not give a buffer) is left
+             * out, said once, rather than the map's whole render failing */
+            {
+                const struct vertex_buffer *checked=&m->vertices;
+                unsigned int checked_stride=checked->type==1?32:56;
+                if(checked->count<=0 || checked->count>65535 || (checked->type!=0 && checked->type!=1) ||
+                    !checked->base_address ||
+                    n3ds_cache_resolve(n3ds_engine_cache_view(1),checked->base_address,checked->count*checked_stride)!=checked->base_address) {
+                    snprintf(message,sizeof(message),"MISSION RENDER: lightmap %ld material %ld left out: vertices %p, %ld of type %d, not in the BSP",
+                        i,j,checked->base_address,(long)checked->count,(int)checked->type);
+                    n3ds_log(message);++excluded;continue;
+                }
+            }
             struct mission_batch *batch=batches+count++;
             batch->material=m;batch->shader=tag_get(group,m->shader.index);batch->lightmap_index=lightmap->bitmap_index;
             memset(&batch->water_triangles,0,sizeof(batch->water_triangles));

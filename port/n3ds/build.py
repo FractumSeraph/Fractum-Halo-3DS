@@ -157,7 +157,14 @@ def main():
     allowed={'__aeabi_unwind_cpp_pr0','__aeabi_unwind_cpp_pr1','__aeabi_unwind_cpp_pr2','__sync_init','__sync_fini',
              '__deregister_frame_info','__register_frame_info','userAppExit','userAppInit'}
     if any(line.split()[-1] not in allowed for line in undefined.splitlines()): raise RuntimeError('Unresolved runtime symbols:\n'+undefined)
-    subprocess.run([args.packer,str(elf),str(binary)],check=True)
+    # The Homebrew Launcher's title, description, author and icon (the fork's
+    # name: Fractum Halo, by FractumSeraph; its icon, port/n3ds/art/icon-48.png,
+    # the fork's artwork at 48 pixels), made by smdhtool beside 3dsxtool
+    smdh=out/'Halo3DS.smdh'
+    smdhtool=str(Path(args.packer).with_name('smdhtool'+Path(args.packer).suffix))
+    subprocess.run([smdhtool,'--create','Fractum Halo','Halo: Combat Evolved multiplayer for the New 3DS',
+                    'FractumSeraph',str(PORT/'art'/'icon-48.png'),str(smdh)],check=True)
+    subprocess.run([args.packer,str(elf),str(binary),'--smdh='+str(smdh)],check=True)
     verify_linked(shaders,elf,[],out/'shader-verification.json')
     report={'binary':str(binary),'sha256':sha(binary),'test_frames':args.test_frames,'diagnostics':args.diagnostics,
             'checkpoint_identity':build_id,'commands':commands,'source_sha256':{e['source']:sha(ROOT/e['source']) for e in entries},

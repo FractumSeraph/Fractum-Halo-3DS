@@ -242,6 +242,16 @@ static void ce_sounds_ready(long tag_count)
 
 static void ce_tags_unload(void);
 
+/* port: a Halo PC map's BSP's vertices the conversion kept outside the tag
+   cache, when its free room ran out (ce_bsp.c), read by the renderer as the
+   BSP's own (cache_reader.c's n3ds_cache_resolve) */
+static int ce_bsp_resolve_outside(const struct n3ds_cache_view *view, const void *address, unsigned long bytes)
+{
+	extern int ce_bsp_vertex_memory_holds(const void *address, unsigned long bytes);
+
+	return native_is_ce && view == &native_bsp && ce_bsp_vertex_memory_holds(address, bytes);
+}
+
 /* port: a Halo PC map's load that failed after its space was had: the space
    (31 MB) given back, and what the conversion had kept of the map, or the
    Xbox map loaded next would go without the memory (native_is_ce is not set
@@ -348,6 +358,11 @@ static long ce_tags_load(const char *name)
 	native_tags.tag_header = (struct cache_file_tag_header *)n3ds_ce_space_native;
 	native_tags.instances = global_tag_instances;
 	native_is_ce = 1;
+	{
+		extern int (*n3ds_cache_resolve_outside)(const struct n3ds_cache_view *, const void *, unsigned long);
+
+		n3ds_cache_resolve_outside = ce_bsp_resolve_outside;
+	}
 	ce_bitmaps_ready(ce_header->tag_count);
 	ce_sounds_ready(ce_header->tag_count);
 	cache_generation_advance();

@@ -43,7 +43,8 @@ void n3ds_meter_model_draw(const struct shader *shader,short permutation,
     for(int i=0;i<5;++i) for(int c=0;c<4;++c)
         constants[i][c]=floorf(PIN(constants[i][c],0.f,1.f)*255.f+.5f)/255.f;
     n3ds_meter_program(&bake,constants,!!(g->flags&4));assert(n3ds_generic_validate(&bake));
-    assert(rasterizer_set_texture_direct(0,g->map.index,permutation));bake.textures[0]=n3ds_gpu_texture_bound(0);
+    if(!rasterizer_set_texture_direct(0,g->map.index,permutation)) return; /* port: (a texture not had: a full cache on a large map, or a format not taken) not drawn, not a stop */
+    bake.textures[0]=n3ds_gpu_texture_bound(0);
     bake.point[0]=!!(g->flags&16);
     bake.transform[0][0][0]=p->base_map_scale.i;bake.transform[0][1][1]=p->base_map_scale.j;
     native.two_sided=!!(g->flags&2);native.decal=!!(g->flags&1);

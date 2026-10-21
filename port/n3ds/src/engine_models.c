@@ -1116,7 +1116,7 @@ void _rasterizer_model_draw(struct shader *shader, short permutation,
         if(native_material.lighting) native_material.base=n3ds_engine_bitmap_resource(bitmap,permutation);
         else if(rasterizer_set_texture_direct(0,bitmap,permutation)) native_material.base=n3ds_gpu_texture_bound(0);
         boolean bound=native_material.base!=NULL;
-        if(material_flags&(1u<<3)) assert(bound);
+        if((material_flags&(1u<<3)) && !bound) return; /* port: (a texture not had: a full cache on a large map, or a format not taken) a decal not drawn, not a stop */
         if(!bound) n3ds_gpu_texture_bind(0,NULL);
         if(!bound) native_material.alpha_test=0;
         int sky=!!(parameters.geometry_flags&(1u<<4)),decal=!!(material_flags&(1u<<3)),two_sided=!!(material_flags&((1u<<1)|(1u<<5)));
