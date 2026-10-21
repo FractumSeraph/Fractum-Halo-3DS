@@ -340,6 +340,12 @@ The first runs on a New 3DS (124 MB for the game; `CE MAPS: playable`):
   (59 MB, size and CRC checked, the host's version) into maps_ce, and
   joined again. That join reached the host but did not complete: the
   server most likely still held the 3DS's first session.
+- **Hosting a Custom Edition game at full speed.** Delta Peer's host
+  worked out the game's map's identity every frame (`host_map`: the map
+  found in its folders, its hash's file stamp), 133 ms a frame in Azahar.
+  Hosting ChaosGulch@ce (a local game too) ran at about 7 frames a second
+  there. It is worked out once a map now: the frame's network part takes
+  1.5 ms, and the game runs at 30.
 - **A test of the socket service as the console has it.** With
   `halo-source/soc-serial.txt` present, every socket call is made under one
   lock (`engine_soc_serial.c`, wrapped at link time: `port/n3ds/build.py`).

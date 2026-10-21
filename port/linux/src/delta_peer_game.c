@@ -456,11 +456,34 @@ static void receive(void)
 (none while its file's hash is being made) */
 static void host_map(void)
 {
-	struct delta_wire_map map;
+	/* port: the identity worked out once for the game's map, not each
+	frame: it finds the map's file in its folders and its hash's file stamp,
+	several file calls, which took 130 ms a frame hosting a Custom Edition
+	game on the 3DS (more on a large SD card). Asked again for another map,
+	and while its hash is still being made, twice a second */
+	static char known_name[128];
+	static int known_result = -2;
+	static struct delta_wire_map known_map;
+	static DWORD known_time;
 	const char *name = main_get_multiplayer_map_name();
+	DWORD now = GetTickCount();
 
-	if (name && name[0] && delta_maps_identity(name, &map) == 1)
-		delta_peer_set_map(&delta_game.peer, &map);
+	if (!name || !name[0])
+	{
+		known_name[0] = 0;
+		known_result = -2;
+		delta_peer_set_map(&delta_game.peer, NULL);
+		return;
+	}
+	if (known_result == -2 || strncmp(known_name, name, sizeof(known_name) - 1) ||
+		(known_result == 0 && now - known_time >= 500))
+	{
+		snprintf(known_name, sizeof(known_name), "%s", name);
+		known_result = delta_maps_identity(name, &known_map);
+		known_time = now;
+	}
+	if (known_result == 1)
+		delta_peer_set_map(&delta_game.peer, &known_map);
 	else
 		delta_peer_set_map(&delta_game.peer, NULL);
 }
