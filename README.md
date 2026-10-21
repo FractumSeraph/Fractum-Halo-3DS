@@ -75,6 +75,11 @@ the game runs; under `[network]`:
   console finds no games: some networks and consoles don't pass broadcasts
 - `online`: internet play (on by default)
 
+If the game crashes, an empty file `halo-source/sync-log.txt` on the SD card
+makes the game write each line of `halo-source-engine.log` as it comes, so a
+crash loses none of the last ones (slower; delete it afterwards). Luma's
+crash dumps are in `luma/dumps/arm11`.
+
 The game list is reached over HTTPS. The game knows Let's Encrypt's root
 certificates; for others, put a certificate bundle at
 `halo-source/cacert.pem`.

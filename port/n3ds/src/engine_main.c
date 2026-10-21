@@ -14,6 +14,11 @@ static char log_buffer[16*1024];
 static int graphics_owned;
 static int error_console;
 static int loading_console=1;
+/* port: every line written to the SD card as it comes, not queued, when
+ * sdmc:/halo-source/sync-log.txt exists: a console's crash (a data abort,
+ * which ends the game at once) then loses none of the log's last lines.
+ * Slower; for finding a crash only. */
+static int log_sync;
 #include "engine_log_queue.inl"
 void n3ds_log_shutdown(void) { log_async_finish(); }
 /* libctru applies this during startup: New 3DS 804 MHz CPU and L2 cache. */
@@ -44,6 +49,10 @@ void n3ds_log(const char *message)
     }
     if(!error_console && n3ds_gpu_bottom_owned()) graphics_owned=1;
     if(!graphics_owned && (!loading_console || error_console)) {printf("%s\n", message);fflush(stdout);}
+    if(log_sync) {
+        if(log_file) {fprintf(log_file,"%s\n",message);fflush(log_file);}
+        flush_console();return;
+    }
     if(graphics_owned && !log_thread) log_async_start();
     if(log_thread) log_enqueue(message);
     else if (log_file) {
@@ -71,8 +80,10 @@ int main(void)
     rename("sdmc:/halo-source-engine.log","sdmc:/halo-source-engine.previous.log");
     log_file = fopen("sdmc:/halo-source-engine.log", "w");
     if(log_file) setvbuf(log_file,log_buffer,_IOFBF,sizeof(log_buffer));
+    {FILE *flag=fopen("sdmc:/halo-source/sync-log.txt","r");if(flag) {fclose(flag);log_sync=1;}}
     n3ds_log("Halo native engine bootstrap");
     n3ds_log("BUILD: Halo3DS Original-model adaptive rendering 2026-10-05");
+    if(log_sync) n3ds_log("LOG: each line written as it comes (halo-source/sync-log.txt)");
 #ifdef HALO_N3DS_LOW_MEMORY_TEST
     n3ds_log("LOW MEMORY FIXTURE: 24 MiB application heap + 32 MiB linear heap");
 #endif
