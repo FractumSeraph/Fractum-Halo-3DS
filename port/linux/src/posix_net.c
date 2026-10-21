@@ -638,7 +638,24 @@ int posix_socket_setsockopt(int socket, int level, int name, const void *value, 
 	return succeed(web_net_setsockopt(socket, host_level, host_name, value, length));
 #elif defined(HALO_3DS) || defined(HALO_N3DS)
 	{
-		int result = setsockopt(socket, host_level, host_name, value, (socklen_t)length);
+		int capped;
+		int result;
+
+		/* port: a socket's buffers no larger than 64 KB on the 3DS: every
+		socket's come out of the one buffer the socket service was given
+		(socInit's, 1 MiB), and the game asks 1 MB for each of its own and
+		the tunnel's (transport_endpoint_winsock.c, p2p.c), which would leave
+		none for the server browser's and the downloads' connections. 64 KB
+		holds far more than a frame's datagrams of a 16-player game, read
+		30 times a second */
+		if (host_level == SOL_SOCKET && (host_name == SO_SNDBUF || host_name == SO_RCVBUF) &&
+			length >= (int)sizeof(int) && *(const int *)value > 64 * 1024)
+		{
+			capped = 64 * 1024;
+			value = &capped;
+			length = (int)sizeof(capped);
+		}
+		result = setsockopt(socket, host_level, host_name, value, (socklen_t)length);
 
 		/* (the 3DS's socket service: the options it refuses, named) */
 		if (result < 0)
