@@ -169,7 +169,9 @@ and a joined game's map is downloaded (3e8dea4).
   which a 3DS program cannot map. A block of the console's memory (31 MB:
   the tag cache and the fork's 8 MB conversion room) stands for it
   (`port/n3ds/src/engine_ce_cache.inl`). Only a New 3DS has the room, so
-  `platform_ce_tag_cache_ready` is set on one at start-up (`engine_main.c`).
+  `platform_ce_tag_cache_ready` is set on one at start-up (`engine_main.c`),
+  if the game was given 96 MB or more (Azahar gives 96); else the menus say
+  why, and the log's `CE MAPS:` line gives the size.
 - **Loading.** The tags are read into that block. The fork's conversion
   then runs on it as on its own builds (resource maps' indexed tags,
   repairs, gbxmodels made models, functions, shaders, HUD, names), with

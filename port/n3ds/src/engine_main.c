@@ -82,11 +82,20 @@ int main(void)
      * keeping every draw and the live command-capacity checks. */
     n3ds_parallel_initialize();
     /* Halo PC maps (Custom Edition's) need the New 3DS's memory: their tag
-     * cache's space and its conversion take about 40 MB (engine_ce_cache.inl). */
+     * cache's space and its conversion take about 40 MB (engine_ce_cache.inl),
+     * which leaves room only with 96 MB or more for the game (what the
+     * Homebrew Launcher's title gives it). Otherwise the menus say why. */
     {
         extern int platform_ce_tag_cache_ready;
         extern char platform_ce_tag_cache_error[160];
-        if (new_model) {platform_ce_tag_cache_ready=1;platform_ce_tag_cache_error[0]=0;}
+        unsigned int application=(unsigned int)osGetMemRegionSize(MEMREGION_APPLICATION);
+        char text[160];
+        if (new_model && application>=96u*1024*1024) {platform_ce_tag_cache_ready=1;platform_ce_tag_cache_error[0]=0;}
+        else if (new_model) snprintf(platform_ce_tag_cache_error,160,
+            "they need 96 MB of memory for the game, and it was given %u MB",application>>20);
+        snprintf(text,sizeof(text),"CE MAPS: %s (application memory %u MB)",
+            platform_ce_tag_cache_ready?"playable":platform_ce_tag_cache_error,application>>20);
+        n3ds_log(text);
     }
     /* The console's socket service, for system link and internet play (the
      * fork's Winsock layer, port/linux/src/xnet.c). Without it the game runs

@@ -55,7 +55,9 @@ versions 11 to 33):
 - **Hosting**: **Y** in Online Games creates a game on the internet. Its
   invite is shown on the bottom screen for friends to join; a public game
   (the default, `network.host_public`) is also listed in everyone's browser.
-- **Custom Edition maps** (Halo PC's, `<map>@ce`) play on a **New 3DS**:
+- **Custom Edition maps** (Halo PC's, `<map>@ce`) play on a **New 3DS**
+  whose game is given 96 MB of memory (`halo-source-engine.log` says
+  `CE MAPS: playable` at start-up, or why not):
   joining a server on one downloads its map from the server (map sharing)
   into `halo-source/maps_ce`, and the game loads it there. Maps you have
   go in `halo-source/custom_maps` or `halo-source/maps_ce`, with Custom
