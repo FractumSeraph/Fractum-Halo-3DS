@@ -335,6 +335,33 @@ int posix_socket_bind(int socket, const void *address, int address_length)
 	if (to_host_address(address, address_length, &host_address, &host_length))
 		return succeed(bind(socket, (struct sockaddr *)&host_address, host_length));
 #endif
+#if defined(HALO_3DS) || defined(HALO_N3DS)
+	/* port: the 3DS's socket service refuses a bind to port 0 (EINVAL on a
+	New 3DS, as the fork's own 3DS port found: p2p.c's open_socket; the
+	Azahar emulator's takes it): a dynamic port picked here until one is
+	free, for every socket bound through this layer (the tunnel, Delta's,
+	the game's own) */
+	if (address && address_length >= (int)sizeof(struct sockaddr_in) &&
+		((const struct sockaddr_in *)address)->sin_family == AF_INET &&
+		((const struct sockaddr_in *)address)->sin_port == 0)
+	{
+		struct sockaddr_in picked;
+		int attempt;
+
+		memcpy(&picked, address, sizeof(picked));
+		for (attempt = 0; attempt < 32; attempt++)
+		{
+			unsigned short random_port = 0;
+
+			posix_random_bytes(&random_port, sizeof(random_port));
+			picked.sin_port = htons((unsigned short)(49152 + random_port % 16384));
+			if (bind(socket, (struct sockaddr *)&picked, sizeof(picked)) == 0)
+				return 0;
+			if (errno != EADDRINUSE && errno != EINVAL)
+				break;
+		}
+	}
+#endif
 	return succeed(bind(socket, address, (socklen_t)address_length));
 #endif
 }
