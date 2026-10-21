@@ -262,6 +262,27 @@ The first runs on a New 3DS (124 MB for the game; `CE MAPS: playable`):
 
   The screen now takes 24 ms in Azahar; the console runs about three times
   Azahar's speed.
+- **Stuck on the loading screen** (the console, now and then; one boot
+  reached the menu at once, one after 37 s, one never). All of the game's
+  threads share one session with the 3DS's socket service, which takes one
+  call at a time. A call that waits there (a DNS lookup, a connect, a poll
+  with a timeout) holds up every other thread's socket calls, the main
+  thread's too. Azahar's service does not, which is why it never showed
+  there. On the 3DS now:
+  - Every poll of the socket layer and the HTTPS client waits a slice at
+    a time: a poll that does not wait, then 4 ms of sleep
+    (`posix_3ds_poll`).
+  - The HTTPS client connects without waiting in the service (10 s at
+    most).
+  - DNS lookups are made one at a time, kept for the run (a failure for a
+    minute), skipped while the console has no address, and logged when
+    slow.
+
+  Whether this was the hang is for the next console run to say.
+- **The stall watcher** (`halo-source-stall.log`) now counts a logged line
+  as progress, so it watches start-up and map loads as well as frames.
+  After 5 s without progress, and every 30 s it lasts, it writes the last
+  24 lines logged.
 - **To find a crash.**
   - An empty `halo-source/sync-log.txt` writes the engine log line by line.
   - Luma's dump is in `luma/dumps/arm11`. Its PC is mapped with the

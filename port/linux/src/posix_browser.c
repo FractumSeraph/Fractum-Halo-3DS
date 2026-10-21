@@ -54,6 +54,8 @@ platform.
 
 #ifdef HALO_N3DS
 #include "engine_tls_roots.h"
+#include <arpa/inet.h>
+#include <poll.h>
 #endif
 
 #define BROWSER_USER_AGENT "chupathingyce-browser"
@@ -252,6 +254,56 @@ static void connection_free(struct connection *connection)
 
 /* a TCP connection over IPv4 alone: the game list matches a player's
 address as their game's host saw it, which internet play (IPv4) has */
+#ifdef HALO_N3DS
+/* port: (the 3DS) the name looked up once a run (posix_net.c's cache) and
+the connection made without waiting in the socket service: one session for
+all of the game's threads, which a blocking connect would hold up for as
+long as it takes (posix_3ds_poll); 10 s at most */
+unsigned long posix_resolve_ipv4(const char *host);
+int posix_3ds_poll(struct pollfd *descriptors, int count, int timeout);
+static int connect_ipv4(mbedtls_net_context *net, const char *host, const char *port)
+{
+	struct sockaddr_in address;
+	struct pollfd wait;
+	int descriptor, flags, pending = 0;
+	socklen_t length = sizeof(pending);
+	unsigned long ip = posix_resolve_ipv4(host);
+
+	if (!ip)
+		return MBEDTLS_ERR_NET_UNKNOWN_HOST;
+	memset(&address, 0, sizeof(address));
+	address.sin_family = AF_INET;
+	address.sin_port = htons((unsigned short)atoi(port));
+	address.sin_addr.s_addr = (in_addr_t)ip;
+	descriptor = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	if (descriptor < 0)
+		return MBEDTLS_ERR_NET_SOCKET_FAILED;
+	flags = fcntl(descriptor, F_GETFL, 0);
+	fcntl(descriptor, F_SETFL, flags | O_NONBLOCK);
+	if (connect(descriptor, (struct sockaddr *)&address, sizeof(address)) != 0)
+	{
+		if (errno != EINPROGRESS && errno != EWOULDBLOCK && errno != EAGAIN && errno != EALREADY)
+		{
+			close(descriptor);
+			return MBEDTLS_ERR_NET_CONNECT_FAILED;
+		}
+		wait.fd = descriptor;
+		wait.events = POLLOUT;
+		wait.revents = 0;
+		if (posix_3ds_poll(&wait, 1, TIMEOUT_MILLISECONDS) <= 0 ||
+			(getsockopt(descriptor, SOL_SOCKET, SO_ERROR, &pending, &length) == 0 && pending))
+		{
+			close(descriptor);
+			return MBEDTLS_ERR_NET_CONNECT_FAILED;
+		}
+	}
+	/* (reads wait in mbedtls_net_recv_timeout, a slice at a time; a send is
+	the request's few hundred bytes) */
+	fcntl(descriptor, F_SETFL, flags & ~O_NONBLOCK);
+	net->fd = descriptor;
+	return 0;
+}
+#else
 static int connect_ipv4(mbedtls_net_context *net, const char *host, const char *port)
 {
 	struct addrinfo hints, *addresses, *address;
@@ -289,6 +341,7 @@ static int connect_ipv4(mbedtls_net_context *net, const char *host, const char *
 	net->fd = (int)descriptor;
 	return 0;
 }
+#endif
 
 static int connection_open(struct connection *connection, const char *host, const char *port, char *error,
 	int error_size)

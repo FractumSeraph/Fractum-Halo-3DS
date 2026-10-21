@@ -19,6 +19,29 @@ static int loading_console=1;
  * which ends the game at once) then loses none of the log's last lines.
  * Slower; for finding a crash only. */
 static int log_sync;
+/* port: the last lines logged, for the stall watcher to write out when the
+ * game stops making progress (engine_platform.c): which a hang, at start-up
+ * or loading a map, says nothing else of. Lines may tear when two threads
+ * log at once; it is a diagnostic. */
+enum { RECENT_LINES=24, RECENT_LENGTH=160 };
+static char recent[RECENT_LINES][RECENT_LENGTH];
+static volatile unsigned int recent_next;
+volatile unsigned int n3ds_log_progress_tick;
+static void recent_add(const char *message)
+{
+    unsigned int slot=__sync_fetch_and_add(&recent_next,1)%RECENT_LINES;
+    snprintf(recent[slot],RECENT_LENGTH,"%s",message);
+    n3ds_log_progress_tick=(unsigned int)svcGetSystemTick();
+}
+/* the recent lines, oldest first, written to file */
+void n3ds_log_recent_write(FILE *file)
+{
+    unsigned int next=recent_next;
+    for(unsigned int i=0;i<RECENT_LINES;++i) {
+        const char *line=recent[(next+i)%RECENT_LINES];
+        if(line[0]) fprintf(file,"  | %.*s\n",RECENT_LENGTH,line);
+    }
+}
 #include "engine_log_queue.inl"
 void n3ds_log_shutdown(void) { log_async_finish(); }
 /* libctru applies this during startup: New 3DS 804 MHz CPU and L2 cache. */
@@ -47,6 +70,7 @@ void n3ds_log(const char *message)
         FILE *fatal=fopen("sdmc:/halo-source-fatal.log","a");
         if(fatal) {fprintf(fatal,"[%lld] %s\n",(long long)time(NULL),message);fclose(fatal);}
     }
+    recent_add(message);
     if(!error_console && n3ds_gpu_bottom_owned()) graphics_owned=1;
     if(!graphics_owned && (!loading_console || error_console)) {printf("%s\n", message);fflush(stdout);}
     if(log_sync) {

@@ -15,6 +15,8 @@
 #include "mbedtls/platform_time.h"
 #include "mbedtls/ssl.h"
 
+int posix_3ds_poll(struct pollfd *descriptors, int count, int timeout); /* (port/linux/src/posix_net.c) */
+
 void mbedtls_net_init(mbedtls_net_context *ctx)
 {
     ctx->fd = -1;
@@ -79,8 +81,9 @@ int mbedtls_net_recv_timeout(void *context, unsigned char *buf, size_t len, uint
     descriptor.fd = ctx->fd;
     descriptor.events = POLLIN;
     descriptor.revents = 0;
-    /* (0: wait as long as it takes, as Mbed TLS's own) */
-    ret = poll(&descriptor, 1, timeout == 0 ? -1 : (int)timeout);
+    /* (0: wait as long as it takes, as Mbed TLS's own; a slice at a time,
+     * the socket service free between: posix_3ds_poll) */
+    ret = posix_3ds_poll(&descriptor, 1, timeout == 0 ? -1 : (int)timeout);
     if (ret == 0)
         return MBEDTLS_ERR_SSL_TIMEOUT;
     if (ret < 0)

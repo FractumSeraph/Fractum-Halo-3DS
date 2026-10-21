@@ -153,24 +153,33 @@ void n3ds_stall_mark(const char *stage,unsigned int frame,int game_time)
     stall_stage=stage;stall_frame=frame;stall_game_time=game_time;
     __asm__ volatile("" ::: "memory");stall_tick=(u32)svcGetSystemTick();
 }
+/* port: progress is a frame's mark or a line logged (engine_main.c), so a
+ * start-up or a map's load, which mark no frames, is watched too; a stall is
+ * written with the last lines logged, once after 5 s and again each 30 s it
+ * lasts (a slow load ends; a hang does not) */
+extern volatile unsigned int n3ds_log_progress_tick;
+void n3ds_log_recent_write(FILE *file);
 static void stall_watch(void *unused)
 {
-    (void)unused;u32 reported=0;
+    (void)unused;u32 reported=0;unsigned int seconds=0;
+    u64 last=svcGetSystemTick();u32 last_progress=0;
     while(!stall_stop) {
         svcSleepThread(500000000LL);
-        u32 at=stall_tick,now=(u32)svcGetSystemTick();
-        /* Unsigned low ticks wrap every 16 s; sample twice/sec, threshold 5 s.
-         * Report a stage once; loading/SD stalls can be slow rather than fatal. */
-        if(stall_stage && at!=reported && now-at>5U*SYSCLOCK_ARM11) {
-            const char *stage=stall_stage;u32 frame=stall_frame;int game_time=stall_game_time;
-            if(at!=stall_tick) continue;
-            FILE *file=fopen("sdmc:/halo-source-stall.log","a");
-            if(file) {
-                fprintf(file,"Frame progress stalled >5s: frame=%lu time=%d stage=%s (may be slow I/O, not necessarily a crash)\n",(unsigned long)frame,game_time,stage);
-                fclose(file);
-            }
-            reported=at;
+        /* (the 64-bit tick: a stall's length past the low word's 16 s) */
+        u32 progress=stall_tick+n3ds_log_progress_tick;
+        u64 now=svcGetSystemTick();
+        if(progress!=last_progress) {last_progress=progress;last=now;continue;}
+        unsigned int stalled=(unsigned int)((now-last)/SYSCLOCK_ARM11);
+        if(stalled<5 || (progress==reported && stalled<seconds+30)) continue;
+        const char *stage=stall_stage;u32 frame=stall_frame;int game_time=stall_game_time;
+        FILE *file=fopen("sdmc:/halo-source-stall.log","a");
+        if(file) {
+            fprintf(file,"No progress for %us: frame=%lu time=%d stage=%s (slow I/O ends; a hang goes on). Last lines logged:\n",
+                stalled,(unsigned long)frame,game_time,stage?stage:"start-up");
+            n3ds_log_recent_write(file);
+            fclose(file);
         }
+        reported=progress;seconds=stalled;
     }
 }
 void n3ds_stall_watch_stop(void);

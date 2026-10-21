@@ -19,6 +19,9 @@ with the host ABI.
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <poll.h>
+#if defined(HALO_3DS) || defined(HALO_N3DS)
+#include <pthread.h>
+#endif
 #if !defined(HALO_3DS) && !defined(HALO_N3DS)
 #include <spawn.h>
 #endif
@@ -321,6 +324,34 @@ int posix_socket_close(int socket)
 	return succeed(close(socket));
 #endif
 }
+
+#if defined(HALO_3DS) || defined(HALO_N3DS)
+/* poll, as the 3DS needs it (posix_socket_select): without waiting, then a
+few milliseconds' sleep, until something is ready or timeout milliseconds
+(-1: none) have gone; the socket service free between. Also for the HTTPS
+client's waits (port/n3ds/src/engine_mbedtls_net.c) */
+void svcSleepThread(long long nanoseconds);
+int posix_3ds_poll(struct pollfd *descriptors, int count, int timeout)
+{
+	struct timespec start, now;
+	int result;
+
+	clock_gettime(CLOCK_MONOTONIC, &start);
+	for (;;)
+	{
+		long long waited;
+
+		result = poll(descriptors, (nfds_t)count, 0);
+		if (result != 0 || timeout == 0)
+			return result;
+		clock_gettime(CLOCK_MONOTONIC, &now);
+		waited = (long long)(now.tv_sec - start.tv_sec) * 1000 + (now.tv_nsec - start.tv_nsec) / 1000000;
+		if (timeout > 0 && waited >= timeout)
+			return 0;
+		svcSleepThread(4 * 1000000LL);
+	}
+}
+#endif
 
 int posix_socket_bind(int socket, const void *address, int address_length)
 {
@@ -796,8 +827,17 @@ int posix_socket_select(int *read, int *read_count, int *write, int *write_count
 			descriptors[total].revents = 0;
 		}
 	}
+#if defined(HALO_3DS) || defined(HALO_N3DS)
+	/* port: the 3DS's socket service takes one call at a time from all of
+	the game's threads (one session): a poll that waits holds up every
+	other thread's socket calls until it returns. So it waits here, polling
+	without waiting and sleeping between, a slice at a time */
+	result = posix_3ds_poll(descriptors, total, infinite ? -1 :
+		(int)(milliseconds < 0 ? 0 : milliseconds > INT_MAX ? INT_MAX : milliseconds));
+#else
 	result = poll(descriptors, (nfds_t)total, infinite ? -1 :
 		(int)(milliseconds < 0 ? 0 : milliseconds > INT_MAX ? INT_MAX : milliseconds));
+#endif
 	for (index = 0; index < total && result > 0; index++)
 	{
 		/* (as select fails on a descriptor that is not open) */
@@ -998,8 +1038,24 @@ void posix_random_bytes(void *buffer, posix_ulong size)
 #endif
 }
 
+#if defined(HALO_3DS) || defined(HALO_N3DS)
+/* port: the 3DS: a name looked up once a run (a failure again after a
+minute), one lookup at a time, none while the console has no address (no
+network: gethostid). A lookup holds up every thread's socket calls while it
+waits (one session: posix_3ds_poll), and one that times out takes many
+seconds; a slow one is logged */
+static posix_ulong posix_3ds_resolve(const char *host);
+#endif
+
 posix_ulong posix_resolve_ipv4(const char *host)
 {
+#if defined(HALO_3DS) || defined(HALO_N3DS)
+	return posix_3ds_resolve(host);
+}
+
+static posix_ulong posix_resolve_ipv4_uncached(const char *host)
+{
+#endif
 	N3DS_CALL("getaddrinfo", host);
 	struct addrinfo hints, *results;
 	posix_ulong address = 0;
@@ -1014,6 +1070,61 @@ posix_ulong posix_resolve_ipv4(const char *host)
 	freeaddrinfo(results);
 	return address;
 }
+
+#if defined(HALO_3DS) || defined(HALO_N3DS)
+static posix_ulong posix_3ds_resolve(const char *host)
+{
+	enum { NAMES = 32, NAME_SIZE = 96 };
+	static struct { char name[NAME_SIZE]; posix_ulong address; time_t failed; } names[NAMES];
+	static int name_count;
+	static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+	struct timespec start, end;
+	posix_ulong address = 0;
+	long milliseconds;
+	int index;
+
+	if (!host || !host[0] || strlen(host) >= NAME_SIZE)
+		return 0;
+	pthread_mutex_lock(&lock);
+	for (index = 0; index < name_count; index++)
+	{
+		if (strcmp(names[index].name, host))
+			continue;
+		if (names[index].address || time(NULL) - names[index].failed < 60)
+		{
+			address = names[index].address;
+			pthread_mutex_unlock(&lock);
+			return address;
+		}
+		break;
+	}
+	if (gethostid() == 0)
+	{
+		pthread_mutex_unlock(&lock);
+		return 0;
+	}
+	clock_gettime(CLOCK_MONOTONIC, &start);
+	address = posix_resolve_ipv4_uncached(host);
+	clock_gettime(CLOCK_MONOTONIC, &end);
+	milliseconds = (long)((end.tv_sec - start.tv_sec) * 1000 + (end.tv_nsec - start.tv_nsec) / 1000000);
+	if (index == name_count && name_count < NAMES)
+		name_count++;
+	if (index < NAMES)
+	{
+		snprintf(names[index].name, NAME_SIZE, "%s", host);
+		names[index].address = address;
+		names[index].failed = address ? 0 : time(NULL);
+	}
+	pthread_mutex_unlock(&lock);
+	if (milliseconds >= 1000 || !address)
+	{
+		extern void platform_log(const char *format, ...);
+
+		platform_log("DNS: %s %s after %ld ms", host, address ? "found" : "not found", milliseconds);
+	}
+	return address;
+}
+#endif
 
 /* macOS has no MSG_NOSIGNAL; its sockets are SO_NOSIGPIPE instead
 (posix_socket_create) */
