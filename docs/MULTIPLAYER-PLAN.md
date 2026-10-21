@@ -235,6 +235,17 @@ The first runs on a New 3DS (124 MB for the game; `CE MAPS: playable`):
     memory (a Halo PC map's space is ordinary heap).
   - The fork's socket layer already has its 3DS changes. libctru defines
     `SO_BROADCAST` as 0, so the one refusal in the log is expected.
+- **Speed.** Online Games took 43 ms a frame to draw in Azahar, against 6 ms
+  for the main menu. It draws about 90 strings and 1,400 glyphs, and each
+  glyph was a draw call of its own. Now:
+  - A string's glyphs are drawn in one call (`engine_text.c`,
+    `n3ds_gpu_text_draw_quads`).
+  - The overlay looks its fonts up once per map
+    (`n3ds_engine_tag_generation`).
+  - Gradients use a band per 32 units.
+
+  The screen now takes 24 ms in Azahar; the console runs about three times
+  Azahar's speed.
 - **To find a crash.**
   - An empty `halo-source/sync-log.txt` writes the engine log line by line.
   - Luma's dump is in `luma/dumps/arm11`. Its PC is mapped with the

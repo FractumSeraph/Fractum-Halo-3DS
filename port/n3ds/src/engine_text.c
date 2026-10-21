@@ -10,6 +10,27 @@ boolean rasterizer_set_texture_bitmap_data(short stage,const struct bitmap_data 
 void rasterizer_set_framebuffer_blend_function(short mode);
 static struct rasterizer_dynamic_screen_geometry_parameters parameters;
 static int active;
+/* port: a string's glyphs drawn together (n3ds_gpu_text_draw_quads), not a
+ * draw call each: the fork's screens over the menus (Online Games) draw
+ * about 1,400 glyphs a frame, which took 30 ms one at a time. A batch ends
+ * when the bound texture changes (a glyph cache's new page), when it is
+ * full, and with the text */
+enum { TEXT_BATCH=64 };
+static struct native_text_vertex batch[TEXT_BATCH][4];
+static unsigned int batch_count;
+static void *batch_texture;
+void *n3ds_gpu_texture_bound(unsigned int stage);
+static void text_batch_flush(void)
+{
+    if(!batch_count) return;
+    /* port: a frame's text past what the buffer holds is left out (logged
+     * once), not fatal: the fork's screens over the menus draw much more */
+    if(!n3ds_gpu_text_draw_quads(batch,batch_count,batch_texture)) {
+        static int reported;
+        if(!reported) {reported=1;extern void n3ds_log(const char *);n3ds_log("TEXT: a frame's text was more than the buffer holds; the rest left out");}
+    }
+    batch_count=0;
+}
 int n3ds_engine_text_active(void) { return active; }
 static unsigned int channel(real value)
 {
@@ -60,14 +81,14 @@ void rasterizer_text_draw_character(const struct dynamic_screen_vertex *vertices
         output[i].color[2]=(color&255)/255.f;
         output[i].color[3]=(color>>24)/255.f;
     }
-    /* port: a frame's text past what the buffer holds is left out (logged
-     * once), not fatal: the fork's screens over the menus draw much more */
-    if(!n3ds_gpu_text_draw(output)) {
-        static int reported;
-        if(!reported) {reported=1;extern void n3ds_log(const char *);n3ds_log("TEXT: a frame's text was more than the buffer holds; the rest left out");}
+    {
+        void *texture=n3ds_gpu_texture_bound(0);
+        if(batch_count && (texture!=batch_texture || batch_count==TEXT_BATCH)) text_batch_flush();
+        batch_texture=texture;
+        memcpy(batch[batch_count++],output,sizeof(output));
     }
 }
 void rasterizer_text_end(void)
 {
-    if(active) { active=0; n3ds_gpu_world_state_restore(); }
+    if(active) { text_batch_flush(); active=0; n3ds_gpu_world_state_restore(); }
 }

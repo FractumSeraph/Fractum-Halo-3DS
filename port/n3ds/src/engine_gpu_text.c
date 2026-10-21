@@ -167,6 +167,37 @@ static int text_draw(const struct native_text_vertex vertices[4],int offscreen)
 }
 
 int n3ds_gpu_text_draw(const struct native_text_vertex v[4]) {return text_draw(v,0);}
+int n3ds_gpu_text_draw_quads(const struct native_text_vertex (*quads)[4],unsigned int count,void *bound)
+{
+    long long stamp=n3ds_engine_ticks();
+    static const unsigned int order[6]={0,1,2,0,2,3};
+    C3D_Tex *texture=bound,*current=n3ds_gpu_texture_bound(0);
+    if(!count) return 1;
+    if(!texture || !stream || count>TEXT_VERTICES/6 || used>TEXT_VERTICES-6*count) return 0;
+    u32 saved_sampler=texture->param;
+    C3D_TexSetFilter(texture,point_sampled?GPU_NEAREST:GPU_LINEAR,point_sampled?GPU_NEAREST:GPU_LINEAR);
+    C3D_TexSetWrap(texture,wrapped==2?GPU_CLAMP_TO_BORDER:wrapped?GPU_REPEAT:GPU_CLAMP_TO_EDGE,wrapped==2?GPU_CLAMP_TO_BORDER:wrapped?GPU_REPEAT:GPU_CLAMP_TO_EDGE);
+    n3ds_gpu_texture_bind(0,texture);
+    for(unsigned int q=0;q<count;++q) for(unsigned int i=0;i<6;++i) {
+        struct native_text_vertex *out=stream+used+q*6+i;
+        *out=quads[q][order[i]];
+        float *p=out->position;
+        if(hud_layout==1) {p[0]=16+p[0]*1.8f;p[1]=16+p[1]*1.8f;}
+        else if(hud_layout==2) {p[0]=624+(p[0]-640)*2;p[1]=16+p[1]*2;}
+        else if(hud_layout==3) {p[0]=320+(p[0]-sensor_x)*sensor_scale;p[1]=236+(p[1]-sensor_y)*sensor_scale;}
+    }
+    if(n3ds_gpu_frame_active()) {dirty=1;++deferred;}
+    else {GSPGPU_FlushDataCache(stream+used,6*count*sizeof(*stream));++immediate;}
+    if(!n3ds_gpu_vertex_buffer_bind(stream,sizeof(*stream),3,0x210)) {
+        texture->param=saved_sampler; n3ds_gpu_texture_bind(0,current?current:texture); return 0;
+    }
+    C3D_DrawArrays(GPU_TRIANGLES,used,6*count);
+    if(n3ds_gpu_overlay_other_begin()) {C3D_DrawArrays(GPU_TRIANGLES,used,6*count);n3ds_gpu_overlay_other_end();}
+    used+=6*count;
+    texture->param=saved_sampler; n3ds_gpu_texture_bind(0,current?current:texture);
+    n3ds_gpu_hud_profile_add(3,n3ds_engine_ticks()-stamp);
+    return 1;
+}
 int n3ds_gpu_text_offscreen_draw(const struct native_text_vertex v[4]) {return text_draw(v,1);}
 int n3ds_gpu_text_offscreen_begin(float width,float height)
 {

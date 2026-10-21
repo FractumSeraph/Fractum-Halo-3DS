@@ -19,6 +19,8 @@
 
 #include <string.h>
 
+unsigned int n3ds_engine_tag_generation(void); /* (engine_cache.c: a new one each time tags load or unload) */
+
 void draw_quad(rectangle2d *rectangle, pixel32 color);
 
 enum
@@ -124,13 +126,22 @@ void ui_overlay_gradient(float x, float y, float width, float height, float radi
 		overlay_quad(x, y, width, height, top);
 		return;
 	}
-	for (band = 0; band < OVERLAY_GRADIENT_BANDS; band++)
 	{
-		float y0 = y + height * band / OVERLAY_GRADIENT_BANDS;
-		float y1 = y + height * (band + 1) / OVERLAY_GRADIENT_BANDS;
+		/* (a band each 32 units high, 2 to 12 of them: each is a draw of
+		its own) */
+		int bands = (int)(height / 32);
 
-		overlay_quad(x, y0, width, y1 - y0,
-			overlay_mix(top, bottom, (band + 0.5f) / OVERLAY_GRADIENT_BANDS));
+		if (bands < 2)
+			bands = 2;
+		if (bands > OVERLAY_GRADIENT_BANDS)
+			bands = OVERLAY_GRADIENT_BANDS;
+		for (band = 0; band < bands; band++)
+		{
+			float y0 = y + height * band / bands;
+			float y1 = y + height * (band + 1) / bands;
+
+			overlay_quad(x, y0, width, y1 - y0, overlay_mix(top, bottom, (band + 0.5f) / bands));
+		}
 	}
 }
 
@@ -261,10 +272,30 @@ static void overlay_text_wide(const char *text, wchar_t *wide, int size)
 /* the menus' font for a size, and the scale it is drawn at to be that
    high (the large font's capitals are about 13 of the 640x480's units
    high, the small one's about 10: menu_tags.c's measures) */
+/* a font's tag, looked up once for the tags loaded (tag_loaded walks every
+   tag, and a screen draws a hundred strings a frame): looked up again when
+   another map's tags are (n3ds_engine_tag_generation) */
+static long overlay_font_tag(int large)
+{
+	static const char *const names[2] = { "ui\\small_ui", "ui\\large_ui" };
+	static unsigned int generations[2];
+	static int known[2];
+	static long indexes[2];
+	unsigned int generation = n3ds_engine_tag_generation();
+
+	if (!known[large] || generations[large] != generation)
+	{
+		indexes[large] = tag_loaded(FONT_GROUP_TAG, names[large]);
+		generations[large] = generation;
+		known[large] = 1;
+	}
+	return indexes[large];
+}
+
 static long overlay_font(int font, float size, real *scale)
 {
 	boolean large = font == UI_FONT_TITLE || size >= 15.0f;
-	long index = tag_loaded(FONT_GROUP_TAG, large ? "ui\\large_ui" : "ui\\small_ui");
+	long index = overlay_font_tag(large ? 1 : 0);
 
 	*scale = size / (large ? 18.0f : 14.0f);
 	if (*scale < 0.6f)
