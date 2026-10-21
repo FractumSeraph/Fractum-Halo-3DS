@@ -5214,7 +5214,7 @@ short remap_sticks_for_local_player(
 static unsigned long __stdcall filesystem_initialization_thread_proc(
 	void *input)
 {
-#ifdef HALO_3DS
+#if defined(HALO_3DS) || defined(HALO_N3DS)
 	/* (port: the 3DS's SD card takes a while: each step timed, in the trace) */
 	void platform_log(const char *format, ...);
 	unsigned long began = system_milliseconds();
@@ -8961,6 +8961,12 @@ void process_ui_widgets(
 		dispose_thread(widget_globals.initialization_thread);
 		widget_globals.initialization_thread = NULL;
 		ui_widgets_inhibit_processing(FALSE);
+#ifdef HALO_N3DS
+		/* port: (the 3DS) the menus take input from here on: when, logged
+		(a large SD card's checks are slow) */
+		error(_error_silent, "filesystem checks & saved game file enumeration done (result %d)",
+			widget_globals.filesystem_check_result);
+#endif
 		switch (widget_globals.filesystem_check_result)
 		{
 		case _file_system_check_result_not_enough_free_space:

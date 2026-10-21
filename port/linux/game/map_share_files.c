@@ -334,6 +334,136 @@ static boolean file_stamp(
 	return TRUE;
 }
 
+#ifdef HALO_N3DS
+/* port: (the 3DS) a shared file's hashes kept on the SD card, so that a
+game's map and its resource maps (bitmaps.map is 123 MB) are read whole
+once, not each run: there they take minutes. Kept by the file's path, size,
+time and its first and last 4 KB (the 3DS's files may say no time) */
+enum { SHARE_CACHE_MAGIC = 0x48534D33, SHARE_CACHE_SAMPLE = 4096 };
+
+static unsigned long share_cache_sample(char const *path, unsigned long size)
+{
+	static byte buffer[SHARE_CACHE_SAMPLE];
+	unsigned long hash = 2166136261UL;
+	FILE *stream = fopen(path, "rb");
+	int part;
+
+	if (!stream)
+		return 0;
+	for (part = 0; part < 2; part++)
+	{
+		unsigned long bytes = MIN(size, (unsigned long)SHARE_CACHE_SAMPLE);
+		unsigned long offset = part ? size - bytes : 0;
+		unsigned long index;
+
+		if (fseek(stream, (long)offset, SEEK_SET) != 0 || fread(buffer, 1, bytes, stream) != bytes)
+		{
+			fclose(stream);
+			return 0;
+		}
+		for (index = 0; index < bytes; index++)
+			hash = (hash ^ buffer[index]) * 16777619UL;
+	}
+	fclose(stream);
+	return hash ? hash : 1;
+}
+
+static void share_cache_name(char const *path, char *name, int size)
+{
+	unsigned long hash = 2166136261UL;
+
+	for (; *path; path++)
+	{
+		char c = *path >= 'A' && *path <= 'Z' ? (char)(*path - 'A' + 'a') : *path;
+
+		hash = (hash ^ (byte)c) * 16777619UL;
+	}
+	snprintf(name, (size_t)size, "sdmc:/halo-source/share_hashes/%08lx.bin", hash);
+}
+
+struct share_cache_header
+{
+	unsigned long magic, size, modified, sample;
+	char path[256];
+	byte hash[MAP_SHARE_HASH_BYTES];
+	long piece_count;
+};
+
+static boolean share_cache_load(struct map_share_file *file)
+{
+	struct share_cache_header header;
+	char name[96];
+	FILE *stream;
+	unsigned long sample;
+	boolean loaded = FALSE;
+
+	share_cache_name(file->path, name, sizeof(name));
+	stream = fopen(name, "rb");
+	if (!stream)
+		return FALSE;
+	if (fread(&header, sizeof(header), 1, stream) == 1 && header.magic == SHARE_CACHE_MAGIC &&
+		header.size == file->size && header.modified == file->modified &&
+		header.piece_count == map_share_piece_count(file->size) && header.piece_count > 0 &&
+		(header.path[sizeof(header.path) - 1] = 0, !csstrcasecmp(header.path, file->path)) &&
+		(sample = share_cache_sample(file->path, file->size)) != 0 && sample == header.sample)
+	{
+		byte *pieces = malloc((unsigned long)header.piece_count * MAP_SHARE_HASH_BYTES);
+
+		if (pieces && fread(pieces, MAP_SHARE_HASH_BYTES, (size_t)header.piece_count, stream) ==
+			(size_t)header.piece_count)
+		{
+			byte check[MAP_SHARE_HASH_BYTES];
+
+			/* (the pieces' hashes are the file's hash's, or nothing is taken) */
+			map_share_file_hash_of_pieces(file->size, pieces, header.piece_count, check);
+			if (!csmemcmp(check, header.hash, MAP_SHARE_HASH_BYTES))
+			{
+				free(file->piece_hashes);
+				file->piece_hashes = pieces;
+				file->piece_count = header.piece_count;
+				csmemcpy(file->hash, header.hash, MAP_SHARE_HASH_BYTES);
+				file->ready = TRUE;
+				loaded = TRUE;
+				pieces = NULL;
+			}
+		}
+		free(pieces);
+	}
+	fclose(stream);
+	return loaded;
+}
+
+static void share_cache_save(struct map_share_file const *file)
+{
+	struct share_cache_header header;
+	char name[96];
+	FILE *stream;
+
+	csmemset(&header, 0, sizeof(header));
+	header.magic = SHARE_CACHE_MAGIC;
+	header.size = file->size;
+	header.modified = file->modified;
+	header.sample = share_cache_sample(file->path, file->size);
+	csstrncpy(header.path, file->path, sizeof(header.path) - 1);
+	csmemcpy(header.hash, file->hash, MAP_SHARE_HASH_BYTES);
+	header.piece_count = file->piece_count;
+	if (!header.sample || !file->piece_hashes)
+		return;
+	share_cache_name(file->path, name, sizeof(name));
+	stream = fopen(name, "wb");
+	if (!stream)
+		return;
+	if (fwrite(&header, sizeof(header), 1, stream) != 1 ||
+		fwrite(file->piece_hashes, MAP_SHARE_HASH_BYTES, (size_t)file->piece_count, stream) != (size_t)file->piece_count)
+	{
+		fclose(stream);
+		remove(name);
+		return;
+	}
+	fclose(stream);
+}
+#endif
+
 /* ---------- the catalog */
 
 short map_share_file_hash(
@@ -712,6 +842,9 @@ void map_share_files_update(
 					csmemcpy(file->hash, globals->job.hash, MAP_SHARE_HASH_BYTES);
 					file->ready = TRUE;
 					map_share_map_hash_remember(file->path, file->hash);
+#ifdef HALO_N3DS
+					share_cache_save(file);
+#endif
 				}
 			}
 			else
@@ -752,6 +885,14 @@ void map_share_files_update(
 
 		if (file->used && !file->ready && !file->failed)
 		{
+#ifdef HALO_N3DS
+			if (share_cache_load(file))
+			{
+				error(_error_silent, "map sharing: %s's hashes read from the SD card's cache", file->path);
+				map_share_map_hash_remember(file->path, file->hash);
+				continue;
+			}
+#endif
 			if (!hash_job_start(_hash_job_file, file->path, index))
 				file->failed = TRUE;
 			return;

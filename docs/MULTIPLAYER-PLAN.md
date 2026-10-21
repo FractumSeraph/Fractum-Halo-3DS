@@ -294,6 +294,29 @@ The first runs on a New 3DS (124 MB for the game; `CE MAPS: playable`):
     (`create_thread` flag 2), so the game's thread gets the lock at once.
 
   Azahar now reaches the menu with no stall.
+- **Engine threads below the game thread.** `n3ds_thread_create` now
+  puts every engine thread one step below the game thread unless it asks
+  to be above it. Map sharing's hashing thread asked for the game
+  thread's own priority, and hashing a map (and its 123 MB bitmaps.map)
+  kept the game thread from running: a pick of a Custom Edition map stood
+  still for 30 s in Azahar.
+- **Start-up's SD work cut.**
+  - The 29 default gametypes were emptied and written again every boot
+    (14.7 s in Azahar); a checksum file (`defaults.sum`) beside them now
+    leaves them when unchanged. The checks now take 3.6 s, most of it
+    the one scan of the saves every boot needs.
+  - The checks log when they end ("filesystem checks ... done"): the
+    menus take input only from then on.
+- **Hashes kept on the SD card.**
+  - A map's version hash: `halo-source/map_hashes.cache`
+    (`map_file_hash.c`).
+  - Map sharing's file hashes: `halo-source/share_hashes/`
+    (`map_share_files.c`), checked against the file's pieces when read.
+
+  Each is keyed by the file's path, size, time and its first and last
+  4 KB (the 3DS's files may give no time). A map is read whole once, not
+  each run. Hosting ChaosGulch@ce now gives its version 6 s after the
+  network game is set up (about 30 s before).
 - **A test of the socket service as the console has it.** With
   `halo-source/soc-serial.txt` present, every socket call is made under one
   lock (`engine_soc_serial.c`, wrapped at link time: `port/n3ds/build.py`).

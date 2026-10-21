@@ -600,10 +600,71 @@ static void playlist_profile_create_default_profiles_on_disk(
 		UNICODE_STRING_LIST_TAG,
 		"ui\\default_multiplayer_game_setting_names");
 
+#ifdef HALO_N3DS
+	/* port: (the 3DS) the defaults are written again only when they change:
+	each was its folder emptied, its file made and written, every start-up,
+	29 times over (on the Xbox, its fast cache partition), which took 15 s
+	of a start-up in Azahar and more on a large SD card, and wore the card.
+	A file beside them keeps a checksum of what they are; when it matches
+	and the last of them is there, they are left as they are */
+	unsigned long defaults_sum = 2166136261UL;
+	char const *const sum_path = "z:\\saved\\playlists\\default_playlist\\defaults.sum";
+#endif
+
 	if (string_list_index != NONE)
 	{
 		long profile_index;
 
+#ifdef HALO_N3DS
+		for (profile_index = 0;
+			profile_index < NUMBER_OF_DEFAULT_PLAYLIST_PROFILES + NUMBER_OF_PORT_DEFAULT_PLAYLIST_PROFILES;
+			profile_index++)
+		{
+			long byte_index;
+
+#ifdef HALO_GAME_BROWSER
+			if (profile_index >= NUMBER_OF_DEFAULT_PLAYLIST_PROFILES)
+			{
+				variant = *playlist_profile_port_defaults[profile_index - NUMBER_OF_DEFAULT_PLAYLIST_PROFILES].build(
+					&temporary);
+			}
+			else
+#endif
+			variant = *playlist_profile_default_data.default_variant_building_functions[
+				profile_index](&temporary);
+			csmemset(block, 0, sizeof(block));
+			csmemcpy(block, &variant, sizeof(struct game_variant));
+			ustrncpy((wchar_t *)block, playlist_profile_default_name((short)profile_index, string_list_index),
+				MAXIMUM_GAME_VARIANT_NAME_LENGTH - 1);
+			((struct game_variant *)block)->human_readable_game_description[MAXIMUM_GAME_VARIANT_NAME_LENGTH - 1] = 0;
+			((struct game_variant *)block)->flags |= (short)(profile_index << 8);
+			for (byte_index = 0; byte_index < (long)sizeof(block); byte_index++)
+				defaults_sum = (defaults_sum ^ block[byte_index]) * 16777619UL;
+		}
+		{
+			struct file_reference sum_file;
+			unsigned long kept_sum = 0;
+			boolean kept = FALSE;
+
+			_snprintf(path, MAXIMUM_FILENAME_LENGTH, "z:\\saved\\playlists\\default_playlist\\%02d\\blam.lst",
+				(int)(NUMBER_OF_DEFAULT_PLAYLIST_PROFILES + NUMBER_OF_PORT_DEFAULT_PLAYLIST_PROFILES - 1));
+			path[MAXIMUM_FILENAME_LENGTH] = 0;
+			if (file_reference_create_from_path(&sum_file, (char *)sum_path, FALSE) &&
+				file_open(&sum_file, FLAG(_permission_read_bit)))
+			{
+				kept = file_read(&sum_file, sizeof(kept_sum), &kept_sum) && kept_sum == defaults_sum;
+				file_close(&sum_file);
+			}
+			if (kept && file_reference_create_from_path(&file, path, FALSE) && file_exists(&file))
+			{
+				playlist_profile_globals.number_of_default_profiles +=
+					NUMBER_OF_DEFAULT_PLAYLIST_PROFILES + NUMBER_OF_PORT_DEFAULT_PLAYLIST_PROFILES;
+				saved_game_files_notify_memory_units_changed();
+				return;
+			}
+		}
+		csmemset(block, 0, sizeof(block));
+#endif
 		for (profile_index = 0;
 			profile_index < NUMBER_OF_DEFAULT_PLAYLIST_PROFILES + NUMBER_OF_PORT_DEFAULT_PLAYLIST_PROFILES;
 			profile_index++)
@@ -667,6 +728,23 @@ static void playlist_profile_create_default_profiles_on_disk(
 			}
 		}
 
+#ifdef HALO_N3DS
+		/* (the checksum kept, once every one of them is written) */
+		if (playlist_profile_globals.number_of_default_profiles ==
+			NUMBER_OF_DEFAULT_PLAYLIST_PROFILES + NUMBER_OF_PORT_DEFAULT_PLAYLIST_PROFILES)
+		{
+			struct file_reference sum_file;
+
+			if (file_reference_create_from_path(&sum_file, (char *)sum_path, FALSE) &&
+				(file_exists(&sum_file) || file_create(&sum_file)) &&
+				file_open(&sum_file, FLAG(_permission_write_bit)))
+			{
+				if (!file_set_position(&sum_file, 0) || !file_write(&sum_file, sizeof(defaults_sum), &defaults_sum))
+					error(_error_silent, "the default gametypes' checksum could not be kept");
+				file_close(&sum_file);
+			}
+		}
+#endif
 		saved_game_files_notify_memory_units_changed();
 	}
 	else

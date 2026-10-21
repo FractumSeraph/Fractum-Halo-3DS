@@ -82,7 +82,12 @@ unsigned int n3ds_thread_create(unsigned int flags,unsigned int (*entry)(void *)
     if(!entry) return 0;
     LightLock_Lock(&table_lock); collect_locked();
     if(!normal_priority && R_FAILED(svcGetThreadPriority(&normal_priority,CUR_THREAD_HANDLE))) normal_priority=0x30;
-    int priority=normal_priority+((flags&2)?2:(flags&4)?-2:0);
+    /* port: never the game thread's own priority: threads of one priority
+     * on a core take turns only when one waits, so an engine thread at it
+     * (map sharing's hashing, the start-up filesystem checks, the profile
+     * writes) kept the game thread from running for as long as it worked:
+     * one step below it unless asked to be above it */
+    int priority=normal_priority+((flags&2)?2:(flags&4)?-2:1);
     if(priority<0x18) priority=0x18;
     if(priority>0x3f) priority=0x3f;
     for(unsigned int i=0;i<SLOTS;++i) if(!threads[i].thread && !threads[i].published && threads[i].generation<MAX_GENERATION) {
