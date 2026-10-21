@@ -299,6 +299,12 @@ boolean custom_edition_map_present(
 void custom_edition_maps_look_again(
 	void)
 {
-	/* (nothing kept: the menus' map lists look in the folders each time they
-	are filled, ui_map_list_refresh) */
+	/* (the menus' map lists look in the folders each time they are filled,
+	ui_map_list_refresh; on the 3DS the maps' headers are kept, which are
+	forgotten here) */
+#ifdef HALO_N3DS
+	extern void map_families_headers_forget(void);
+
+	map_families_headers_forget();
+#endif
 }

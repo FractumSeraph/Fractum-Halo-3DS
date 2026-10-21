@@ -120,6 +120,10 @@ static int ce_header_read(const char *path, struct cache_file_header *header)
 	read = fread(header, 1, sizeof(*header), file) == sizeof(*header) && !fseek(file, 0, SEEK_END);
 	length = ftell(file);
 	fclose(file);
+	/* (a map built by Invader may give its length as 0: the file's own then,
+	as the fork's ce_map_open takes it: beavercreek_rev_beta's) */
+	if (read && !header->file_length && length > 0)
+		header->file_length = length;
 	return read && header->header_signature == 'head' && header->footer_signature == 'foot' &&
 		CACHE_FILE_VERSION_IS_PC(header->version) && memchr(header->name, 0, 32) &&
 		header->tag_data_offset >= 2048 && header->tag_data_size >= 40 &&
@@ -132,6 +136,9 @@ boolean n3ds_engine_ce_map_installed(const char *name)
 	struct cache_file_header header;
 	char path[256], file[64];
 
+	/* (none where there is no room for one's tag cache: engine_main.c) */
+	if (!platform_ce_tag_cache_ready)
+		return FALSE;
 	return ce_map_path(name, path, sizeof(path), file, sizeof(file)) && ce_header_read(path, &header);
 }
 
@@ -233,6 +240,21 @@ static void ce_sounds_ready(long tag_count)
 	}
 }
 
+static void ce_tags_unload(void);
+
+/* port: a Halo PC map's load that failed after its space was had: the space
+   (31 MB) given back, and what the conversion had kept of the map, or the
+   Xbox map loaded next would go without the memory (native_is_ce is not set
+   yet, so the unload at engine_cache.c's would not do it) */
+static long ce_tags_load_failed(const char *why)
+{
+	if (why)
+		n3ds_log(why);
+	cache_files_bind_native(NULL, NULL);
+	ce_tags_unload();
+	return NONE;
+}
+
 static long ce_tags_load(const char *name)
 {
 	struct cache_file_header header;
@@ -245,6 +267,23 @@ static long ce_tags_load(const char *name)
 
 	if (!ce_map_path(name, path, sizeof(path), file, sizeof(file)) || !ce_header_read(path, &header))
 		return NONE;
+	/* (the fork's checks of every offset, count and size in it the
+	conversion reads, before any is converted: a map shared or downloaded
+	is anyone's (ce_map_checks.c, through cache_files_windows.c's
+	ce_map_open, which keeps the map's file open for its own sounds too).
+	Before the space is had: the check reads the tag cache into an image of
+	its own, let go of after) */
+	{
+		extern boolean cache_files_ce_map_refused(char const *map_name, char *text, long size);
+		char why[384];
+
+		if (cache_files_ce_map_refused(name, why, sizeof(why)))
+		{
+			snprintf(message, sizeof(message), "CE MAP: %s refused: %.200s", name, why);
+			n3ds_log(message);
+			return NONE;
+		}
+	}
 	if (!ce_space_prepare())
 		return NONE;
 	snprintf(message, sizeof(message), "CE MAP: %s (%s), version %ld, %ld bytes of tags", name, path,
@@ -256,7 +295,7 @@ static long ce_tags_load(const char *name)
 	native_ce_relocation.unknown_groups = native_ce_relocation.indexed_left = 0;
 	stream = fopen(path, "rb");
 	if (!stream)
-		return NONE;
+		return ce_tags_load_failed("CE MAP: its file could not be opened");
 	read = !fseek(stream, header.tag_data_offset, SEEK_SET) &&
 		n3ds_cache_read_region(stream, n3ds_ce_space_native, (unsigned long)header.tag_data_size, "Reading tags");
 	ce_header = (struct cache_file_ce_tag_header *)n3ds_ce_space_native;
@@ -271,30 +310,31 @@ static long ce_tags_load(const char *name)
 			free(model_data);
 			model_data = NULL;
 		}
+		/* port: a map whose models are not had is not played (its models'
+		   vertices would be the 0xCD the space was filled with) */
+		if (!model_data)
+		{
+			fclose(stream);
+			snprintf(message, sizeof(message), "CE MAP: its models (%ld bytes) could not be read or had no memory",
+				(long)ce_header->model_data_size);
+			snprintf(platform_ce_tag_cache_error, sizeof(platform_ce_tag_cache_error),
+				"no memory for the map's models (%ld bytes)", (long)ce_header->model_data_size);
+			return ce_tags_load_failed(message);
+		}
 	}
 	fclose(stream);
 	if (!read || ce_header->signature != 'tags')
-	{
-		n3ds_log("CE MAP: its tags could not be read");
-		return NONE;
-	}
+		return ce_tags_load_failed("CE MAP: its tags could not be read");
 	/* (the fork's conversion, in the map's addresses) */
 	n3ds_ce_space_converting = 1;
 	scenario_index = cache_files_bind_native_ce(&header, n3ds_ce_space_native, model_data);
 	n3ds_ce_space_converting = 0;
 	free(model_data);
 	if (scenario_index == NONE)
-	{
-		cache_files_bind_native(NULL, NULL);
-		return NONE;
-	}
+		return ce_tags_load_failed(NULL);
 	/* (then native) */
 	if (!n3ds_ce_relocate_tags(&native_ce_relocation, (unsigned long)header.tag_data_size, &relocated_scenario))
-	{
-		n3ds_log("CE MAP: its tags could not be made native");
-		cache_files_bind_native(NULL, NULL);
-		return NONE;
-	}
+		return ce_tags_load_failed("CE MAP: its tags could not be made native");
 	snprintf(message, sizeof(message),
 		"CE MAP: %lu pointers made native; %lu blocks outside the space, %lu tags of unknown groups, %lu indexed left",
 		native_ce_relocation.rewritten, native_ce_relocation.bad_blocks, native_ce_relocation.unknown_groups,
@@ -341,9 +381,27 @@ static boolean ce_bsp_load(struct scenario_structure_bsp_reference *reference, l
 	header = (struct cache_file_structure_bsp_header *)(n3ds_ce_space_native + offset);
 	if (!read || header->signature != 'sbsp')
 		return FALSE;
-	/* (its words rewritten afresh: a BSP read again is the map's again) */
+	/* (its words rewritten afresh: a BSP read again is the map's again; and
+	the tag cache's free room's, where the conversion puts its compressed
+	vertices and their buffers (ce_bsp.c): an earlier BSP's room, given back
+	when it unloaded, is this one's now, and its words marked rewritten
+	would be left as the map's addresses, which the renderer cannot read) */
 	for (word = offset; word < offset + bytes; word += 4)
 		native_ce_relocation.done[word >> 5] &= (unsigned char)~(1u << ((word >> 2) & 7));
+	{
+		extern unsigned long ce_resources_free_mark(void);
+		unsigned long mark = ce_resources_free_mark();
+
+		if (mark >= CE_TAG_CACHE_BASE && mark - CE_TAG_CACHE_BASE < N3DS_CE_SPACE_SIZE)
+		{
+			for (word = (mark - CE_TAG_CACHE_BASE) & ~3UL; word < N3DS_CE_SPACE_SIZE; word += 4)
+			{
+				if (word >= offset && word < offset + bytes)
+					continue;
+				native_ce_relocation.done[word >> 5] &= (unsigned char)~(1u << ((word >> 2) & 7));
+			}
+		}
+	}
 	n3ds_ce_space_converting = 1;
 	cache_files_ce_bsp_loaded(header);
 	n3ds_ce_space_converting = 0;

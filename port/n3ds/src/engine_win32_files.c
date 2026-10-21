@@ -88,10 +88,16 @@ void n3ds_xbox_path(const char *in, char *out, size_t size)
 		else
 		{
 			/* (made the first time: the Xbox's scratch drives, z:\ the fork's
-			   decoded Custom Edition sounds) */
+			   decoded Custom Edition sounds; port: once a run, not on every
+			   path, each mkdir a file call a large SD card makes slow) */
+			static volatile unsigned long made;
+
 			i = (size_t)snprintf(out, size, "sdmc:/halo-source/%c", letter);
-			if (i < size)
+			if (i < size && !(made & (1UL << (letter - 'a'))))
+			{
 				mkdir(out, 0777);
+				made |= 1UL << (letter - 'a');
+			}
 			i = (size_t)snprintf(out, size, "sdmc:/halo-source/%c/", letter);
 		}
 		in += 3;

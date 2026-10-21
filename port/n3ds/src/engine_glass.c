@@ -41,62 +41,84 @@ int n3ds_cube_coordinates(const float r[3],int *face,float uv[2])
     else { *face=z>=0?4:5;major=c;u=z>=0?x:-x;v=-y; }
     uv[0]=.5f*(u/major+1);uv[1]=.5f*(v/major+1);return 1;
 }
+static void cube_refused(long tag,int line)
+{
+    static long last_tag=NONE;
+    if(tag==last_tag) return;
+    last_tag=tag;
+    char text[96];snprintf(text,sizeof(text),"NATIVE CUBE: tag=%08lx not loaded (engine_glass.c:%d); no reflection",tag,line);n3ds_log(text);
+}
 const byte *n3ds_cube_load(long tag,short permutation)
 {
+    /* port: a cube map not had is a reflection not drawn, not a stopped game:
+     * a Halo PC map's may be of a layout or size this does not take, or more
+     * than CUBE_COUNT in a map (the oldest given up then) */
+    byte *encoded=NULL,*decoded=NULL;
+#define CUBE_CHECK(e) do { if(!(e)) { cube_refused(tag,__LINE__);free(encoded);free(decoded);return NULL; } } while(0)
     const struct n3ds_cache_view *view=n3ds_engine_cache_view(0);
     const struct bitmap_group *group=bitmap_group_get(tag);
-    assert(group && permutation>=0 && group->bitmaps.count>0);
+    CUBE_CHECK(group && permutation>=0 && group->bitmaps.count>0);
     struct bitmap_data *b=bitmap_group_try_and_get_bitmap(tag,permutation%group->bitmaps.count);
     if(cube_generation!=n3ds_engine_cache_generation()) {
         memset(cubes,0,sizeof(cubes));cube_count=0;cube_generation=n3ds_engine_cache_generation();
     }
     for(unsigned int i=0;i<cube_count;++i) if(cubes[i].bitmap==b) return cubes[i].rgba;
-    assert(cube_count<CUBE_COUNT && n3ds_cache_resolve(view,b,sizeof(*b))==b);
-    assert(b->signature=='bitm' && b->type==2 && b->depth==1 && b->width==b->height);
-    assert(b->width>=8 && b->width<=256 && !(b->width&(b->width-1)) && b->mipmap_count>=0 && b->mipmap_count<=8);
+    CUBE_CHECK(b && n3ds_cache_resolve(view,b,sizeof(*b))==b);
+    CUBE_CHECK(b->signature=='bitm' && b->type==2 && b->depth==1 && b->width==b->height);
+    CUBE_CHECK(b->width>=8 && b->width<=256 && !(b->width&(b->width-1)) && b->mipmap_count>=0 && b->mipmap_count<=8);
     boolean raw=b->format==6 || b->format==10 || b->format==11;
     unsigned int pixel_bytes=b->format==6?2:4;
-    assert((raw && (b->flags&8)) || (!raw && b->format>=14 && b->format<=16 && !(b->flags&8)));
-    assert(b->flags&0x80);
+    CUBE_CHECK((raw && (b->flags&8)) || (!raw && b->format>=14 && b->format<=16 && !(b->flags&8)));
+    CUBE_CHECK(b->flags&0x80);
     unsigned int block=b->format==14?8:16,chain=0,skip=0,side=b->width,level=0;
     for(int mip=0;mip<=b->mipmap_count;++mip) {
         unsigned int n=MAX(1,b->width>>mip);
         chain+=raw?n*n*pixel_bytes:((n+3)/4)*((n+3)/4)*block;
     }
-    unsigned int face_stride=(chain+127)&~127u;
-    assert(b->pixels_size==(long)(face_stride*6) && b->pixels_offset>=2048);
+    /* port: a Halo PC map's cube map (N3DS_BITMAP_PC_LAYOUT_FLAG): its faces
+     * not padded, its levels one after another with the six faces' each */
+    int pc=!!(b->flags&N3DS_BITMAP_PC_LAYOUT_FLAG);
+    unsigned int face_stride=pc?chain:(chain+127)&~127u;
+    CUBE_CHECK(b->pixels_size==(long)(face_stride*6) && b->pixels_offset>=2048);
     while(side>CUBE_SIZE && level<(unsigned int)b->mipmap_count) {
         skip+=raw?side*side*pixel_bytes:((side+3)/4)*((side+3)/4)*block;side>>=1;++level;
     }
     unsigned int bytes=raw?side*side*pixel_bytes:((side+3)/4)*((side+3)/4)*block;
-    assert(skip+bytes<=face_stride);
-    byte *encoded=malloc(bytes),*decoded=malloc(side*side*4);assert(encoded && decoded);
-    byte *destination=cubes[cube_count].rgba;
+    CUBE_CHECK(skip+bytes<=face_stride);
+    encoded=malloc(bytes);decoded=malloc(side*side*4);CUBE_CHECK(encoded && decoded);
+    static unsigned int cube_next;
+    unsigned int slot=cube_count<CUBE_COUNT?cube_count:cube_next++%CUBE_COUNT;
+    cubes[slot].bitmap=NULL;
+    byte *destination=cubes[slot].rgba;
     for(unsigned int face=0;face<6;++face) {
-        assert(n3ds_engine_bitmap_read(b,b->pixels_offset+face*face_stride+skip,bytes,encoded));
+        unsigned int pc_face=face==1?2:face==2?1:face;
+        CUBE_CHECK(n3ds_engine_bitmap_read(b,b->pixels_offset+(pc?skip*6+pc_face*bytes:face*face_stride+skip),bytes,encoded));
         if(raw) {
             for(unsigned int y=0;y<side;++y) for(unsigned int x=0;x<side;++x) {
                 long address[2];bitmap_swizzle_vector2d(side,side,x,y,address);
+                if(pc) {address[0]=x;address[1]=y*side;}
                 unsigned int pixel=n3ds_bitmap_decode_pixel(encoded+pixel_bytes*(address[0]|address[1]),b->format);
                 for(int c=0;c<4;++c) decoded[(y*side+x)*4+c]=pixel>>(24-c*8);
             }
-        } else assert(!halo_s3tc_decode(b->format==14?0xc:b->format==15?0xe:0xf,
+        } else CUBE_CHECK(!halo_s3tc_decode(b->format==14?0xc:b->format==15?0xe:0xf,
             encoded,bytes,side,side,decoded,side*side*4,side*4));
         for(unsigned int y=0;y<CUBE_SIZE;++y) for(unsigned int x=0;x<CUBE_SIZE;++x)
             memcpy(destination+((face*CUBE_SIZE+y)*CUBE_SIZE+x)*4,
                 decoded+((y*side/CUBE_SIZE)*side+x*side/CUBE_SIZE)*4,4);
     }
-    free(decoded);free(encoded);cubes[cube_count++].bitmap=b;
+    free(decoded);free(encoded);cubes[slot].bitmap=b;if(slot==cube_count) ++cube_count;
     char text[160];snprintf(text,sizeof(text),"NATIVE CUBE: tag=%08lx format=%d faces=6 size=32 level=%u stride=%u",tag,b->format,level,face_stride);n3ds_log(text);
-    /* Read-only decode evidence, captured once per resource generation. */
-    snprintf(text,sizeof(text),"z:\\native-cube-%08lx.bin",tag);
-    FILE *proof=fopen(text,"wb");assert(proof);
-    assert(fwrite(destination,6*CUBE_SIZE*CUBE_SIZE*4,1,proof)==1);assert(!fclose(proof));
+    /* port: no decode evidence written to the SD card here any more: a file
+     * made in play is slow on a large card, and a failed write stopped the game */
     return destination;
+#undef CUBE_CHECK
 }
 void n3ds_cube_sample(const byte *pixels,const float direction[3],float rgb[4])
 {
-    int face;float uv[2];assert(n3ds_cube_coordinates(direction,&face,uv));
+    /* port: a direction not finite (a NaN normal) samples black, rather
+     * than stopping the game */
+    int face;float uv[2];
+    if(!n3ds_cube_coordinates(direction,&face,uv)) {rgb[0]=rgb[1]=rgb[2]=0;rgb[3]=1;return;}
     float x=uv[0]*CUBE_SIZE-.5f,y=uv[1]*CUBE_SIZE-.5f;
     int ix=(int)floorf(x),iy=(int)floorf(y);float fx=x-ix,fy=y-iy;
     memset(rgb,0,4*sizeof(float));

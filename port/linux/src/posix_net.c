@@ -387,7 +387,7 @@ int posix_socket_bind(int socket, const void *address, int address_length)
 			posix_random_bytes(&random_port, sizeof(random_port));
 			picked.sin_port = htons((unsigned short)(49152 + random_port % 16384));
 			if (bind(socket, (struct sockaddr *)&picked, sizeof(picked)) == 0)
-				return 0;
+				return succeed(0);
 			if (errno != EADDRINUSE && errno != EINVAL)
 				break;
 		}
@@ -685,6 +685,17 @@ int posix_socket_setsockopt(int socket, int level, int name, const void *value, 
 			capped = 64 * 1024;
 			value = &capped;
 			length = (int)sizeof(capped);
+		}
+		/* (a send buffer's size the console's socket service has not: a New
+		3DS refuses SO_SNDBUF, errno 109, ENOPROTOOPT, which debug.txt showed
+		as WSAENOPROTOOPT each game; its own size is kept, and the call taken
+		for done. So too SO_BROADCAST, which libctru has as 0, no option of
+		the service's (EINVAL): its sockets send to the broadcast address
+		without, as system link does) */
+		if (host_level == SOL_SOCKET && (host_name == SO_SNDBUF || name == WINSOCK_SO_BROADCAST))
+		{
+			last_error = 0;
+			return 0;
 		}
 		result = setsockopt(socket, host_level, host_name, value, (socklen_t)length);
 

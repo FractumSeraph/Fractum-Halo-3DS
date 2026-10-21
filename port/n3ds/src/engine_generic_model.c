@@ -143,7 +143,9 @@ void n3ds_generic_model_draw(const struct shader *shader,short permutation,
         assert(n3ds_cache_resolve(view,m,sizeof(*m))==m);
         if(!i && g->type==1) {
             assert(!(m->flags&1)); /* Cube path currently preserves linear sampling only. */
-            cube=n3ds_cube_load(m->bitmap.index,permutation);assert(cube);continue;
+            cube=n3ds_cube_load(m->bitmap.index,permutation);
+            if(!cube) return; /* port: (its cube map not had: engine_glass.c) not drawn */
+            continue;
         }
         /* Generic shaders, like Chicago shaders, permit an absent 2D map.
          * Match the Xbox renderer's type0/usage0 default in that case. */

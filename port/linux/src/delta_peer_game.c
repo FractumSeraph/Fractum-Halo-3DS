@@ -460,7 +460,8 @@ static void host_map(void)
 	frame: it finds the map's file in its folders and its hash's file stamp,
 	several file calls, which took 130 ms a frame hosting a Custom Edition
 	game on the 3DS (more on a large SD card). Asked again for another map,
-	and while its hash is still being made, twice a second */
+	while its hash is still being made, twice a second, and while none is
+	found, every three seconds */
 	static char known_name[128];
 	static int known_result = -2;
 	static struct delta_wire_map known_map;
@@ -476,7 +477,10 @@ static void host_map(void)
 		return;
 	}
 	if (known_result == -2 || strncmp(known_name, name, sizeof(known_name) - 1) ||
-		(known_result == 0 && now - known_time >= 500))
+		(known_result == 0 && now - known_time >= 500) ||
+		/* (none found: looked for again every few seconds, as a map shared
+		or downloaded while the game is up comes to be there) */
+		(known_result < 0 && now - known_time >= 3000))
 	{
 		snprintf(known_name, sizeof(known_name), "%s", name);
 		known_result = delta_maps_identity(name, &known_map);

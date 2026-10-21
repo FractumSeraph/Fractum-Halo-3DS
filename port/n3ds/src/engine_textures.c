@@ -446,7 +446,13 @@ static void *load_cube_now(struct bitmap_data *bitmap)
     for(unsigned int face=0;face<6;++face) {
         /* Cached Xbox payload is already hardware +X,-X,+Y,-Y,+Z,-Z order.
          * Each face has a full mip chain, padded independently to128bytes. */
-        if(!n3ds_engine_bitmap_read(bitmap,bitmap->pixels_offset+face*layout.stride+layout.skip,layout.bytes,source)) goto done;
+        /* port: a Halo PC map's cube map is its levels one after another,
+         * each the six faces', the second and third swapped (the fork's
+         * xbox_textures.c), not each face's whole chain in turn */
+        unsigned int pc_face=face==1?2:face==2?1:face;
+        unsigned int face_offset=(bitmap->flags&N3DS_BITMAP_PC_LAYOUT_FLAG)?layout.skip*6+pc_face*layout.bytes:
+            face*layout.stride+layout.skip;
+        if(!n3ds_engine_bitmap_read(bitmap,bitmap->pixels_offset+face_offset,layout.bytes,source)) goto done;
         unsigned int last_block=~0u;byte block_rgba[64];
         for(unsigned int y=0;y<layout.target;++y) for(unsigned int x=0;x<layout.target;++x) {
             unsigned int sx=x*layout.side/layout.target,sy=y*layout.side/layout.target;

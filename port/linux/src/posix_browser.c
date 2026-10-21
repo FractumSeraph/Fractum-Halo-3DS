@@ -290,7 +290,10 @@ static int connect_ipv4(mbedtls_net_context *net, const char *host, const char *
 		wait.fd = descriptor;
 		wait.events = POLLOUT;
 		wait.revents = 0;
-		if (posix_3ds_poll(&wait, 1, TIMEOUT_MILLISECONDS) <= 0 ||
+		/* (refused or reset: an error or hang-up, or a pending error; a
+		getsockopt the socket service does not answer is let pass, the TLS
+		handshake failing after if the connection did not come) */
+		if (posix_3ds_poll(&wait, 1, TIMEOUT_MILLISECONDS) <= 0 || (wait.revents & (POLLERR | POLLHUP)) ||
 			(getsockopt(descriptor, SOL_SOCKET, SO_ERROR, &pending, &length) == 0 && pending))
 		{
 			close(descriptor);

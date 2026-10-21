@@ -356,6 +356,25 @@ static boolean place_folder(
 	return TRUE;
 }
 
+#ifdef HALO_N3DS
+/* port: (the 3DS) maps' headers read this run (cache_file_header_is) */
+enum { KEPT_HEADERS = 64 };
+static struct
+{
+	char path[256];
+	unsigned long header[(CACHE_HEADER_CHECKSUM_OFFSET + 4) / 4];
+} kept_headers[KEPT_HEADERS];
+static long kept_header_count, kept_header_next;
+
+/* port: the headers kept forgotten: a map downloaded, or one deleted
+(custom_edition_maps_look_again, map_share_maps.c), is read afresh */
+void map_families_headers_forget(
+	void)
+{
+	kept_header_count = kept_header_next = 0;
+}
+#endif
+
 /* whether a file is a cache file of a version, and of a scenario type
 (CACHE_TYPE_SOLO, _MULTIPLAYER) unless CACHE_TYPE_ANY */
 static boolean cache_file_header_is(
@@ -398,15 +417,13 @@ static boolean cache_file_header_is(
 	changed where it is (a download is another name), and the menus' lists
 	read each map's header for each family and list, which a large SD
 	card's file calls make slow. Only headers read whole are kept: a file
-	not there yet (a download to come) is looked for again */
+	not there yet (a download to come) is looked for again, and all are
+	forgotten when map sharing adds or deletes a map
+	(map_families_headers_forget) */
 	{
-		enum { KEPT_HEADERS = 64 };
-		static struct
-		{
-			char path[256];
-			unsigned long header[(CACHE_HEADER_CHECKSUM_OFFSET + 4) / 4];
-		} kept[KEPT_HEADERS];
-		static long kept_count, kept_next;
+#define kept kept_headers
+#define kept_count kept_header_count
+#define kept_next kept_header_next
 		long index;
 
 		for (index = 0; index < kept_count; index++)
@@ -438,6 +455,9 @@ static boolean cache_file_header_is(
 		}
 		CloseHandle(file);
 		return result;
+#undef kept
+#undef kept_count
+#undef kept_next
 	}
 #else
 	file = CreateFileA(path, GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);

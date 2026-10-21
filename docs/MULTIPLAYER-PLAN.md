@@ -362,6 +362,24 @@ The first runs on a New 3DS (124 MB for the game; `CE MAPS: playable`):
   the fork reads the icons from the Xbox's compressed ui.map, and the
   setup's is uncompressed (33.5 MB). Its tag data and the icons' pixels
   could be read from it instead, once Halo3DS's HUD is shown to draw them.
+- **Socket options the console refuses.** A New 3DS refuses SO_SNDBUF
+  (errno 109), which `debug.txt` showed as "WSAENOPROTOOPT" every game.
+  libctru defines SO_BROADCAST as 0, which the service refuses (EINVAL).
+  `posix_net.c` skips both on the 3DS: the sockets keep their default send
+  buffer, and broadcasts go out without the option (system link search was
+  checked in Azahar).
+- **A Halo PC map that fails to load** after its 31 MB tag space is
+  allocated gives the space back (`ce_tags_load_failed`). The Xbox map
+  loaded next has that memory again. A map whose model data can't be read,
+  or can't get memory, is refused rather than drawn with garbage vertices.
+- **Cube maps** (glass, water and generic model reflections) no longer stop
+  the game on one this can't read, or on a map with more than eight. The
+  reflection isn't drawn, and the engine log says so once. A Halo PC map's
+  cube faces are read in its layout: levels in order, six faces each.
+  Nothing is written to the SD card in play any more.
+- **The map list's kept headers** are forgotten when map sharing adds or
+  deletes a map. Hosting retries the map's identity every 3 s while it's
+  not found.
 - **A test of the socket service as the console has it.** With
   `halo-source/soc-serial.txt` present, every socket call is made under one
   lock (`engine_soc_serial.c`, wrapped at link time: `port/n3ds/build.py`).
