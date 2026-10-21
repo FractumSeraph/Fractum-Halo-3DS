@@ -1,6 +1,7 @@
 #include "engine_checkpoint.h"
 /* Original main-menu widgets and lifecycle on the native renderer. */
 #include "cseries.h"
+#include "engine_diagnostics.h"
 #include "sound/sound_manager.h"
 #include "cache/sound_cache.h"
 #include "units/units.h"
@@ -281,6 +282,15 @@ int halo_engine_boot(void)
             !ui_widgets_active() && player_input_enabled() && !cinematic_in_progress());
         if((sample.held&(NATIVE_KEY_START|NATIVE_KEY_SELECT))==(NATIVE_KEY_START|NATIVE_KEY_SELECT)) break;
         n3ds_engine_input_sample(&sample);input_update();input_abstraction_update();
+        /* port: the memory in use once a minute, in the menus and games alike:
+         * a leak shows in a long session's log before it stops the game */
+        if(frame%1800==0) {
+            extern void n3ds_engine_memory_snapshot(struct native_memory_snapshot *);
+            struct native_memory_snapshot memory;
+            n3ds_engine_memory_snapshot(&memory);
+            snprintf(message,sizeof(message),"MEMORY: frame=%ld heap_used=%u linear_free=%u",frame,memory.heap_used,memory.linear_free);
+            n3ds_log(message);
+        }
         if(frame%30==0 || memcmp(&sample,&prior,sizeof(sample))) {
             snprintf(message,sizeof(message),"FRONTEND INPUT: frame=%ld held=%08x circle=%d,%d look=%d,%d enabled=%d cinematic=%d skip=%d touch=%u,%u",frame+1,sample.held,sample.circle_x,sample.circle_y,sample.cstick_x,sample.cstick_y,player_input_enabled(),cinematic_in_progress(),cinematic_can_be_skipped(),sample.touch_x,sample.touch_y);n3ds_log(message);prior=sample;
         }

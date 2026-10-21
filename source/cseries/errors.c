@@ -156,9 +156,21 @@ static void write_to_debug_file(
 
 	/* (a moment's wait for another thread's line; a crash report written
 	while this thread held the lock goes on without it) */
+#ifdef HALO_N3DS
+	/* port: (the 3DS) waited for by sleeping, 2 s at most: threads of the
+	game's are on one core, and a spin there keeps a lower thread holding
+	the lock from running at all, so the wait was the spin's whole length */
+	{
+		extern void svcSleepThread(long long nanoseconds);
+
+		for (spin = 0; spin < 2000 && __sync_lock_test_and_set(&debug_file_port_lock, 1); spin++)
+			svcSleepThread(1000000LL);
+	}
+#else
 	for (spin = 0; spin < 50000000 && __sync_lock_test_and_set(&debug_file_port_lock, 1); spin++)
 	{
 	}
+#endif
 
 	file = debug_file_port;
 	if (!file)
