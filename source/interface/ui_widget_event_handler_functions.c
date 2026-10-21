@@ -5898,7 +5898,16 @@ static boolean multiplayer_level_select(
 		"expected 3 list items for 'multiplayer level list' widget");
 	level_list = widget->child->child;
 #ifdef HALO_CUSTOM_EDITION
-	/* port: the menus' map list */
+	/* port: the menus' map list (on the 3DS, which may be empty: only the
+	maps the SD card holds, ui_map_list.c) */
+#ifdef HALO_N3DS
+	if (level_list->parameters.list.number_of_items <= 0 || level_list->parameters.list.selected_index < 0)
+	{
+		n3ds_log("MENU MAPS: no prepared multiplayer map to select");
+		ui_play_audio_feedback_sound(4);
+		return FALSE;
+	}
+#endif
 	match_vassert("c:\\halo\\SOURCE\\interface\\ui_widget_event_handler_functions.c", 1298,
 		level_list->parameters.list.selected_index >= 0 && level_list->parameters.list.selected_index < ui_map_list_count(),
 		"invalid multiplayer level specified from 'multiplayer level list' list widget");

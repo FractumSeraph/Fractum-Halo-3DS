@@ -309,13 +309,17 @@ static float overlay_text_measure(long font_index, real scale, wchar_t const *wi
 {
 	rectangle2d bounds = { 0, 0, 480, 2000 };
 	rectangle2d text_bounds = { 0 };
+	/* (written: draw_unicode_string_compute_bounds sets the cursor's
+	bounds too, and a NULL one was a write to address 2, which the Azahar
+	emulator ignores and a 3DS stops on: Online Games' crash) */
+	rectangle2d cursor_bounds = { 0 };
 	real_argb_color white = { 1.0f, 1.0f, 1.0f, 1.0f };
 
 	if (font_index == NONE || !wide[0])
 		return 0;
 	draw_string_set_draw_mode(font_index, NONE, 0, 0, &white);
 	draw_string_set_indents(0, 0);
-	draw_unicode_string_compute_bounds(&bounds, wide, &text_bounds, NULL);
+	draw_unicode_string_compute_bounds(&bounds, wide, &text_bounds, &cursor_bounds);
 	return (float)(text_bounds.x1 - text_bounds.x0) * scale;
 }
 

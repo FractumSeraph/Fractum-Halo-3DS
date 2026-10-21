@@ -221,7 +221,23 @@ The first runs on a New 3DS (124 MB for the game; `CE MAPS: playable`):
     port does this for the tunnel alone.
   - Socket buffers are capped at 64 KB (4b0d745). The game asks 1 MB per
     socket, and all of them share socInit's 1 MiB.
-- **Seen.** A crash opening Online Games. No logs yet.
+- **The Online Games crash, found.** The console's dump (build
+  a442445a529a) pointed at `draw_unicode_string_compute_bounds`. The
+  3DS overlay's text measure passed it a NULL cursor rectangle, which it
+  writes: a write to address 2. Azahar logs such an access and goes on;
+  the console stops. Fixed, with a rectangle of its own.
+- **Azahar's log catches them.** Every memory access the console would
+  stop on is in Azahar's `user/log/azahar_log.txt` ("unmapped Write16 ...
+  at PC ..."). After the fix, these runs logged none: the browser (paged,
+  invite typed, a private game hosted from the menus), ChaosGulch@ce and
+  Blood Gulch played, and a loopback join that downloaded its map.
+- **The map list.** With Custom Edition built in, Halo3DS's filter of
+  the Xbox maps on the SD card had been compiled out: missing maps were
+  listed. `ui_map_list.c` now lists only those `n3ds_engine_map_installed`
+  finds, then the Custom Edition maps (ChaosGulch [CE] has its picture and
+  description). An empty list is refused when picked. The first pick of a
+  Custom Edition map hashes it for map sharing: about 30 s in Azahar, a
+  few on a console, and kept afterwards.
 - **Checked in Azahar since.** The screen opens with internet play off, with
   the 3D slider up (two views), with the game list unreachable or its name
   unknown, and with the clock in 2010 (the certificate refused, said in the

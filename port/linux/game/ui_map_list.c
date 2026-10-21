@@ -1123,7 +1123,21 @@ void ui_map_list_refresh(
 	ui_map_list_count_value = 0;
 	ui_campaign_list_count = 0;
 	for (index = 0; index < XBOX_MAP_COUNT; index++)
+	{
+#ifdef HALO_N3DS
+		/* port: (the 3DS, Halo3DS's) only the Xbox maps the SD card holds,
+		converted by its setup: a row's strings and picture are its own
+		Xbox map's all the same (add_entry) */
+		extern boolean n3ds_engine_map_installed(char const *name);
+
+		if (!n3ds_engine_map_installed(xbox_maps[index]))
+		{
+			counts[_map_family_xbox]--;
+			continue;
+		}
+#endif
 		add_entry(xbox_maps[index], L"", L"", L"", index, index);
+	}
 	/* (none of them would load without their tag cache, which the platform
 	layer could not map: port/linux/src/xbox_memory.c. The player told why
 	once, in the menus' error, when there are maps that are not listed for
