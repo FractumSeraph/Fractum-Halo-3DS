@@ -54,10 +54,14 @@ versions 11 to 33):
   by its invite (a `halo://join/` link or its 64 digits).
 - **Hosting**: **Y** in Online Games creates a game on the internet. Its
   invite is shown on the bottom screen for friends to join; a public game
-  (the default, `network.host_public`) is also listed in everyone's browser. Games on
-  Custom Edition maps are listed but can't be joined yet, and map downloads
-  are still to come; [the plan](docs/MULTIPLAYER-PLAN.md) says where each
-  stands.
+  (the default, `network.host_public`) is also listed in everyone's browser.
+- **Custom Edition maps** (Halo PC's, `<map>@ce`) play on a **New 3DS**:
+  joining a server on one downloads its map from the server (map sharing)
+  into `halo-source/maps_ce`, and the game loads it there. Maps you have
+  go in `halo-source/custom_maps` or `halo-source/maps_ce`, with Custom
+  Edition's `bitmaps.map`, `sounds.map` and `loc.map` beside them (copy
+  them from a Halo PC install). A few of their shader effects are not
+  drawn yet; [the plan](docs/MULTIPLAYER-PLAN.md) says what is left.
 
 The console needs its Wi-Fi on. Settings are in `halo-source/config.toml` on
 the SD card, written with every setting and its description the first time
