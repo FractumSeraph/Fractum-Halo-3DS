@@ -346,6 +346,13 @@ The first runs on a New 3DS (124 MB for the game; `CE MAPS: playable`):
   Hosting ChaosGulch@ce (a local game too) ran at about 7 frames a second
   there. It is worked out once a map now: the frame's network part takes
   1.5 ms, and the game runs at 30.
+- **The Original 3DS, in Azahar.** In its old-model mode (`is_new_3ds =
+  false`) the game says so ("MODEL: original 3DS/2DS"), refuses Halo PC
+  maps, and plays Blood Gulch, slowly at the emulated 268 MHz. The build
+  with the Original 3DS's memory (`build.py --original-memory`: a 24 MB
+  heap and 32 MB of linear memory) loaded Blood Gulch with 16 MB of the
+  heap in use and 12.5 MB of linear memory free, and listed Online Games'
+  64 servers with 20 MB in use. Not tried on an Original 3DS.
 - **A test of the socket service as the console has it.** With
   `halo-source/soc-serial.txt` present, every socket call is made under one
   lock (`engine_soc_serial.c`, wrapped at link time: `port/n3ds/build.py`).
