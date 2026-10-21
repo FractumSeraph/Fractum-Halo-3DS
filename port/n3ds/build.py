@@ -18,7 +18,10 @@ PORT = Path(__file__).resolve().parent
 ROOT = PORT.parents[1]
 COMMON = ['-march=armv6k', '-mfloat-abi=hard', '-mfpu=vfp', '-marm', '-mno-unaligned-access',
           '-mtp=soft', '-O2', '-g', '-ffunction-sections', '-fdata-sections', '-fno-strict-aliasing', '-fwrapv']
-WRAPS = ['free', 'debug_free', 'datum_new', 'data_iterator_new', 'data_verify', 'realloc', 'write']
+WRAPS = ['free', 'debug_free', 'datum_new', 'data_iterator_new', 'data_verify', 'realloc', 'write',
+         # (the socket functions: port/n3ds/src/engine_soc_serial.c's test of the console's one-at-a-time service)
+         'socket', 'bind', 'connect', 'listen', 'accept', 'recv', 'recvfrom', 'send', 'sendto', 'poll', 'select',
+         'getaddrinfo', 'gethostbyname', 'gethostid', 'setsockopt', 'getsockopt', 'getsockname', 'getpeername', 'shutdown']
 
 
 def sha(path):

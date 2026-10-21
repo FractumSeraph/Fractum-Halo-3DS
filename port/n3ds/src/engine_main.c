@@ -142,6 +142,7 @@ int main(void)
         char text[96];snprintf(text,sizeof(text),"NETWORK: socket service unavailable (%08lx); offline",(unsigned long)soc_result);
         n3ds_log(text);free(soc_buffer);soc_buffer=NULL;
     } else n3ds_log("NETWORK: socket service started (1 MiB buffer)");
+    {extern void n3ds_soc_serial_start(void);n3ds_soc_serial_start();}
     int gpu_ready = C3D_Init(8 * C3D_DEFAULT_CMDBUF_SIZE);
     if (gpu_ready) n3ds_log("GPU command buffer: 2097152 bytes (two-eye capacity)");
     int programs_ready = gpu_ready && n3ds_gpu_programs_initialize();

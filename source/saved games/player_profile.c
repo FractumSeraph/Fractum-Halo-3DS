@@ -933,7 +933,14 @@ static void player_profile_write(
 		sizeof(struct player_profile));
 
 	create_thread(
+#ifdef HALO_N3DS
+		/* port: (the 3DS) below the game's thread, which would otherwise
+		wait for the SD card's lock for all of the write (ui_widget.c's
+		filesystem checks say why) */
+		2,
+#else
 		0,
+#endif
 		player_profile_write_thread_proc,
 		&player_profile_globals.write_request,
 		&player_profile_globals.thread);

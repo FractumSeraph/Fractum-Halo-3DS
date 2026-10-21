@@ -3163,6 +3163,10 @@
       ]
     },
     {
+      "source": "port/n3ds/src/engine_soc_serial.c",
+      "compiler": "gcc"
+    },
+    {
       "source": "port/linux/src/browser.c",
       "compiler": "clang",
       "defines": [

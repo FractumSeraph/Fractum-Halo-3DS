@@ -279,6 +279,25 @@ The first runs on a New 3DS (124 MB for the game; `CE MAPS: playable`):
     slow.
 
   Whether this was the hang is for the next console run to say.
+- **The freeze before the main menu, found** (the stall log: frame 1,
+  `audio`). The first menu frame's music waited for the SD card's lock
+  (`n3ds_files_lock`) while the start-up filesystem checks held it: 15.6 s
+  in Azahar, and far longer with your 512 GB card. Two causes:
+  - The checks asked for the card's free space (`statvfs`), which the 3DS
+    counts by reading the card's whole allocation table: minutes on a
+    large card. It is no longer asked (`n3ds_disk_space`); plenty is taken
+    to be free, as saves are a few KB.
+  - The checks' thread ran at the game thread's priority on its core, and
+    threads of one priority there take turns only when one waits. It took
+    the lock again after each of its slow calls before the game's thread
+    could. It and the two profile-saving threads now run one step lower
+    (`create_thread` flag 2), so the game's thread gets the lock at once.
+
+  Azahar now reaches the menu with no stall.
+- **A test of the socket service as the console has it.** With
+  `halo-source/soc-serial.txt` present, every socket call is made under one
+  lock (`engine_soc_serial.c`, wrapped at link time: `port/n3ds/build.py`).
+  A call that holds the service more than a second is logged.
 - **The stall watcher** (`halo-source-stall.log`) now counts a logged line
   as progress, so it watches start-up and map loads as well as frames.
   After 5 s without progress, and every 30 s it lasts, it writes the last

@@ -5251,7 +5251,18 @@ static void perform_filesystem_initialization(
 	error(_error_silent, "begining filesystem checks & saved game file enumeration...");
 	ui_widgets_inhibit_processing(TRUE);
 	widget_globals.filesystem_check_result = 0;
+#ifdef HALO_N3DS
+	/* port: (the 3DS) below the game's thread: threads of one priority on a
+	core take turns only when one waits, so this one, taking the SD card's
+	lock (engine_files_platform.c) for each of its many slow calls, took it
+	again each time before the game's thread could, and the first menu
+	frame waited for all of them (a 512 GB card's took minutes). Lower, it
+	gives the lock up to the game's thread at once
+	(n3ds_thread_create: flag 2) */
+	if (!create_thread(2, filesystem_initialization_thread_proc, NULL, &widget_globals.initialization_thread))
+#else
 	if (!create_thread(0, filesystem_initialization_thread_proc, NULL, &widget_globals.initialization_thread))
+#endif
 	{
 		error(_error_silent, "failed to spawn thread for filesystem checks - running synchronously!");
 		widget_globals.initialization_thread = NULL;

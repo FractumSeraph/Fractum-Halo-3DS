@@ -396,6 +396,9 @@ int halo_engine_boot(void)
             n3ds_log("HIDDEN HUD AIM FIXTURE: campaign HUD restored");
         }
         #endif
+        /* port: its own stage, for the stall watcher: the console's first
+         * menu frame has stopped here (halo-source-stall.log) */
+        n3ds_frontend_trace("audio");
         sound_render();
         long long audio_end=n3ds_engine_ticks();
         n3ds_frontend_trace("render");

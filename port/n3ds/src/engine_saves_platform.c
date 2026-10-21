@@ -227,10 +227,19 @@ int n3ds_disk_space(const char *path,unsigned long long *available,unsigned long
     if(!available || !total || !free_bytes || !n3ds_file_resolve(path,native,sizeof(native),0)) return 0;
     n3ds_files_lock();
     if(n3ds_save_root_valid(path)) root_ready();
-    if(n3ds_file_stat(path,&info) && info.directory && !statvfs(native,&space)) {
-        *total=(unsigned long long)space.f_blocks*space.f_frsize;
-        *free_bytes=(unsigned long long)space.f_bfree*space.f_frsize;
-        *available=info.readonly?0:(unsigned long long)space.f_bavail*space.f_frsize; result=1;
+    /* port: the SD card's free space is not asked for (statvfs): the 3DS
+     * counts it by reading the card's whole allocation table, which on a
+     * large card (512 GB) takes minutes, and every other file call of the
+     * game waits for it (one file service): the first menu frame's music
+     * stopped the menus at start-up (halo-source-stall.log, frame 1,
+     * audio). Saves are a few KB; plenty is said to be free, and a card
+     * that is full fails the write instead, as any other error. */
+    (void)space;(void)native;
+    if(n3ds_file_stat(path,&info) && info.directory) {
+        static int told;
+        *total=*free_bytes=4ULL*1024*1024*1024;
+        *available=info.readonly?0:*free_bytes; result=1;
+        if(!told) {told=1;extern void n3ds_log(const char *);n3ds_log("SAVES: the SD card's free space is not counted (slow on large cards); taken as plenty");}
     }
     n3ds_files_unlock(); return result;
 }
