@@ -287,17 +287,58 @@ static int connect_ipv4(mbedtls_net_context *net, const char *host, const char *
 			close(descriptor);
 			return MBEDTLS_ERR_NET_CONNECT_FAILED;
 		}
-		wait.fd = descriptor;
-		wait.events = POLLOUT;
-		wait.revents = 0;
-		/* (refused or reset: an error or hang-up, or a pending error; a
-		getsockopt the socket service does not answer is let pass, the TLS
-		handshake failing after if the connection did not come) */
-		if (posix_3ds_poll(&wait, 1, TIMEOUT_MILLISECONDS) <= 0 || (wait.revents & (POLLERR | POLLHUP)) ||
-			(getsockopt(descriptor, SOL_SOCKET, SO_ERROR, &pending, &length) == 0 && pending))
+		/* (writable, then connected: the console's socket service reports
+		the socket writable while the connect is still under way, with its
+		state in SO_ERROR, posix_3ds_connect_state; asked again every 50 ms
+		until it is made, refused, or the time is up) */
 		{
-			close(descriptor);
-			return MBEDTLS_ERR_NET_CONNECT_FAILED;
+			extern int posix_3ds_connect_state(int descriptor);
+			extern void svcSleepThread(long long nanoseconds);
+			extern void platform_log(const char *format, ...);
+			struct timespec started, now;
+			long long waited = 0;
+			int state = 1, ready = 0;
+
+			(void)pending;
+			(void)length;
+			clock_gettime(CLOCK_MONOTONIC, &started);
+			while (waited < TIMEOUT_MILLISECONDS)
+			{
+				wait.fd = descriptor;
+				wait.events = POLLOUT;
+				wait.revents = 0;
+				ready = posix_3ds_poll(&wait, 1, (int)(TIMEOUT_MILLISECONDS - waited));
+				if (ready < 0)
+					break;
+				if (ready > 0)
+				{
+					state = posix_3ds_connect_state(descriptor);
+					if (state <= 0)
+						break;
+					if (wait.revents & (POLLERR | POLLHUP))
+					{
+						state = -1;
+						errno = ECONNREFUSED;
+						break;
+					}
+					svcSleepThread(50 * 1000000LL);
+				}
+				clock_gettime(CLOCK_MONOTONIC, &now);
+				waited = (long long)(now.tv_sec - started.tv_sec) * 1000 + (now.tv_nsec - started.tv_nsec) / 1000000;
+			}
+			if (ready < 0 || state != 0)
+			{
+				static int logged;
+
+				if (logged < 4)
+				{
+					logged++;
+					platform_log("HTTPS: connecting to %s:%s %s (errno %d, %lld ms)", host, port,
+						ready < 0 ? "could not be waited for" : state > 0 ? "timed out" : "failed", errno, waited);
+				}
+				close(descriptor);
+				return MBEDTLS_ERR_NET_CONNECT_FAILED;
+			}
 		}
 	}
 	/* (reads wait in mbedtls_net_recv_timeout, a slice at a time; a send is

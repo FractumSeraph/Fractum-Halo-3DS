@@ -120,6 +120,7 @@ with the host ABI.
 #define WINSOCK_SO_TYPE 0x1008
 
 static __thread int last_error;
+static __thread const char *failing_call;
 
 static int fail(void)
 {
@@ -178,7 +179,7 @@ static int fail(void)
 				extern void platform_log(const char *format, ...);
 
 				logged[logged_count++] = errno;
-				platform_log("socket error errno %d taken as WSAEINVAL", errno);
+				platform_log("socket error errno %d taken as WSAEINVAL (%s)", errno, failing_call ? failing_call : "?");
 			}
 		}
 #endif
@@ -251,6 +252,7 @@ static void from_host_address(void *address, int *address_length)
 the trace, once a call */
 static int fail_at(const char *where)
 {
+	failing_call = where;
 #if defined(HALO_3DS) || defined(HALO_N3DS)
 	if (errno == EINVAL)
 	{
@@ -326,6 +328,34 @@ int posix_socket_close(int socket)
 }
 
 #if defined(HALO_3DS) || defined(HALO_N3DS)
+/* port: a connecting socket's state on the 3DS: 0 connected, 1 still
+connecting, -1 failed (errno set). The console's socket service reports a
+socket writable (poll) while its connect is still under way, and SO_ERROR
+then holds the service's own code for "in progress", a negative number
+libctru does not convert (-26 on a New 3DS). The Azahar emulator reports 0
+there, so this showed only on the console: the game list's HTTPS connect
+and the game's own TCP connects were taken for failed */
+long _net_convert_error(long sock_retval); /* (libctru's, soc_common.c) */
+int posix_3ds_connect_state(int descriptor)
+{
+	int pending = 0;
+	socklen_t length = sizeof(pending);
+
+	if (getsockopt(descriptor, SOL_SOCKET, SO_ERROR, &pending, &length) != 0)
+		return 0;
+	if (pending < 0)
+		pending = (int)-_net_convert_error(pending);
+	if (pending == 0)
+		return 0;
+	if (pending == EINPROGRESS || pending == EALREADY || pending == EAGAIN || pending == EWOULDBLOCK ||
+		pending == EINTR)
+	{
+		return 1;
+	}
+	errno = pending;
+	return -1;
+}
+
 /* poll, as the 3DS needs it (posix_socket_select): without waiting, then a
 few milliseconds' sleep, until something is ready or timeout milliseconds
 (-1: none) have gone; the socket service free between. Also for the HTTPS
@@ -738,6 +768,14 @@ int posix_socket_getsockopt(int socket, int level, int name, void *value, int *l
 #else
 	result = getsockopt(socket, host_level, host_name, value, &socket_length);
 	*length = (int)socket_length;
+#if defined(HALO_3DS) || defined(HALO_N3DS)
+	/* port: (SO_ERROR as the service gives it, negative: made errno) */
+	if (result == 0 && host_level == SOL_SOCKET && host_name == SO_ERROR && socket_length >= sizeof(int) &&
+		*(int *)value < 0)
+	{
+		*(int *)value = (int)-_net_convert_error(*(int *)value);
+	}
+#endif
 #endif
 	return succeed(result);
 }
@@ -849,9 +887,53 @@ int posix_socket_select(int *read, int *read_count, int *write, int *write_count
 	/* port: the 3DS's socket service takes one call at a time from all of
 	the game's threads (one session): a poll that waits holds up every
 	other thread's socket calls until it returns. So it waits here, polling
-	without waiting and sleeping between, a slice at a time */
-	result = posix_3ds_poll(descriptors, total, infinite ? -1 :
-		(int)(milliseconds < 0 ? 0 : milliseconds > INT_MAX ? INT_MAX : milliseconds));
+	without waiting and sleeping between, a slice at a time. (A socket
+	whose connect is still under way, which the service reports writable
+	all the same, is waited on again: posix_3ds_connect_state) */
+	{
+		int saved_counts[3], connecting;
+		struct timespec started, now;
+		long long waited, limit = infinite ? -1 : (milliseconds < 0 ? 0 : milliseconds);
+
+		for (list = 0; list < 3; list++)
+			saved_counts[list] = counts[list] ? *counts[list] : 0;
+		clock_gettime(CLOCK_MONOTONIC, &started);
+		for (;;)
+		{
+			clock_gettime(CLOCK_MONOTONIC, &now);
+			waited = (long long)(now.tv_sec - started.tv_sec) * 1000 + (now.tv_nsec - started.tv_nsec) / 1000000;
+			result = posix_3ds_poll(descriptors, total, limit < 0 ? -1 :
+				(int)(limit - waited < 0 ? 0 : limit - waited > INT_MAX ? INT_MAX : limit - waited));
+			connecting = 0;
+			for (index = 0; index < total && result > 0; index++)
+			{
+				if ((descriptors[index].events & POLLOUT) && (descriptors[index].revents & POLLOUT) &&
+					!(descriptors[index].revents & (POLLERR | POLLNVAL)) &&
+					posix_3ds_connect_state(descriptors[index].fd) > 0)
+				{
+					descriptors[index].revents &= (short)~POLLOUT;
+					connecting++;
+				}
+				if (descriptors[index].revents)
+					connecting--;
+			}
+			/* (only connects under way were ready: as nothing, waited on
+			again until the time given is up) */
+			if (result <= 0 || connecting <= 0 || limit == 0)
+				break;
+			clock_gettime(CLOCK_MONOTONIC, &now);
+			waited = (long long)(now.tv_sec - started.tv_sec) * 1000 + (now.tv_nsec - started.tv_nsec) / 1000000;
+			if (limit > 0 && waited >= limit)
+			{
+				result = 0;
+				break;
+			}
+			svcSleepThread(16 * 1000000LL);
+		}
+		for (list = 0; list < 3; list++)
+			if (counts[list])
+				*counts[list] = saved_counts[list];
+	}
 #else
 	result = poll(descriptors, (nfds_t)total, infinite ? -1 :
 		(int)(milliseconds < 0 ? 0 : milliseconds > INT_MAX ? INT_MAX : milliseconds));
@@ -886,12 +968,29 @@ int posix_socket_select(int *read, int *read_count, int *write, int *write_count
 			set), where POSIX reports it writeable with the failure in
 			SO_ERROR. The game takes writeable as connected
 			(connect_endpoint). */
+#if defined(HALO_3DS) || defined(HALO_N3DS)
+			if (list == 1)
+			{
+				int state = posix_3ds_connect_state(descriptor);
+
+				(void)pending;
+				(void)length;
+				if (state > 0)
+					continue;
+				if (state < 0)
+				{
+					fail();
+					continue;
+				}
+			}
+#else
 			if (list == 1 && getsockopt(descriptor, SOL_SOCKET, SO_ERROR, &pending, &length) == 0 && pending)
 			{
 				errno = pending;
 				fail();
 				continue;
 			}
+#endif
 			lists[list][kept++] = descriptor;
 		}
 		if (lists[list])

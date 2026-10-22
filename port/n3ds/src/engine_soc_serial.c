@@ -82,11 +82,39 @@ void n3ds_soc_close(void)
     type __wrap_##name params { if(!soc_enter()) return failed; u64 serial_start_=serial_enter(); type serial_result_=__real_##name args; serial_leave(serial_start_,#name); soc_leave(); return serial_result_; }
 #define WRAP(type,name,params,args) WRAP_FAILING(type,name,params,args,(type)-1)
 
-WRAP(int,socket,(int d,int t,int p),(d,t,p))
+/* port: the sockets, by descriptor: a close of one after the service has
+ * closed (n3ds_soc_close, at the game's end, while the internet play thread
+ * still runs) is no call: the C library's close looked the device up in a
+ * table socExit had emptied (a null read: the crash on leaving the game
+ * from the HOME menu) */
+static unsigned char soc_fds[1024/8];
+static void soc_fd_made(int fd) {if(fd>=0 && fd<1024) soc_fds[fd/8]|=(unsigned char)(1<<(fd%8));}
+int __real_socket(int d,int t,int p);
+int __wrap_socket(int d,int t,int p)
+{
+    if(!soc_enter()) return -1;
+    u64 serial_start_=serial_enter(); int r=__real_socket(d,t,p); serial_leave(serial_start_,"socket"); soc_leave();
+    soc_fd_made(r); return r;
+}
+int __real_accept(int s,struct sockaddr *a,socklen_t *l);
+int __wrap_accept(int s,struct sockaddr *a,socklen_t *l)
+{
+    if(!soc_enter()) return -1;
+    u64 serial_start_=serial_enter(); int r=__real_accept(s,a,l); serial_leave(serial_start_,"accept"); soc_leave();
+    soc_fd_made(r); return r;
+}
+int __real_close(int fd);
+int __wrap_close(int fd)
+{
+    if(fd<0 || fd>=1024 || !((soc_fds[fd/8]>>(fd%8))&1)) return __real_close(fd);
+    soc_fds[fd/8]&=(unsigned char)~(1<<(fd%8));
+    if(!soc_enter()) return 0;
+    u64 serial_start_=serial_enter(); int r=__real_close(fd); serial_leave(serial_start_,"close"); soc_leave();
+    return r;
+}
 WRAP(int,bind,(int s,const struct sockaddr *a,socklen_t l),(s,a,l))
 WRAP(int,connect,(int s,const struct sockaddr *a,socklen_t l),(s,a,l))
 WRAP(int,listen,(int s,int b),(s,b))
-WRAP(int,accept,(int s,struct sockaddr *a,socklen_t *l),(s,a,l))
 WRAP(ssize_t,recv,(int s,void *b,size_t n,int f),(s,b,n,f))
 WRAP(ssize_t,recvfrom,(int s,void *b,size_t n,int f,struct sockaddr *a,socklen_t *l),(s,b,n,f,a,l))
 WRAP(ssize_t,send,(int s,const void *b,size_t n,int f),(s,b,n,f))

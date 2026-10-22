@@ -21,7 +21,8 @@ COMMON = ['-march=armv6k', '-mfloat-abi=hard', '-mfpu=vfp', '-marm', '-mno-unali
 WRAPS = ['free', 'debug_free', 'datum_new', 'data_iterator_new', 'data_verify', 'realloc', 'write',
          # (the socket functions: port/n3ds/src/engine_soc_serial.c's test of the console's one-at-a-time service)
          'socket', 'bind', 'connect', 'listen', 'accept', 'recv', 'recvfrom', 'send', 'sendto', 'poll', 'select',
-         'getaddrinfo', 'gethostbyname', 'gethostid', 'setsockopt', 'getsockopt', 'getsockname', 'getpeername', 'shutdown']
+         'getaddrinfo', 'gethostbyname', 'gethostid', 'setsockopt', 'getsockopt', 'getsockname', 'getpeername', 'shutdown',
+         'close']
 
 
 def sha(path):

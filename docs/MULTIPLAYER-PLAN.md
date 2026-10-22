@@ -469,6 +469,25 @@ The first runs on a New 3DS (124 MB for the game; `CE MAPS: playable`):
   - Compiler warnings in the fork's own code: a split-screen test path's
     widget name had unescaped backslashes (the string was wrong), and
     int/pointer conversions in `ce_bsp.c`/`ce_models.c` are explicit.
+- **Console test 2026-10-21 (evening): the server browser listed nothing,
+  and leaving from the HOME menu crashed.** Both from the logs and dump:
+  - *The list:* the game list is fetched over HTTPS, and every attempt
+    logged "could not connect". The console's socket service reports a
+    socket writable while its non-blocking connect is still under way,
+    with the service's own "in progress" code (-26, negative, not
+    converted by libctru) in SO_ERROR; the emulator reports 0. The port
+    took that for a failed connect, for the HTTPS client and for the
+    game's own TCP connects (`posix_socket_select`'s check, which also
+    produced the "socket error errno -26" line). `posix_3ds_connect_state`
+    converts the code with libctru's `_net_convert_error` and says
+    connected / connecting / failed; the HTTPS connect and the select wait
+    on "connecting" until it resolves or the time is up.
+  - *The crash:* a data abort in the C library's `close` (reading a null
+    device table entry): at the game's end `socExit` had removed the
+    socket device while the internet-play thread was still running, and
+    its `broker_close` then closed a socket. `close` is now wrapped
+    (`port/n3ds/build.py`, `engine_soc_serial.c`): sockets are known by
+    descriptor, and closing one after the service closed is no call.
 - **A test of the socket service as the console has it.** With
   `halo-source/soc-serial.txt` present, every socket call is made under one
   lock (`engine_soc_serial.c`, wrapped at link time: `port/n3ds/build.py`).
