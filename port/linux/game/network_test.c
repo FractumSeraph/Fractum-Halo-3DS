@@ -2146,7 +2146,7 @@ void network_test_update(
 		{
 			for (index = 0; index < listed_count; index++)
 			{
-				if (listed[index].invite[0] && !listed[index].failed && !listed[index].engine_type == pass)
+				if (listed[index].invite[0] && !listed[index].failed && (!listed[index].engine_type) == pass)
 					games[count++] = listed[index];
 			}
 		}
@@ -2216,7 +2216,7 @@ void network_test_update(
 				if (!global_network_game_client_get())
 					create_global_network_game_client();
 				ui_widget_load_by_name_or_tag(
-					"ui\shell\main_menu\multiplayer_type_select\split_screen\pregame\splitscreen_pregame_wrapper_normal",
+					"ui\\shell\\main_menu\\multiplayer_type_select\\split_screen\\pregame\\splitscreen_pregame_wrapper_normal",
 					NONE, NULL, NONE, NONE, NONE, NONE);
 				platform_log("network test: a local game on %s", map);
 			}

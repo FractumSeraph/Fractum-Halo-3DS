@@ -375,7 +375,9 @@ static void *ce_tags_pointer(
 	unsigned long size)
 {
 	if (address < CE_TAGS_ADDRESS || address - CE_TAGS_ADDRESS > ce_tags_size ||
-		size > ce_tags_size - (address - CE_TAGS_ADDRESS))
+		size > ce_tags_size - (address - CE_TAGS_ADDRESS) ||
+		/* port: (not on a word: its words read would fault on the 3DS) */
+		(address & 3))
 	{
 		return NULL;
 	}
@@ -731,7 +733,7 @@ static long beside_file_read(
 lines ended as the menus' strings end them (\r\n), its tabs spaces, and a
 character past ASCII a '?' (once, for a UTF-8 character's first byte; a
 UTF-8 byte order mark left out). FALSE if there is none, or nothing in it */
-static boolean beside_description_read(
+static boolean beside_description_read_uncached(
 	char const *map_path,
 	wchar_t *description,
 	long size)
@@ -777,7 +779,7 @@ static boolean beside_description_read(
 
 /* whether a map has <name>.bmp beside it, of a size it is read at (whether
 bmp_files.c reads it is found when it is first drawn) */
-static boolean beside_picture_present(
+static boolean beside_picture_present_uncached(
 	char const *map_path)
 {
 	char path[MAP_PATH_LENGTH + 8];
@@ -905,7 +907,7 @@ static unsigned long little_long(unsigned char const *bytes)
 }
 #endif
 
-static boolean map_file_details(
+static boolean map_file_details_uncached(
 	short family,
 	char const *file,
 	long *spawns,
@@ -954,6 +956,110 @@ static boolean map_file_details(
 	fclose(stream);
 	return read;
 #endif
+}
+
+#ifdef HALO_N3DS
+/* port: (the 3DS) what the list reads of each map's file and the files
+beside it (its spawns and vehicles, its description, whether it has a
+picture: eight file calls a map, slow on a large SD card), kept for the run
+and forgotten when map sharing adds or deletes a map
+(ui_map_list_forget, from map_families_headers_forget) */
+enum { KEPT_MAPS = 64 };
+static struct kept_map
+{
+	char key[MAP_PATH_LENGTH];
+	boolean details_known, details, picture;
+	long spawns, vehicles;
+	boolean description;
+	wchar_t own_description[DESCRIPTION_LENGTH];
+} kept_maps[KEPT_MAPS];
+static long kept_map_count, kept_map_next;
+
+void ui_map_list_forget(
+	void)
+{
+	kept_map_count = kept_map_next = 0;
+}
+
+static struct kept_map *kept_map(
+	char const *key,
+	boolean make)
+{
+	long index;
+
+	for (index = 0; index < kept_map_count; index++)
+		if (!_stricmp(kept_maps[index].key, key))
+			return &kept_maps[index];
+	if (!make || strlen(key) >= sizeof(kept_maps[0].key))
+		return NULL;
+	index = kept_map_count < KEPT_MAPS ? kept_map_count++ : (kept_map_next++ % KEPT_MAPS);
+	csmemset(&kept_maps[index], 0, sizeof(kept_maps[index]));
+	strcpy(kept_maps[index].key, key);
+	return &kept_maps[index];
+}
+#endif
+
+static boolean beside_description_read(
+	char const *map_path,
+	wchar_t *description,
+	long size)
+{
+#ifdef HALO_N3DS
+	struct kept_map *kept = kept_map(map_path, TRUE);
+
+	if (kept && !kept->details_known)
+	{
+		kept->description = beside_description_read_uncached(map_path, kept->own_description, DESCRIPTION_LENGTH);
+		kept->picture = beside_picture_present_uncached(map_path);
+		kept->details_known = TRUE;
+	}
+	if (kept)
+	{
+		if (kept->description)
+			wide_copy(description, size, kept->own_description);
+		return kept->description;
+	}
+#endif
+	return beside_description_read_uncached(map_path, description, size);
+}
+
+static boolean beside_picture_present(
+	char const *map_path)
+{
+#ifdef HALO_N3DS
+	struct kept_map *kept = kept_map(map_path, FALSE);
+
+	if (kept && kept->details_known)
+		return kept->picture;
+#endif
+	return beside_picture_present_uncached(map_path);
+}
+
+static boolean map_file_details(
+	short family,
+	char const *file,
+	long *spawns,
+	long *vehicles)
+{
+#ifdef HALO_N3DS
+	char key[MAP_PATH_LENGTH];
+	struct kept_map *kept;
+
+	snprintf(key, sizeof(key), "%d:%s", (int)family, file);
+	kept = kept_map(key, TRUE);
+	if (kept && !kept->details_known)
+	{
+		kept->details = map_file_details_uncached(family, file, &kept->spawns, &kept->vehicles);
+		kept->details_known = TRUE;
+	}
+	if (kept)
+	{
+		*spawns = kept->spawns;
+		*vehicles = kept->vehicles;
+		return kept->details;
+	}
+#endif
+	return map_file_details_uncached(family, file, spawns, vehicles);
 }
 
 /* a Custom Edition, HaloMD or Halo PC map's row: its file's name (without

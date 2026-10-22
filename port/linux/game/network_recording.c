@@ -684,7 +684,18 @@ static void recording_prune(
 		{
 			snprintf(names[count], sizeof(names[count]), "%s", data.cFileName);
 			sizes[count] = data.nFileSizeLow;
-			total += (double)data.nFileSizeLow;
+#ifdef HALO_N3DS
+			/* port: (the 3DS's listing gives no sizes: engine_win32_files.c) */
+			{
+				WIN32_FILE_ATTRIBUTE_DATA stamp;
+				char path[MAX_PATH + 32];
+
+				snprintf(path, sizeof(path), "%s\\%s", folder, data.cFileName);
+				if (GetFileAttributesExA(path, GetFileExInfoStandard, &stamp))
+					sizes[count] = stamp.nFileSizeLow;
+			}
+#endif
+			total += (double)sizes[count];
 			count++;
 		}
 	}

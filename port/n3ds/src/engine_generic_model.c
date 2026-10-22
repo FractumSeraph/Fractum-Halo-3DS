@@ -107,6 +107,32 @@ void n3ds_generic_model_draw(const struct shader *shader,short permutation,
     const byte *cube=NULL;
     float bounds[4]={1e30f,1e30f,-1e30f,-1e30f};
     assert(n3ds_cache_resolve(view,g,sizeof(*g))==g);
+    /* port: a Halo PC map's generic shader this does not draw (a cube map
+     * of type 2 or 3, numeric, more maps, stages or layers than the Xbox's
+     * have, a layer not a generic shader) is left out, said once, rather
+     * than a stopped game */
+    if(n3ds_engine_map_is_pc()) {
+        int unsupported=g->type<0 || g->type>1 || (g->flags&(1<<7)) || (g->type==1 && (g->flags&((1<<3)|(1<<6)))) ||
+            g->maps.count<0 || g->maps.count>4 || g->stages.count<1 || g->stages.count>8 || g->layers.count<0 || g->layers.count>4;
+        for(long i=0;!unsupported && i<g->layers.count;++i) {
+            const struct tag_reference *ref=TAG_BLOCK_GET_ELEMENT(&g->layers,i,struct tag_reference);
+            const struct shader *layer=n3ds_cache_resolve(view,ref,sizeof(*ref))==ref?shader_definition_get(ref->index):NULL;
+            if(!layer || layer->base.type!=5) unsupported=1;
+        }
+        if(unsupported) {
+            static const void *reported[16];static unsigned int reported_count;
+            unsigned int r;
+            for(r=0;r<reported_count && reported[r]!=shader;++r) {}
+            if(r==reported_count && reported_count<16) {
+                reported[reported_count++]=shader;
+                char message[224];
+                for(long t=0;t<view->tag_header->tag_count;++t) if(view->instances[t].base_address==shader) {
+                    snprintf(message,sizeof(message),"GENERIC PC: not drawn: tag=%08lx type=%d flags=%02x layers=%ld maps=%ld stages=%ld name=%.120s",view->instances[t].tag_index,g->type,g->flags,g->layers.count,g->maps.count,g->stages.count,view->instances[t].name);n3ds_log(message);break;
+                }
+            }
+            return;
+        }
+    }
     assert(g->maps.count>=0 && g->maps.count<=4 && g->stages.count>=1 && g->stages.count<=8);
     if(g->type>1 || (g->flags&(1<<7)) || (g->type==1 && (g->flags&((1<<3)|(1<<6))))) {
         char message[256];
@@ -174,10 +200,11 @@ void n3ds_generic_model_draw(const struct shader *shader,short permutation,
     for(int i=0;i<bake.stages;++i) {
         const struct generic_stage *s=TAG_BLOCK_GET_ELEMENT(&g->stages,i,struct generic_stage);
         struct native_generic_stage *out=&bake.stage[i];
-        assert(n3ds_cache_resolve(view,s,sizeof(*s))==s && s->period!=0);
+        assert(n3ds_cache_resolve(view,s,sizeof(*s))==s);
         out->flags=s->flags;
+        /* port: (a period of 0, which Halo PC's maps have: no animation) */
         float f=(s->flags&4) && parameters->animation.values?parameters->animation.values[0]:
-            periodic_function_evaluate(s->wave,global_frame_parameters.game_time_sec/s->period);
+            periodic_function_evaluate(s->wave,s->period!=0 && isfinite(s->period)?global_frame_parameters.game_time_sec/s->period:0);
         for(int c=0;c<4;++c) {
             int argb=c==3?0:c+1;
             float value=s->lower.n[argb]+f*(s->upper.n[argb]-s->lower.n[argb]);

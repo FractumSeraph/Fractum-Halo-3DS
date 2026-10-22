@@ -410,6 +410,51 @@ The first runs on a New 3DS (124 MB for the game; `CE MAPS: playable`):
   every socket call fails with ENETDOWN, and `socExit` waits up to 2 s for
   calls in progress. Before, a network thread's poll after `socExit` read
   freed memory (null), which Azahar logged and a console would crash on.
+- **Review pass (2026-10-21, evening).** Two code reviews of the port
+  layer and the renderer; what they found, fixed:
+  - *Fewer file calls on a large SD card.* `CreateFileA` opens without a
+    stat first (a map looked for in each folder cost two calls a miss).
+    Directory listings take the entry's kind from `d_type`, no stat each
+    (sizes are 0; `network_recording.c` asks for the ones it needs). The
+    map list keeps each map's details, description and picture presence
+    for the run (`ui_map_list_forget`, from `map_families_headers_forget`).
+    `map_file_hash_prefix` looks in its cache by one stat before opening
+    the file (eleven calls). A profile's save folder is remembered
+    (`engine_saves_platform.c`), not found by reading every folder.
+  - *Hashing a map to host it* (`map_share_map_hash`, on the game thread:
+    30 s for a 14 MB map) now reads and writes the SD card's hash cache
+    inside `hash_job_run`, so it happens once a file, not once a run, and
+    the catalog's cache reads are the hashing thread's.
+  - *A joined game's map identity* is asked twice a second while its hash
+    is pending, not every frame (twenty file calls each).
+  - *A map download* holds the TLS lock only while it opens; the game list
+    and anchor pings no longer wait minutes behind it.
+  - `thread_has_exited` sleeps only when polled in a tight loop (it cost
+    1 ms a frame while a hash or connect ran). The DNS cache evicts when
+    full instead of looking a 33rd name up every time. `socExit` is
+    skipped, the service left open, if a thread is still in it after 2 s.
+  - *Renderer, for Halo PC maps:* BSP materials past 512 (now 1024), out
+    of GPU memory, with a bad index or a non-finite vertex are left out and
+    logged ("NATIVE BSP: ... not drawn"), not an exit. Generic (`sotr`)
+    shaders this can't draw, numeric chicago shaders without animation,
+    particle secondary maps of other blends, meters of tint mode 2, decals
+    without a texture on the CPU path, and parts without vertices or
+    strips are skipped the same way. A stage period of 0 means no
+    animation. Model vertices the conversion put on the heap are readable
+    by the renderer (`ce_models_vertex_memory_holds`), as BSP ones were.
+  - *CE sounds in sounds.map* were refused by a bound against the map's
+    own length; the bound is skipped for Halo PC maps.
+  - *The 31 MB tag space is kept for the run* rather than freed and
+    re-allocated per map (a long session's heap couldn't give it back
+    contiguous). The map checker reads the map into it while no PC map is
+    loaded, saving its own 23 MB image.
+  - BSP vertex data must be word-aligned (the checker refuses it
+    otherwise), and non-finite positions and texture coordinates are
+    zeroed in conversion. HUD placements not on a word are left as they
+    are. `ui.map` tag addresses must be word-aligned.
+  - Compiler warnings in the fork's own code: a split-screen test path's
+    widget name had unescaped backslashes (the string was wrong), and
+    int/pointer conversions in `ce_bsp.c`/`ce_models.c` are explicit.
 - **A test of the socket service as the console has it.** With
   `halo-source/soc-serial.txt` present, every socket call is made under one
   lock (`engine_soc_serial.c`, wrapped at link time: `port/n3ds/build.py`).

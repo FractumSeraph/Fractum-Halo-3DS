@@ -140,6 +140,30 @@ short compress_real_to_int16_clamp(real z);
 /* the contiguous memory of the map's vertices, freed with it */
 static void **ce_vertex_memory;
 static long ce_vertex_memory_count;
+#ifdef HALO_N3DS
+/* port: (the 3DS) each one's size: a part's vertices kept outside the tag
+cache (its free room run out) are read by the renderer as the tags' own
+(port/n3ds/src/cache_reader.c's n3ds_cache_resolve) */
+static unsigned long *ce_vertex_memory_sizes;
+
+int ce_models_vertex_memory_holds(
+	const void *address,
+	unsigned long bytes)
+{
+	long index;
+
+	for (index = 0; index < ce_vertex_memory_count; index++)
+	{
+		unsigned long start = (unsigned long)ce_vertex_memory[index];
+		unsigned long at = (unsigned long)address;
+
+		if (at >= start && at - start <= ce_vertex_memory_sizes[index] &&
+			bytes <= ce_vertex_memory_sizes[index] - (at - start))
+			return 1;
+	}
+	return 0;
+}
+#endif
 
 /* the bitmaps (bitmap_data) model shaders draw as multipurpose maps, whose
 channels are Halo PC's */
@@ -198,7 +222,7 @@ static unsigned long ce_part_vertices(
 		vertices = XPhysicalAlloc(count * XBOX_VERTEX_SIZE, -1, 0, PAGE_READWRITE);
 	if (!vertices)
 		return 0;
-	if (xbox_address(vertices) - XBOX_CE_BASE < XBOX_CE_SIZE)
+	if ((unsigned long)xbox_address(vertices) - XBOX_CE_BASE < XBOX_CE_SIZE)
 	{
 		/* (in the tag cache: nothing to free) */
 	}
@@ -219,6 +243,19 @@ static unsigned long ce_part_vertices(
 			return 0;
 		}
 		ce_vertex_memory = grown;
+#ifdef HALO_N3DS
+		{
+			unsigned long *sizes = realloc(ce_vertex_memory_sizes, (ce_vertex_memory_count + 1) * sizeof(*sizes));
+
+			if (!sizes)
+			{
+				XPhysicalFree(vertices);
+				return 0;
+			}
+			ce_vertex_memory_sizes = sizes;
+			sizes[ce_vertex_memory_count] = (unsigned long)count * XBOX_VERTEX_SIZE;
+		}
+#endif
 		ce_vertex_memory[ce_vertex_memory_count++] = vertices;
 	}
 	for (index = 0; index < count; index++)
@@ -257,7 +294,7 @@ static unsigned long ce_part_vertices(
 	}
 	buffer = xbox_pointer(buffer_address);
 	buffer[0] = D3DCOMMON_TYPE_VERTEXBUFFER | 1;
-	buffer[1] = xbox_address(vertices);
+	buffer[1] = (unsigned long)xbox_address(vertices);
 	buffer[2] = 0;
 	IDirect3DVertexBuffer8_Register((D3DVertexBuffer *)buffer, NULL);
 	return buffer_address;
@@ -571,6 +608,10 @@ void ce_models_tags_unloaded(
 		free(ce_vertex_memory);
 	ce_vertex_memory = NULL;
 	ce_vertex_memory_count = 0;
+#ifdef HALO_N3DS
+	free(ce_vertex_memory_sizes);
+	ce_vertex_memory_sizes = NULL;
+#endif
 	if ((void *)ce_multipurpose_bitmaps)
 		free((void *)ce_multipurpose_bitmaps);
 	ce_multipurpose_bitmaps = NULL;

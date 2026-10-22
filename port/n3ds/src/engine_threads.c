@@ -31,7 +31,13 @@ boolean thread_has_exited(struct thread_reference *reference)
      * core a loop that never sleeps keeps the thread it waits for, below
      * the game thread, from ever running: the game would stop there */
     if(n3ds_thread_exited((unsigned long)reference)) return TRUE;
-    n3ds_engine_sleep(1);
+    /* (only when asked again within 2 ms, a loop: asked once a frame, as
+     * map sharing and the transport do, the frame is not made longer) */
+    extern long long n3ds_engine_ticks(void);
+    static unsigned long long last_asked;
+    unsigned long long now=(unsigned long long)n3ds_engine_ticks();
+    if(now-last_asked<268123480ULL/500) n3ds_engine_sleep(1); /* (2 ms of the 268 MHz tick) */
+    last_asked=now;
     return FALSE;
 }
 void dispose_thread(struct thread_reference *reference)

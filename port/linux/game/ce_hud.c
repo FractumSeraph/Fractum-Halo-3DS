@@ -386,7 +386,9 @@ static void ce_hud_placement(
 	}
 	if (bitmap_flags & BITMAP_GROUP_HALF_HUD_SCALE_FLAG)
 		scale *= 0.5f;
-	if (scale != 1.0f)
+	/* port: (a placement not on a word is left: its floats would fault
+	the 3DS) */
+	if (scale != 1.0f && !((unsigned long)placement & 3))
 	{
 		*(float *)(placement + PLACEMENT_SCALE_X_OFFSET) *= scale;
 		*(float *)(placement + PLACEMENT_SCALE_Y_OFFSET) *= scale;

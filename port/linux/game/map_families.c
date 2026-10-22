@@ -371,7 +371,10 @@ static long kept_header_count, kept_header_next;
 void map_families_headers_forget(
 	void)
 {
+	extern void ui_map_list_forget(void);
+
 	kept_header_count = kept_header_next = 0;
+	ui_map_list_forget();
 }
 #endif
 

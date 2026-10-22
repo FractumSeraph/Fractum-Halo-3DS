@@ -57,7 +57,7 @@ int halo_engine_model_tests(void)
 {
     struct model_vertex_compressed packed={0}; struct model_vertex_uncompressed vertex={0};
     struct native_render_vertex output,sentinel;
-    real_matrix4x3 bones[2]; struct rasterizer_model_skinning skin={bones,2,0};
+    real_matrix4x3 bones[2]; struct rasterizer_model_skinning skin={bones,2};
     real_vector2d scale={2,3};
     real_point3d origins[2]={{10,0,0},{0,20,0}};
     real_vector3d forward={0,1,0},up={0,0,1};

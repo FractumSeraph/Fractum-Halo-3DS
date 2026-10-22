@@ -140,6 +140,26 @@ static unsigned long ce_vertex_buffer(
 /* count vertices' unit vectors (vector_count of them at vectors_offset in
 each vertex, vertex_size bytes apart) put within [-1, 1], as the vertex
 compressor asserts they are within a hundredth of; not a number: 0 */
+/* port: the floats at an offset of each vertex made finite (0 where not) */
+static void ce_finite_floats(
+	byte *vertices,
+	long count,
+	long vertex_size,
+	long offset,
+	long floats)
+{
+	long index, component;
+
+	for (index = 0; index < count; index++)
+	{
+		real *values = (real *)(vertices + index * vertex_size + offset);
+
+		for (component = 0; component < floats; component++)
+			if (!(values[component] == values[component]) || values[component] > 1e30f || values[component] < -1e30f)
+				values[component] = 0.0f;
+	}
+}
+
 static void ce_unit_vectors(
 	byte *vertices,
 	long count,
@@ -264,6 +284,12 @@ than sphere_intersects_cluster_portal projects into an array on the stack */
 			{
 				return FALSE;
 			}
+			/* port: (their floats read as such: on a word, or the 3DS faults) */
+			if ((unsigned long)material->uncompressed_vertex_data.address % 4)
+			{
+				return ce_refuse("a structure BSP's material's vertices (at %08lx) are not word-aligned",
+					(unsigned long)material->uncompressed_vertex_data.address);
+			}
 			needed = (unsigned long)vertex_count * ENVIRONMENT_VERTEX_UNCOMPRESSED_SIZE +
 				(unsigned long)lightmap_vertex_count * LIGHTMAP_VERTEX_UNCOMPRESSED_SIZE;
 			if (data_size < needed)
@@ -339,7 +365,7 @@ void ce_bsp_loaded(
 					return;
 				}
 			}
-			if (xbox_address(compressed) - XBOX_CE_BASE >= XBOX_CE_SIZE)
+			if ((unsigned long)xbox_address(compressed) - XBOX_CE_BASE >= XBOX_CE_SIZE)
 #else
 			compressed = XPhysicalAlloc(size, -1, 0, PAGE_READWRITE);
 			if (!compressed)
@@ -379,6 +405,11 @@ void ce_bsp_loaded(
 			}
 			ce_unit_vectors(uncompressed, vertex_count, ENVIRONMENT_VERTEX_UNCOMPRESSED_SIZE,
 				ENVIRONMENT_VERTEX_VECTORS_OFFSET, ENVIRONMENT_VERTEX_VECTOR_COUNT);
+			/* port: (a position or texture coordinate not a number made 0:
+			the 3DS's renderer takes only finite ones) */
+			ce_finite_floats(uncompressed, vertex_count, ENVIRONMENT_VERTEX_UNCOMPRESSED_SIZE, 0, 3);
+			ce_finite_floats(uncompressed, vertex_count, ENVIRONMENT_VERTEX_UNCOMPRESSED_SIZE,
+				ENVIRONMENT_VERTEX_UNCOMPRESSED_SIZE - 8, 2);
 			rasterizer_geometry_compress_vertices(_rasterizer_vertex_type_environment_uncompressed, vertex_count,
 				compressed, environment_size, uncompressed, vertex_count * ENVIRONMENT_VERTEX_UNCOMPRESSED_SIZE);
 			if (lightmap_vertex_count > 0)
@@ -386,6 +417,8 @@ void ce_bsp_loaded(
 				ce_unit_vectors(uncompressed + vertex_count * ENVIRONMENT_VERTEX_UNCOMPRESSED_SIZE,
 					lightmap_vertex_count, LIGHTMAP_VERTEX_UNCOMPRESSED_SIZE, LIGHTMAP_VERTEX_VECTORS_OFFSET,
 					LIGHTMAP_VERTEX_VECTOR_COUNT);
+				ce_finite_floats(uncompressed + vertex_count * ENVIRONMENT_VERTEX_UNCOMPRESSED_SIZE,
+					lightmap_vertex_count, LIGHTMAP_VERTEX_UNCOMPRESSED_SIZE, LIGHTMAP_VERTEX_UNCOMPRESSED_SIZE - 8, 2);
 				rasterizer_geometry_compress_vertices(_rasterizer_vertex_type_environment_lightmap_uncompressed,
 					lightmap_vertex_count, compressed + environment_size,
 					lightmap_vertex_count * LIGHTMAP_VERTEX_COMPRESSED_SIZE,
@@ -397,13 +430,13 @@ void ce_bsp_loaded(
 			material->vertices.type = _rasterizer_vertex_type_environment_compressed;
 			material->vertices.offset = 0;
 			material->vertices.base_address = xbox_address(compressed);
-			material->vertices.hardware_format = ce_vertex_buffer(xbox_address(compressed));
+			material->vertices.hardware_format = (void *)ce_vertex_buffer((unsigned long)xbox_address(compressed));
 			if (lightmap_vertex_count > 0)
 			{
 				material->lightmap_vertices.type = _rasterizer_vertex_type_environment_lightmap_compressed;
 				material->lightmap_vertices.offset = 0;
 				material->lightmap_vertices.base_address = xbox_address(compressed + environment_size);
-				material->lightmap_vertices.hardware_format = ce_vertex_buffer(xbox_address(compressed + environment_size));
+				material->lightmap_vertices.hardware_format = (void *)ce_vertex_buffer((unsigned long)xbox_address(compressed + environment_size));
 			}
 			materials++;
 		}

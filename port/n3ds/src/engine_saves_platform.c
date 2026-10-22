@@ -91,15 +91,40 @@ static int read_record(const char *entry,struct save_record *record,struct nativ
     }
     return 1;
 }
+/* port: the folders names were found in, remembered: a profile's write
+ * looked through every save folder (four file calls each, slow on a large
+ * SD card) to find its own. A remembered one is read again to be sure */
+enum { LOCATED=48 };
+static struct { unsigned short name[128]; char directory[16]; } located[LOCATED];
+static unsigned int located_count,located_next;
+static void located_forget(const char *directory)
+{
+    for(unsigned int i=0;i<located_count;++i) if(!strcmp(located[i].directory,directory)) located[i].directory[0]=0;
+}
+static void located_remember(const unsigned short *name,const char *directory)
+{
+    unsigned int slot=located_count<LOCATED?located_count++:located_next++%LOCATED;
+    located_forget(directory);
+    memcpy(located[slot].name,name,sizeof(located[slot].name));
+    snprintf(located[slot].directory,sizeof(located[slot].directory),"%s",directory);
+}
 static int locate(const unsigned short *name,char *directory)
 {
-    DIR *walk=opendir(save_root); struct dirent *entry; struct save_record record; int result=0;
+    DIR *walk; struct dirent *entry; struct save_record record; int result=0;
+    for(unsigned int i=0;i<located_count;++i) {
+        if(!located[i].directory[0] || !equal_name(name,located[i].name)) continue;
+        if(read_record(located[i].directory,&record,NULL) && equal_name(name,record.name)) {
+            strcpy(directory,located[i].directory); return 1;
+        }
+        located[i].directory[0]=0;
+    }
+    walk=opendir(save_root);
     if(!walk) return -1;
     for(;;) {
         errno=0; entry=readdir(walk);
         if(!entry) { if(errno) result=-1; break; }
         if(read_record(entry->d_name,&record,NULL) && equal_name(name,record.name)) {
-            strcpy(directory,entry->d_name); result=1; break;
+            strcpy(directory,entry->d_name); located_remember(name,directory); result=1; break;
         }
     }
     if(closedir(walk)) result=-1;
@@ -131,6 +156,7 @@ static unsigned int create_locked(const unsigned short *name,unsigned int dispos
         int success=file && fwrite(&record,1,sizeof(record),file)==sizeof(record);
         if(file && fclose(file)) success=0;
         if(!success) { unlink(metadata); rmdir(native); return IO_ERROR; }
+        located_remember(name,directory);
     }
     snprintf(result_path,sizeof(result_path),"u:\\%s\\",directory);
     memcpy(path,result_path,strlen(result_path)+1); return OK;
@@ -172,6 +198,7 @@ unsigned int n3ds_save_delete(const unsigned short *name)
             snprintf(native,sizeof(native),"%s/%s",save_root,directory);
             if(n3ds_files_path_in_use(path)) result=BUSY;
             else result=walk_tree(native,0,0) && walk_tree(native,0,1)?OK:IO_ERROR;
+            if(result==OK) located_forget(directory);
         }
     }
     n3ds_files_unlock(); return result;

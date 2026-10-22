@@ -166,6 +166,7 @@ void n3ds_chicago_model_draw(const struct shader *shader,short permutation,
         }
         /* Original generic preprocessor explicitly outputs texture0 when no
          * stages exist. This is a defined path, not a fallback for other stages. */
+        if(n3ds_engine_map_is_pc() && material->maps.count!=1) {chicago_unsupported(view,shader,material);return;}
         assert(!g->stages.count && material->maps.count==1);
     }
     /* port: a Halo PC map's may be what no Xbox map's is: its extra layers
@@ -210,11 +211,14 @@ void n3ds_chicago_model_draw(const struct shader *shader,short permutation,
         long bitmap=generic?TAG_BLOCK_GET_ELEMENT(&material->maps,0,struct generic_map)->bitmap.index:
             TAG_BLOCK_GET_ELEMENT(&material->maps,0,struct chicago_map)->bitmap.index;
         const struct bitmap_group *group=bitmap_group_get(bitmap);
+        /* port: (a Halo PC map's numeric shader on what has no animation,
+         * or with no bitmaps: not drawn) */
+        if(n3ds_engine_map_is_pc() && (!group || group->bitmaps.count<=0 || !parameters->animation.values)) {chicago_unsupported(view,shader,material);return;}
         assert(group && group->bitmaps.count>0 && parameters->animation.values);
         if(material->extra_flags&2) bitmap_index=numeric_countdown_timer_get(permutation);
         else bitmap_index=numeric_frame(group->bitmaps.count,material->counter,permutation,
             parameters->animation.values[group->bitmaps.count==8?3:0]);
-        assert(bitmap_index>=0);
+        if(bitmap_index<0) return;
         static int reported;
         if(!reported) {
             char text[160];snprintf(text,sizeof(text),"NATIVE NUMERIC: original animated bitmap selection; frames=%ld limit=%u digit=%d bitmap=%d",group->bitmaps.count,material->counter,permutation,bitmap_index);

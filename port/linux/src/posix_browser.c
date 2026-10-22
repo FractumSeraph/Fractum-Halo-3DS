@@ -763,8 +763,10 @@ int posix_browser_download_open(const char *url, const char *user_agent, int *st
 		set_error(error, error_size, "a download is open already", 0);
 		return 0;
 	}
-	/* (held until it is closed: one Mbed TLS user at a time, as the
-	requests are) */
+	/* (held while the download is opened: its redirects and handshake. Its
+	body is read without: Mbed TLS has its own locks (MBEDTLS_THREADING_C),
+	and the game list's and the anchors' requests would wait minutes for a
+	map's download on the 3DS otherwise) */
 	posix_browser_lock();
 	snprintf(current, sizeof(current), "%s", url);
 	for (redirect = 0; redirect <= MAXIMUM_REDIRECTS; redirect++)
@@ -776,6 +778,7 @@ int posix_browser_download_open(const char *url, const char *user_agent, int *st
 		{
 			*length = size >= 0 && size <= 0x7fffffff ? (int)size : -1;
 			download.open = 1;
+			download_unlock();
 			return 1;
 		}
 		connection_free(&download.connection);
@@ -828,7 +831,6 @@ void posix_browser_download_close(int handle)
 		return;
 	connection_free(&download.connection);
 	download.open = 0;
-	download_unlock();
 }
 
 

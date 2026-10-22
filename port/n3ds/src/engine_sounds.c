@@ -143,8 +143,13 @@ boolean _sound_cache_sound_request(struct sound_permutation *sound, boolean bloc
     if (!entry) {
         unsigned long offset=sound->samples.file_offset;
         long size=sound->samples.size;
-        if (!fetch || size<=0 || size>SOUND_BUDGET || offset<2048 || offset>(unsigned long)view->header.file_length ||
-            (unsigned long)size>(unsigned long)view->header.file_length-offset) return FALSE;
+        /* port: (a Halo PC map's sounds are in its resource files, sounds.map
+         * or the decoded ones, at offsets past the map's own length: those
+         * were checked against their files when the map was, ce_resources.c,
+         * and n3ds_engine_sound_read fails a short read) */
+        unsigned long length=n3ds_engine_map_is_pc()?0xffffffffUL:(unsigned long)view->header.file_length;
+        if (!fetch || size<=0 || size>SOUND_BUDGET || offset<2048 || offset>length ||
+            (unsigned long)size>length-offset) return FALSE;
         for (i=0;i<SOUND_SLOTS;++i) if (!entries[i].sound) break;
         if (i==SOUND_SLOTS) {
             struct sound_entry *oldest=NULL;

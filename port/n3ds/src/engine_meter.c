@@ -31,7 +31,7 @@ void n3ds_meter_model_draw(const struct shader *shader,short permutation,
     assert(n3ds_cache_resolve(view,g,sizeof(*g))==g);
     /* Mode2 has a different destination factor and requires a separate mask
      * strategy. Neither Wizard plasma-weapon gauge uses that mode. */
-    assert(!(g->flags&8) && !(p->geometry_flags&(1<<4)));
+    if((g->flags&8) || (p->geometry_flags&(1<<4))) return; /* port: (a meter this does not draw: a Halo PC map's) */
     for(int i=0;i<5;++i) if(g->source[i]>=1 && g->source[i]<=4 && p->animation.values)
         values[i]=PIN(p->animation.values[g->source[i]-1],0.f,1.f);
     for(int c=0;c<3;++c) {

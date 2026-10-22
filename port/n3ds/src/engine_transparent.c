@@ -288,7 +288,9 @@ static void effect_draw(const struct transparent_geometry_group *group)
         char message[192];snprintf(message,sizeof(message),"NATIVE EFFECT SECONDARY: bitmap=%08lx anchor=%d sampler=%04x blend=%d shader_flags=%04x geometry=%08lx",
             shader->secondary_map.index,shader->secondary_map_anchor,shader->secondary_map_flags,shader->framebuffer_blend_function,shader->flags,group->geometry_flags);n3ds_log(message);
     }
-    assert(!secondary || (shader->secondary_map_anchor>=0 && shader->secondary_map_anchor<=1 && supported_secondary_blend && !(shader->flags&2)));
+    /* port: (a particle's secondary map this does not draw: its primary
+     * alone, rather than a stopped game; a Halo PC map's) */
+    if(secondary && (shader->secondary_map_anchor<0 || shader->secondary_map_anchor>1 || !supported_secondary_blend || (shader->flags&2))) secondary=FALSE;
     if(inactive_depth_map && shader->secondary_map.index!=NONE && !flat_particle_reported) {
         n3ds_log("NATIVE EFFECT: original flat-particle profile; anchor2 depth shaping inactive, primary particle/depth/weapon overlap retained");
         flat_particle_reported=TRUE;

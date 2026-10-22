@@ -32,7 +32,7 @@ struct rasterizer_frame_begin_parameters global_frame_parameters;
 _Static_assert(sizeof(global_window_parameters) == 600, "Original window ABI");
 _Static_assert(sizeof(struct native_render_vertex) == 32, "GPU vertex ABI");
 
-enum { GEOMETRY_SLOTS=512 };
+enum { GEOMETRY_SLOTS=1024 }; /* port: (a large Halo PC map's materials: was 512, an exit when passed) */
 struct native_geometry {
     const struct vertex_buffer *source;
     struct native_render_vertex *vertices;
@@ -66,7 +66,7 @@ static unsigned int bsp_lightmap_draws,bsp_detail_draws,bsp_base_draws,bsp_light
 static struct native_geometry geometry[GEOMETRY_SLOTS];
 /* The original immutable owners remain authoritative. A compact index avoids
  * scanning the same BSP geometry twice for every material, every eye. */
-static unsigned short geometry_lookup[1024];
+static unsigned short geometry_lookup[2048];
 static unsigned int geometry_count;
 static int frame_state, diffuse_active;
 #include "engine_bsp_index_visibility.inl"
@@ -213,29 +213,40 @@ void _rasterizer_dispose(void)
     n3ds_gpu_renderer_dispose(); rasterizer_globals.initialized=FALSE;
 }
 
+/* port: a material's vertices this does not take (a Halo PC map's: more
+ * than GEOMETRY_SLOTS materials, a vertex not finite, no GPU memory left)
+ * are not drawn, said once each, rather than a stopped game */
+static void geometry_refused(const void *source,int line)
+{
+    static const void *last;
+    if(source==last) return;
+    last=source;
+    char text[96];snprintf(text,sizeof(text),"NATIVE BSP: a material's vertices not drawn (engine_rasterizer.c:%d)",line);n3ds_log(text);
+}
 static struct native_geometry *get_geometry(const struct vertex_buffer *source)
 {
+#define GEOMETRY_CHECK(e) do { if(!(e)) { geometry_refused(source,__LINE__);n3ds_gpu_geometry_free(vertices);return NULL; } } while(0)
     unsigned int i;
     const struct n3ds_cache_view *bsp=n3ds_engine_cache_view(1);
     real *decoded;
-    struct native_render_vertex *vertices;
-    assert(source && n3ds_cache_resolve(bsp, source, sizeof(*source))==source);
-    unsigned int slot=((unsigned int)(uintptr_t)source>>4)*2654435761u;slot>>=22;
+    struct native_render_vertex *vertices=NULL;
+    GEOMETRY_CHECK(source && n3ds_cache_resolve(bsp, source, sizeof(*source))==source);
+    unsigned int slot=((unsigned int)(uintptr_t)source>>4)*2654435761u;slot>>=21;
     while(geometry_lookup[slot]) {
         struct native_geometry *entry=geometry+geometry_lookup[slot]-1;
         if(entry->source==source) return entry;
-        slot=(slot+1)&1023;
+        slot=(slot+1)&2047;
     }
-    assert(geometry_count<GEOMETRY_SLOTS && source->count>0 && source->count<=65535);
-    assert(source->type==_rasterizer_vertex_type_environment_compressed || source->type==_rasterizer_vertex_type_environment_uncompressed);
+    GEOMETRY_CHECK(geometry_count<GEOMETRY_SLOTS && source->count>0 && source->count<=65535);
+    GEOMETRY_CHECK(source->type==_rasterizer_vertex_type_environment_compressed || source->type==_rasterizer_vertex_type_environment_uncompressed);
     i=source->type==_rasterizer_vertex_type_environment_compressed ? 32 : 56;
-    assert(source->base_address && n3ds_cache_resolve(bsp, source->base_address, source->count*i)==source->base_address);
+    GEOMETRY_CHECK(source->base_address && n3ds_cache_resolve(bsp, source->base_address, source->count*i)==source->base_address);
     /* Decode in a small stack window. A full temporary uncompressed mesh can
      * require hundreds of KiB in a fragmented original-model CPU heap, even
      * though its final GPU vertices fit comfortably in linear memory. */
     unsigned int stride=i;
     real scratch[64*14];
-    vertices=n3ds_gpu_geometry_allocate(source->count*sizeof(*vertices)); assert(vertices);
+    vertices=n3ds_gpu_geometry_optional_allocate(source->count*sizeof(*vertices)); GEOMETRY_CHECK(vertices);
     for(unsigned int base=0;base<(unsigned long)source->count;base+=64) {
         unsigned int chunk=MIN(64,(unsigned long)source->count-base);
         if(stride==32) {
@@ -244,7 +255,7 @@ static struct native_geometry *get_geometry(const struct vertex_buffer *source)
         } else decoded=(real *)source->base_address+base*14;
         for(unsigned int j=0;j<chunk;++j) {
             real *v=decoded+j*14;real light;i=base+j;
-            assert(isfinite(v[0]) && isfinite(v[1]) && isfinite(v[2]) && isfinite(v[12]) && isfinite(v[13]));
+            GEOMETRY_CHECK(isfinite(v[0]) && isfinite(v[1]) && isfinite(v[2]) && isfinite(v[12]) && isfinite(v[13]));
             memcpy(vertices[i].position,v,12);memcpy(vertices[i].uv,v+12,8);
             light=.3f+.7f*fabsf(v[3]*.3f+v[4]*.4f+v[5]*.8660254f);
             vertices[i].color[0]=light*.72f;vertices[i].color[1]=light*.82f;vertices[i].color[2]=light*.9f;
@@ -254,6 +265,7 @@ static struct native_geometry *get_geometry(const struct vertex_buffer *source)
     struct native_geometry *entry=geometry+geometry_count;
     entry->source=source;entry->vertices=vertices;geometry_lookup[slot]=++geometry_count;
     return entry;
+#undef GEOMETRY_CHECK
 }
 /* Native implementation of the original indexed-draw entrypoint. The caller
  * owns material state; this routine validates staging and copies indices into
@@ -268,9 +280,9 @@ void rasterizer_draw_dynamic_triangles_static_vertices(long handle, long first,
     assert(first>=0 && count>=0 && (unsigned long)first<=triangles->count &&
         (unsigned long)count<=triangles->count-first);
     if (!count) return;
-    vertices=get_geometry(source)->vertices;
+    {struct native_geometry *entry=get_geometry(source);if(!entry) return;vertices=entry->vertices;}
     for (i=0;i<(unsigned long)count*3;++i)
-        assert(triangles->indices[first*3+i]<source->count);
+        if(triangles->indices[first*3+i]>=source->count) {geometry_refused(source,__LINE__);return;}
     assert(n3ds_gpu_geometry_draw(vertices,triangles->indices+first*3,count*3));
 }
 void _rasterizer_environment_diffuse_textures_begin(void) { assert(frame_state==3 && !diffuse_active); diffuse_active=1; }
@@ -371,11 +383,15 @@ void n3ds_engine_bsp_draw(const struct shader *shader,short bitmap_index,
     assert(frame_state==3 && diffuse_active && count && count%3==0 && count<=131072*3);
     assert(environment && n3ds_cache_resolve(tags,environment,sizeof(*environment))==environment && shader->base.type==3);
     struct native_geometry *entry=get_geometry(source);
+    if(!entry) return;
     struct native_render_vertex *vertices=entry->vertices;
     if(!entry->indices) {
-        assert(indices && n3ds_cache_resolve(bsp,indices,count*sizeof(*indices))==indices);
-        for(unsigned int i=0;i<count;++i) assert(indices[i]<source->count);
-        entry->indices=n3ds_gpu_geometry_allocate(count*sizeof(*indices));assert(entry->indices);
+        /* port: (a Halo PC map's surfaces indexing past its vertices, or no
+         * GPU memory for them: the material not drawn) */
+        if(!(indices && n3ds_cache_resolve(bsp,indices,count*sizeof(*indices))==indices)) {geometry_refused(source,__LINE__);return;}
+        for(unsigned int i=0;i<count;++i) if(indices[i]>=source->count) {geometry_refused(source,__LINE__);return;}
+        entry->indices=n3ds_gpu_geometry_optional_allocate(count*sizeof(*indices));
+        if(!entry->indices) {geometry_refused(source,__LINE__);return;}
         memcpy(entry->indices,indices,count*sizeof(*indices));
         n3ds_gpu_geometry_flush(entry->indices,count*sizeof(*indices));
         entry->index_source=indices;entry->index_count=count;
@@ -398,7 +414,7 @@ void n3ds_engine_bsp_draw(const struct shader *shader,short bitmap_index,
                     const byte *at=(const byte *)lightmap_source->base_address+v*stride;
                     if(stride==8) {short packed[2];memcpy(packed,at+4,4);uv[0]=(packed[0]*2.f+1.f)/65535.f;uv[1]=(packed[1]*2.f+1.f)/65535.f;}
                     else memcpy(uv,at+12,8);
-                    assert(isfinite(uv[0]) && isfinite(uv[1]));
+                    if(!isfinite(uv[0]) || !isfinite(uv[1])) uv[0]=uv[1]=0;
                 }
                 memcpy(entry->light_uv+v*2,uv,sizeof(uv));
             }

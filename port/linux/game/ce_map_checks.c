@@ -528,6 +528,7 @@ static boolean ce_map_check_tags(
 	unsigned long tag_data_offset,
 	unsigned long tag_data_size)
 {
+	int image_malloced = 1;
 	struct ce_image image, tags;
 	struct ce_tag_header header;
 	struct ce_tag_instance *instances;
@@ -563,6 +564,17 @@ static boolean ce_map_check_tags(
 		extern boolean cache_files_tags_are_loaded(void);
 
 		image.data = cache_files_tags_are_loaded() ? NULL : xbox_pointer(CE_IMAGE_TAG_CACHE_BASE);
+	}
+#elif defined(HALO_N3DS)
+	/* port: (the New 3DS) in the space a Halo PC map's tags are read into,
+	kept for the run, while no Halo PC map is loaded (engine_ce_cache.inl);
+	else an image of its own */
+	{
+		extern int n3ds_ce_space_checker_image(void);
+		extern unsigned char *n3ds_ce_space_native;
+
+		image_malloced = !n3ds_ce_space_checker_image();
+		image.data = image_malloced ? malloc(CE_IMAGE_TAG_CACHE_SIZE) : n3ds_ce_space_native;
 	}
 #else
 	image.data = malloc(CE_IMAGE_TAG_CACHE_SIZE);
@@ -678,7 +690,7 @@ done:
 #ifndef HALO_3DS
 	if (model_data)
 		free(model_data);
-	if (image.data)
+	if (image.data && image_malloced)
 		free(image.data);
 #endif
 	return valid;

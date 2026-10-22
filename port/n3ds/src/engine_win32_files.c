@@ -204,6 +204,18 @@ HANDLE WINAPI CreateFileA(LPCSTR name, DWORD access, DWORD share, LPSECURITY_ATT
 	(void)flags;
 	(void)template_file;
 	n3ds_xbox_path(name, path, sizeof(path));
+	/* port: no stat before the open where the open says the same: a file
+	 * looked for in each of a map's folders (map_families.c's places) cost
+	 * two file calls a miss on a large SD card. The SD card's open refuses
+	 * a folder, as the stat's S_ISDIR did */
+	if (disposition == OPEN_EXISTING || disposition == CREATE_ALWAYS)
+	{
+		file = fopen(path, disposition == CREATE_ALWAYS ? ((access & GENERIC_READ) ? "w+b" : "wb") :
+			((access & GENERIC_WRITE) ? "r+b" : "rb"));
+		if (!file)
+			return INVALID_HANDLE_VALUE;
+		goto opened;
+	}
 	exists = stat(path, &status) == 0;
 	if (exists && S_ISDIR(status.st_mode))
 		return INVALID_HANDLE_VALUE;
@@ -236,6 +248,7 @@ HANDLE WINAPI CreateFileA(LPCSTR name, DWORD access, DWORD share, LPSECURITY_ATT
 	file = fopen(path, mode);
 	if (!file)
 		return INVALID_HANDLE_VALUE;
+opened:
 	handle = calloc(1, sizeof(*handle));
 	if (!handle)
 	{
@@ -337,6 +350,17 @@ static BOOL n3ds_win32_find_fill(struct n3ds_win32_handle *h, LPWIN32_FIND_DATAA
 			continue;
 		memset(data, 0, sizeof(*data));
 		snprintf(data->cFileName, sizeof(data->cFileName), "%s", entry->d_name);
+		/* port: the kind from the entry itself, no stat of each (a file
+		 * call an entry, which made a map folder's listing slow on a large
+		 * SD card); the size is not filled in (0): the one caller that
+		 * needs it asks for the files' it keeps, network_recording.c */
+#ifdef DT_DIR
+		if (entry->d_type == DT_DIR || entry->d_type == DT_REG)
+		{
+			data->dwFileAttributes = entry->d_type == DT_DIR ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
+			return TRUE;
+		}
+#endif
 		snprintf(path, sizeof(path), "%s/%s", h->folder_path, entry->d_name);
 		if (stat(path, &status) == 0)
 		{

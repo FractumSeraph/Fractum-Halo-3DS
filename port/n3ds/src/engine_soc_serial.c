@@ -70,6 +70,10 @@ void n3ds_soc_close(void)
     /* (a call that waits is a poll of none, 4 ms at most: posix_3ds_poll;
      * a DNS lookup or connect may take longer, two seconds given them) */
     for(int waited=0;__atomic_load_n(&soc_calls,__ATOMIC_SEQ_CST) && waited<2000;++waited) svcSleepThread(1000000LL);
+    /* (a call still in the service after that: the service is left as it
+     * is, its buffer with it, rather than freed under the thread; the
+     * system takes it back with the program) */
+    if(__atomic_load_n(&soc_calls,__ATOMIC_SEQ_CST)) {n3ds_log("NETWORK: a socket call still in the service at exit; the service left open");return;}
     socExit();
 }
 

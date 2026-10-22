@@ -255,16 +255,43 @@ void map_share_file_hash_of_pieces(
 	free(data);
 }
 
+#ifdef HALO_N3DS
+static boolean file_stamp(char const *path, unsigned long *size, unsigned long *modified);
+static boolean share_cache_load(struct map_share_file *file);
+static void share_cache_save(struct map_share_file const *file);
+#endif
+
 /* the hashing thread: the job's file read a piece at a time */
 static unsigned long __stdcall hash_job_run(
 	void *input)
 {
 	struct hash_job *job = input;
-	byte *piece = malloc(MAP_SHARE_PIECE_BYTES);
-	FILE *stream = fopen(job->path, "rb");
+	byte *piece;
+	FILE *stream;
 	long size = -1;
 	long index;
+#ifdef HALO_N3DS
+	/* port: (the 3DS) the SD card's cache of the file's hashes first, and
+	the hashes written to it after: here, in the hashing, so that a map
+	hashed as a game is hosted (map_share_map_hash, on the game thread,
+	which took 30 s for a 14 MB map on a large SD card) is read once a
+	file, not once a run, and the cache's own file calls are the thread's,
+	not the game thread's */
+	struct map_share_file cached;
 
+	csmemset(&cached, 0, sizeof(cached));
+	csstrncpy(cached.path, job->path, sizeof(cached.path) - 1);
+	if (file_stamp(job->path, &cached.size, &cached.modified) && share_cache_load(&cached))
+	{
+		job->size = cached.size;
+		job->piece_count = cached.piece_count;
+		job->piece_hashes = cached.piece_hashes;
+		csmemcpy(job->hash, cached.hash, MAP_SHARE_HASH_BYTES);
+		return 0;
+	}
+#endif
+	piece = malloc(MAP_SHARE_PIECE_BYTES);
+	stream = fopen(job->path, "rb");
 	job->piece_hashes = NULL;
 	if (!piece || !stream || fseek(stream, 0, SEEK_END) != 0 || (size = ftell(stream)) < 0 ||
 		fseek(stream, 0, SEEK_SET) != 0)
@@ -296,6 +323,15 @@ static unsigned long __stdcall hash_job_run(
 		map_share_file_hash_of_pieces(job->size, job->piece_hashes, job->piece_count, job->hash);
 	else
 		job->failed = TRUE;
+#ifdef HALO_N3DS
+	if (job->piece_hashes && cached.modified)
+	{
+		cached.piece_count = job->piece_count;
+		cached.piece_hashes = job->piece_hashes;
+		csmemcpy(cached.hash, job->hash, MAP_SHARE_HASH_BYTES);
+		share_cache_save(&cached);
+	}
+#endif
 
 	return 0;
 }
@@ -842,9 +878,6 @@ void map_share_files_update(
 					csmemcpy(file->hash, globals->job.hash, MAP_SHARE_HASH_BYTES);
 					file->ready = TRUE;
 					map_share_map_hash_remember(file->path, file->hash);
-#ifdef HALO_N3DS
-					share_cache_save(file);
-#endif
 				}
 			}
 			else
@@ -885,14 +918,8 @@ void map_share_files_update(
 
 		if (file->used && !file->ready && !file->failed)
 		{
-#ifdef HALO_N3DS
-			if (share_cache_load(file))
-			{
-				error(_error_silent, "map sharing: %s's hashes read from the SD card's cache", file->path);
-				map_share_map_hash_remember(file->path, file->hash);
-				continue;
-			}
-#endif
+			/* (the SD card's cache of its hashes is the hashing's to read:
+			hash_job_run, off the game thread) */
 			if (!hash_job_start(_hash_job_file, file->path, index))
 				file->failed = TRUE;
 			return;

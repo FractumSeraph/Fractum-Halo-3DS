@@ -151,6 +151,35 @@ int map_file_hash_prefix(const char *path, unsigned int *prefix)
 
 	if (!path || strlen(path) >= MAP_FILE_HASH_PATH_SIZE)
 		return 0;
+#ifdef HALO_N3DS
+	/* port: (the 3DS) the entry kept for the path, by the file's size and
+	time (one stat), before the file is opened, sized, timed and sampled
+	(eleven file calls, slow on a large SD card: the menus' map list and a
+	join asked this of each map) */
+	{
+		WIN32_FILE_ATTRIBUTE_DATA stamp;
+
+		if (GetFileAttributesExA(path, GetFileExInfoStandard, &stamp) && !stamp.nFileSizeHigh)
+		{
+			pthread_mutex_lock(&map_file_hashes.lock);
+			map_file_hashes_load();
+			for (index = 0; index < map_file_hashes.count; index++)
+			{
+				struct map_file_hash_entry const *kept = &map_file_hashes.entries[index];
+
+				if (!strcmp(kept->path, path) && kept->size == stamp.nFileSizeLow &&
+					kept->time_low == stamp.ftLastWriteTime.dwLowDateTime &&
+					kept->time_high == stamp.ftLastWriteTime.dwHighDateTime)
+				{
+					*prefix = kept->prefix;
+					pthread_mutex_unlock(&map_file_hashes.lock);
+					return 1;
+				}
+			}
+			pthread_mutex_unlock(&map_file_hashes.lock);
+		}
+	}
+#endif
 	file = CreateFileA(path, GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 	if (file == INVALID_HANDLE_VALUE)
 		return 0;

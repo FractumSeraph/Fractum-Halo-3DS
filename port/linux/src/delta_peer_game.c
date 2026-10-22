@@ -526,8 +526,18 @@ static void client_map(void)
 		if (map_share_downloading(name))
 			return;
 	}
+	/* port: (being hashed: asked again in half a second, not each frame:
+	each asking finds the map's file in its folders and its stamp, twenty
+	file calls, a stalled game for the hash's time on a large SD card) */
+	{
+		static DWORD asked_time;
+		DWORD now = GetTickCount();
+
+		if (now - asked_time < 500)
+			return;
+		asked_time = now;
+	}
 	result = delta_maps_identity(name, &mine);
-	/* (being hashed: asked again next frame) */
 	if (!result)
 		return;
 	delta_game.map_checked = generation;

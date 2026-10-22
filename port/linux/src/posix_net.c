@@ -1120,6 +1120,22 @@ static posix_ulong posix_3ds_resolve(const char *host)
 	milliseconds = (long)((end.tv_sec - start.tv_sec) * 1000 + (end.tv_nsec - start.tv_nsec) / 1000000);
 	if (index == name_count && name_count < NAMES)
 		name_count++;
+	else if (index == NAMES)
+	{
+		/* (the table full: a failed entry's place taken, else the
+		oldest's; before, a 33rd name was never kept, and looked up,
+		blocking the socket service, each time) */
+		static int next_evicted;
+		int candidate;
+
+		index = next_evicted++ % NAMES;
+		for (candidate = 0; candidate < NAMES; candidate++)
+			if (!names[candidate].address)
+			{
+				index = candidate;
+				break;
+			}
+	}
 	if (index < NAMES)
 	{
 		snprintf(names[index].name, NAME_SIZE, "%s", host);

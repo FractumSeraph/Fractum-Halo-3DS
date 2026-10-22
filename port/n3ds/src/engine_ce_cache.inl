@@ -51,11 +51,23 @@ void n3ds_xbox_path(const char *in, char *out, size_t size);
 static struct n3ds_ce_space native_ce_relocation;
 static int native_is_ce;
 
-/* the space, made once and kept while a Halo PC map is loaded */
+/* the space, made once and kept for the run (port: not given back when
+   the map unloads: a long session's heap could not give 31 MB contiguous
+   again, and every Halo PC map was refused until restart. The map checker
+   reads a map's tags into it while no Halo PC map is loaded,
+   ce_map_checks.c, which spares it a 23 MB image of its own) */
+static int ce_space_relocation_ready;
+
+int n3ds_ce_space_checker_image(void)
+{
+	return n3ds_ce_space_native && !native_is_ce;
+}
+
 static int ce_space_prepare(void)
 {
-	if (n3ds_ce_space_native)
+	if (n3ds_ce_space_native && ce_space_relocation_ready)
 		return 1;
+	if (!n3ds_ce_space_native)
 	{
 		extern unsigned long n3ds_cache_heap_headroom(void);
 		extern unsigned int __ctru_heap_size, __ctru_linear_heap_size;
@@ -64,17 +76,17 @@ static int ce_space_prepare(void)
 		snprintf(text, sizeof(text), "CE MAP: heap %u bytes (%lu free), linear heap %u; the space needs %u",
 			__ctru_heap_size, n3ds_cache_heap_headroom(), __ctru_linear_heap_size, (unsigned)N3DS_CE_SPACE_SIZE);
 		n3ds_log(text);
+		n3ds_ce_space_native = memalign(4096, N3DS_CE_SPACE_SIZE);
+		if (!n3ds_ce_space_native)
+		{
+			snprintf(platform_ce_tag_cache_error, sizeof(platform_ce_tag_cache_error),
+				"no memory for a Halo PC map's tags (%u bytes)", (unsigned)N3DS_CE_SPACE_SIZE);
+			n3ds_log("CE MAP: no memory for the tag cache's space");
+			return 0;
+		}
+		n3ds_ce_space_size = N3DS_CE_SPACE_SIZE;
+		platform_ce_conversion_room = N3DS_CE_CONVERSION_ROOM;
 	}
-	n3ds_ce_space_native = memalign(4096, N3DS_CE_SPACE_SIZE);
-	if (!n3ds_ce_space_native)
-	{
-		snprintf(platform_ce_tag_cache_error, sizeof(platform_ce_tag_cache_error),
-			"no memory for a Halo PC map's tags (%u bytes)", (unsigned)N3DS_CE_SPACE_SIZE);
-		n3ds_log("CE MAP: no memory for the tag cache's space");
-		return 0;
-	}
-	n3ds_ce_space_size = N3DS_CE_SPACE_SIZE;
-	platform_ce_conversion_room = N3DS_CE_CONVERSION_ROOM;
 	if (!n3ds_ce_space_create(&native_ce_relocation, n3ds_ce_space_native, CE_TAG_CACHE_BASE, N3DS_CE_SPACE_SIZE))
 	{
 		free(n3ds_ce_space_native);
@@ -82,15 +94,15 @@ static int ce_space_prepare(void)
 		n3ds_ce_space_size = 0;
 		return 0;
 	}
+	ce_space_relocation_ready = 1;
 	return 1;
 }
 
 static void ce_space_release(void)
 {
-	n3ds_ce_space_dispose(&native_ce_relocation);
-	free(n3ds_ce_space_native);
-	n3ds_ce_space_native = NULL;
-	n3ds_ce_space_size = 0;
+	if (ce_space_relocation_ready)
+		n3ds_ce_space_dispose(&native_ce_relocation);
+	ce_space_relocation_ready = 0;
 }
 
 /* a map name's Halo PC map file (its family's folders: map_families.c), on
@@ -248,8 +260,17 @@ static void ce_tags_unload(void);
 static int ce_bsp_resolve_outside(const struct n3ds_cache_view *view, const void *address, unsigned long bytes)
 {
 	extern int ce_bsp_vertex_memory_holds(const void *address, unsigned long bytes);
+	extern int ce_models_vertex_memory_holds(const void *address, unsigned long bytes);
 
-	return native_is_ce && view == &native_bsp && ce_bsp_vertex_memory_holds(address, bytes);
+	if (!native_is_ce)
+		return 0;
+	/* (and a model's vertices kept outside the tag cache the same way,
+	   ce_models.c, read as the tags' own) */
+	if (view == &native_bsp)
+		return ce_bsp_vertex_memory_holds(address, bytes);
+	if (view == &native_tags)
+		return ce_models_vertex_memory_holds(address, bytes);
+	return 0;
 }
 
 /* port: a Halo PC map's load that failed after its space was had: the space
@@ -277,12 +298,13 @@ static long ce_tags_load(const char *name)
 
 	if (!ce_map_path(name, path, sizeof(path), file, sizeof(file)) || !ce_header_read(path, &header))
 		return NONE;
+	if (!ce_space_prepare())
+		return NONE;
 	/* (the fork's checks of every offset, count and size in it the
 	conversion reads, before any is converted: a map shared or downloaded
 	is anyone's (ce_map_checks.c, through cache_files_windows.c's
 	ce_map_open, which keeps the map's file open for its own sounds too).
-	Before the space is had: the check reads the tag cache into an image of
-	its own, let go of after) */
+	The check reads the tag cache into the space, had first) */
 	{
 		extern boolean cache_files_ce_map_refused(char const *map_name, char *text, long size);
 		char why[384];
@@ -294,8 +316,6 @@ static long ce_tags_load(const char *name)
 			return NONE;
 		}
 	}
-	if (!ce_space_prepare())
-		return NONE;
 	snprintf(message, sizeof(message), "CE MAP: %s (%s), version %ld, %ld bytes of tags", name, path,
 		(long)header.version, (long)header.tag_data_size);
 	n3ds_log(message);

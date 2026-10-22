@@ -956,19 +956,25 @@ void _rasterizer_model_draw(struct shader *shader, short permutation,
         assert(vertices && ((active_merged && vertices==&active_merged->vertices) || n3ds_cache_resolve(tags,vertices,sizeof(*vertices))==vertices));
         data=vertices->base_address; count=vertices->count; type=vertices->type;
     }
-    assert(count>0 && count<=65535 && (type==4 || type==5));
+    /* port: a part whose vertices or strips are not had (a Halo PC map's
+     * the conversion found no room for, ce_models.c) is not drawn, said
+     * once, rather than a stopped game */
+    static const void *part_refused;
+#define PART_CHECK(e) do { if(!(e)) { if(part_refused!=shader) {part_refused=shader;char text_[96];snprintf(text_,sizeof(text_),"NATIVE MODEL: a part not drawn (engine_models.c:%d)",__LINE__);n3ds_log(text_);} return; } } while(0)
+    PART_CHECK(count>0 && count<=65535 && (type==4 || type==5));
     stride=type==4 ? 68 : 32;
-    if (dynamic_vertices==NONE && !active_merged) assert(data && n3ds_cache_resolve(tags,data,count*stride)==data);
+    if (dynamic_vertices==NONE && !active_merged) PART_CHECK(data && n3ds_cache_resolve(tags,data,count*stride)==data);
     if (dynamic_triangles!=NONE) {
         const struct native_triangle_view *t=n3ds_dynamic_triangles_get(dynamic_triangles);
         assert(!triangles && t && (unsigned long)triangle_count<=t->count);
         indices=t->indices; triangle_type=0;
     } else {
         assert(triangles && ((active_merged && triangles==&active_merged->triangles) || n3ds_cache_resolve(tags,triangles,sizeof(*triangles))==triangles));
-        assert(triangle_count<=triangles->count && (triangles->type==0 || triangles->type==1));
+        PART_CHECK(triangle_count<=triangles->count && (triangles->type==0 || triangles->type==1));
         indices=triangles->base_address; triangle_type=triangles->type;
         i=triangle_type ? (triangle_count+2)*2 : triangle_count*6;
-        assert(indices && ((active_merged && indices==active_merged->triangles.base_address) || n3ds_cache_resolve(tags,indices,i)==indices));
+        PART_CHECK(indices && ((active_merged && indices==active_merged->triangles.base_address) || n3ds_cache_resolve(tags,indices,i)==indices));
+#undef PART_CHECK
     }
     const unsigned short *draw_indices;
     if(dynamic_triangles==NONE) draw_indices=static_indices(triangle_type,indices,triangle_count,count,&index_count);
@@ -1172,7 +1178,7 @@ void _rasterizer_model_draw(struct shader *shader, short permutation,
                 char message[240];snprintf(message,sizeof(message),"MODEL DECAL BITMAP: tag=%08lx bitmap=%08lx permutation=%d textures=%u bytes=%u name=%.120s",tags->instances[t].tag_index,bitmap,permutation,n3ds_engine_texture_count(),n3ds_engine_texture_bytes(),tags->instances[t].name);n3ds_log(message);break;
             }
         }
-        assert(texture_bound);
+        if(!texture_bound) return; /* port: (a decal's texture not had: not drawn) */
         assert(n3ds_gpu_model_cpu_relative_draw(gpu,draw_indices,index_count,!!(parameters.geometry_flags&(1u<<4)),1,!!(material_flags&((1u<<1)|(1u<<5))),&native_material));
         static const void *seen[32];static unsigned int seen_count;
         for(i=0;i<seen_count && seen[i]!=shader;++i) {}
