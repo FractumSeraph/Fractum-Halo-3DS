@@ -942,7 +942,7 @@ int halo_engine_boot(void)
     int original_model=n3ds_input_platform_original_model();
     CHECK(n3ds_engine_texture_apply_saved_profile());
     n3ds_log(original_model?
-        "PERFORMANCE PROFILE: original; world 320x192 adaptive/RGB565, textures32, LOD gameplay1/cinematic1/weapon2/distant0, foliage1/4-1/6, base-lit materials, particles48/draw64, emitter cap12, sprite layers2, radar16; full-rate controls/HUD":
+        "PERFORMANCE PROFILE: original; world 320x192 adaptive/RGB565, textures32, LOD gameplay1/cinematic1/weapon2/distant0 plus optional model packs, foliage1/4-1/6, base-lit materials, particles32/draw64, decorative emitter cap3, sprite layers2, radar16; full-rate controls/HUD":
         "PERFORMANCE PROFILE: New; PC world textures64 standard/128+mip high, LOD gameplay3/closeup cinematics/distant1-2, cosmetic particles144/draw192, dense emitter cap32, large sprite layers8, radar32; full-rate controls/HUD");
     if(HALO_N3DS_MISSION_TICKS) {
         CHECK(!n3ds_gpu_plasma_lut_tests());
@@ -963,6 +963,7 @@ int halo_engine_boot(void)
         CHECK(!n3ds_gpu_model_material_tests());
         CHECK(!n3ds_gpu_cube_tests());
         CHECK(!n3ds_gpu_fragment_tests());
+        CHECK(!n3ds_gpu_fog_tests());
         CHECK(!n3ds_gpu_model_lighting_tests());
         CHECK(!n3ds_engine_cube_layout_tests());
         CHECK(!n3ds_gpu_model_reflection_tests());

@@ -2333,6 +2333,8 @@ if (!valid_real_matrix4x3(matrix)) \
 }
 
 #ifdef HALO_N3DS
+#include "engine_object_reuse.inl"
+#include "engine_float_phase.h"
 static boolean native_distant_pose(long index,const struct object_datum *object)
 {
  extern int n3ds_network_coop_active(void);
@@ -2371,6 +2373,9 @@ void object_compute_node_matrices(
 	struct object_definition *object_definition = object_definition_get(object->definition_index);
 	
 	real_matrix4x3 *object_nodes = (real_matrix4x3 *)object_header_block_get(object_index, &object->object.node_matrices);
+#ifdef HALO_N3DS
+    if (native_stationary_pose_reuse(object_index, object, object_definition, object_nodes)) return;
+#endif
 	real_orientation *node_orientations =
 		TEST_FLAG(_object_mask_cannot_interpolate, object->object.type) ?
 		cannot_interpolate_node_orientations_storage :
@@ -4938,7 +4943,11 @@ static void object_compute_function_values(
 
 		if (function->step_count>1)
 		{
-			real floor_value = floor(function->step_count*value);
+			#ifdef HALO_N3DS
+            real floor_value = n3ds_float_floor(function->step_count*value);
+#else
+            real floor_value = floor(function->step_count*value);
+#endif
 			value = floor_value*function->runtime_reciprocal_step_count;
 		}
 
@@ -5002,7 +5011,11 @@ static void object_compute_function_values(
 
 		if (TEST_FLAG(function->flags, _object_function_clip_to_bounds_and_normalize))
 		{
-			output = fmod(output+object->object.outgoing_function_values[function_index], 1.f);
+			#ifdef HALO_N3DS
+            output = n3ds_float_fraction(output+object->object.outgoing_function_values[function_index]);
+#else
+            output = fmod(output+object->object.outgoing_function_values[function_index], 1.f);
+#endif
 		}
 
 		object->object.outgoing_function_values[function_index] = output;

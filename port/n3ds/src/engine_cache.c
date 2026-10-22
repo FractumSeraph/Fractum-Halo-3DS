@@ -424,6 +424,7 @@ long n3ds_engine_tags_load(const char *name)
     native_stream_opens=native_stream_reads=native_stream_bytes=0;
     cache_files_bind_native(&native_tags.header, native_tags.tag_header);
     if(strcmp(native_name,"ui")) n3ds_engine_texture_prewarm_hud();
+    {extern void n3ds_model_lod_prepare(void);n3ds_model_lod_prepare();}
     return native_tags.tag_header->scenario_tag_index;
 }
 
@@ -505,6 +506,7 @@ void n3ds_engine_tags_unload(void)
     n3ds_cache_close(&bsp_arena);bsp_arena_attempted=0;bsp_reads_clear();
     extern void n3ds_gpu_model_cache_release(void);
     n3ds_gpu_model_cache_release();
+    {extern void n3ds_model_lod_close(void);n3ds_model_lod_close();}
     n3ds_files_lock();
     if(native_read_stream) {
         int closed=!fclose(native_read_stream);native_read_stream=NULL;assert(closed);

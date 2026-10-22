@@ -9,6 +9,7 @@ Commands below run from the repository root unless stated otherwise.
 - [Setup formats and recovery](#setup-formats-and-recovery)
 - [Engine and platform boundary](#engine-and-platform-boundary)
 - [Rendering rules](#rendering-rules)
+- [Original-model optimization packs](#original-model-optimization-packs)
 - [Stability and timing rules](#stability-and-timing-rules)
 - [Circle Pad Pro input](#circle-pad-pro-input)
 - [Local wireless multiplayer](#local-wireless-multiplayer)
@@ -617,6 +618,46 @@ red and blue, making ordinary Blood Gulch terrain appear blue and its sky pink.
 - Original models have smaller memory and rendering budgets. Use model checks;
   do not lower New-model quality to fix an Original-model allocation failure.
 
+## Original-model optimization packs
+
+The setup tool generates optional `halo-source/<map>.hld` files from the user's
+expanded Xbox maps. These contain vertex remaps and triangle lists for smaller
+render meshes. The maps, collision geometry, skeletons and gameplay data stay
+unchanged. New 3DS ignores the packs; first-person weapons, UI, skies and special
+effect materials also retain their existing geometry.
+
+Simplification preserves open boundaries, duplicate-position seams and bone
+palettes, limits weight/UV changes and checks topology and triangle orientation.
+Only meshes saving at least 10% of both vertices and triangles are included.
+Packs are bounded to 512 KiB per map; the runtime's compacted vertex cache is
+bounded to 256 KiB. Missing, incompatible or damaged packs fall back to the
+original geometry. Packs are read at map load, not during rendering. Keep the
+pack format version synchronized between `setup/Core/ModelLods.cs` and
+`include/engine_model_lod.inl` when changing it.
+
+Replacing the 3DSX is enough for the collision, pose and effects changes. To add
+the geometry packs, run normal setup again with the source maps or XISO; it
+keeps verified installed maps and preserves saves/settings. **Update game only**
+does not generate packs. PC maps currently retain their existing geometry.
+
+Both model families reuse exact stationary poses and bounded collision BSP
+traversals. The collision cache omits only branches outside an enclosing sphere;
+remaining planes, breakable surfaces and moving objects keep their original
+tests. Map/BSP changes clear these caches. Original models additionally reuse
+eligible distant off-axis base poses on alternate ticks and reduce decorative
+particle simulation/density. Players, scripted clocks and gameplay projectiles
+remain at the original simulation rate. New-model effect and geometry quality
+are unchanged.
+
+`dotnet run --project port/n3ds/setup/Tests -c Release -- model-tests` checks the
+simplifier's boundaries, winding, seams and cancellation. The host C tests in
+`port/n3ds/tests/src/{collision_query,object_reuse,model_lod}_tests.c` exercise the
+actual runtime helpers. Compile with `-Iport/n3ds/include`; the collision test
+requires a platform with 32-bit `long`, matching the game. The model loader test
+takes an expanded Blood Gulch map and its generated pack as arguments. It uses
+local game files and does not redistribute them. Emulator timing is useful for
+regressions, but physical Original/New-model runs are required to establish FPS.
+
 ## Stability and timing rules
 
 Compressed animation streams can contain unaligned floats. Keep byte-safe loads
@@ -627,6 +668,30 @@ Gameplay state, scripts and rendering have shared ownership. Worker jobs operate
 on disjoint data with explicit lifetime fences; do not move arbitrary AI or object
 mutations to another core. Cache keys must include pose/instance mutations and
 must not survive invalidated map or tag storage.
+
+CPU animation phase/floor helpers preserve float results rather than lowering
+animation frequency. The model-name cache stores immutable marker/node indices,
+checks the complete name, separates marker and node searches, and invalidates
+by map-cache generation. It does not cache live attachment matrices.
+
+Checkpoint capture shares immutable compressed blocks, uses aligned word reads
+to detect empty arena blocks, and reuses one LZ4 workspace. Pointer relocation records use a bounded two-pass
+radix sort, with the comparison sort retained as an allocation-failure fallback. Equality of nonempty
+blocks requires matching compressed bytes, not just a hash. Reference counts are
+owned by the main thread; SD workers only read retained snapshots. The original
+1.5 MiB packed snapshot cap remains on Original models, with the existing disk
+fallback when memory is insufficient. Selecting a profile pre-resolves its checkpoint directory and invalidates any
+previous cached path, including reuse of the same numeric profile index. This
+avoids on-card profile-index reads at each checkpoint. Background writes release the file lock
+between at most 8 KiB chunks. This reduces contention; capture, filesystem flushes,
+and a low-memory fallback can still cause pauses. The on-card save format is unchanged.
+
+Run `python port/n3ds/tests/test_cpu_checkpoint.py -- clang -O2` in a host C compiler
+environment (for Windows, a Visual Studio developer prompt). It covers exact
+float results, model-name cache invalidation/collisions, immutable snapshot
+ownership, corruption and allocation failures. Use the existing checkpoint
+integration fixture as well for overlapping saves, revert, Save and Quit,
+relaunch and backup recovery; the host codec tests alone do not verify SD I/O.
 
 Checkpoint work uses bounded buffers, validated data and staged replacement.
 Preserve the existing cancellation, shutdown, Save and Quit, and map-transition
@@ -651,6 +716,26 @@ Original gameplay also omits model reflection/detail textures, uses stricter
 authored mesh LODs, thins disconnected foliage islands and limits decorative
 particles. Base textures, cutouts, team colors, emission and native lighting
 remain. These reductions do not change collision meshes or AI update rates.
+
+Outdoor distance fog uses the PICA fog lookup table with linear W-depth; the
+near plane remains unchanged. The same far plane rejects whole environment
+batches and bounds-tested models before submission. A single background draw
+blends the sky horizon into the fog color so culled terrain does not expose a
+black sky underside. First-person weapons, sky materials and HUD overlays keep
+their own depth/fog state. Premultiplied-alpha effects retain their authored fade.
+
+Original models use 60 world units in Halo, Silent Cartographer and 343 Guilty
+Spark, and 80 elsewhere; New models use 110 and 160. Cinematics have fixed longer
+ranges (at least 100/150) on those three demanding maps. Other cinematics retain
+their original range to preserve distant scripted set pieces. Menus, indoor
+views and scopes are exempt.
+Gameplay can trial two further 18% reductions under sustained rendering load,
+with slow distance changes and long holds. Fog and resolution trials do not run
+simultaneously. A fog trial that fails to improve measured work/preparation cost
+is rejected. This affects rendering only: simulation, collision, enemy activity
+and wireless state remain unchanged. Emulator timings are not hardware FPS.
+Run `port/n3ds/tests/test_fog.py -- <host C compiler> [flags]` for controller
+checks; bounded renderer diagnostics also exercise fog/depth/weapon GPU pixels.
 
 ## Circle Pad Pro input
 
@@ -1035,3 +1120,27 @@ alpha. The native two-map effect renderer now carries both texture alphas into
 the framebuffer blend. The replay completed 241 captured frames without a
 fatal error. GPU readback checks compare 50 secondary-effect cases, including
 the premultiplied mode, against independently calculated pixels.
+
+### Distant idle AI decisions
+
+The 3DS decision scheduler in `source/ai/actors.c` keeps perception, damage and
+danger handling, action timers, movement, and combat running every simulation
+tick. For stationary hostile actors that have not entered combat, only the
+decision-selection loop can run less often: every four ticks beyond 40 world
+units on Original models (50 on New models), and every six ticks beyond 65
+units (80 on New models). At the normal 30 Hz simulation rate, these are 7.5
+and 5 decision checks per second. Actor indices stagger the checks.
+
+The extra reduction excludes scripts, conversations, flying or moving actors,
+targets, stimuli, damage, dangers, nearby fighting friends, and forced actors.
+The nearest local player determines distance; friendly actors retain their
+previous schedule. Cinematics and network games bypass decision budgeting.
+Perception runs before the budget check, so newly detected threats restore
+decision processing in the same tick. This is independent of fog and does not
+freeze actors or alter saved-state layouts. It mainly reduces background idle
+work, not the cost of enemies already fighting. `IDLE AI` log lines count
+deferred decisions cumulatively for the process.
+
+Run `python port/n3ds/tests/test_idle_ai.py -- clang -O2` from a Visual Studio
+developer prompt to check cadence, staggering, wakeups, distance thresholds,
+and protected states using the production scheduler with mocked engine inputs.

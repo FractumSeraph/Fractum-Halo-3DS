@@ -127,8 +127,12 @@ int n3ds_gpu_widget_draw(const struct native_widget_vertex vertices[4],int world
         for(unsigned int j=0;j<2;++j) if(!isfinite(vertices[i].uv[j])) return 0;
     }
     float origin[3]={0};
-    if(world) {if(!effect_relative_projection(&projection,origin)) return 0;}
-    else Mtx_OrthoTilt(&projection,0,width,height,0,0,1,true);
+    if(world) {
+        if(!effect_relative_projection(&projection,origin)) return 0;
+        n3ds_gpu_fog_sky(0);n3ds_gpu_fog_blend(NATIVE_BLEND_ADD);
+    } else {
+        n3ds_gpu_fog_overlay();Mtx_OrthoTilt(&projection,0,width,height,0,0,1,true);
+    }
     C3D_BindProgram(&program);
     C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER,matrix_location,&projection);
     C3D_AttrInfo *attributes=C3D_GetAttrInfo();AttrInfo_Init(attributes);

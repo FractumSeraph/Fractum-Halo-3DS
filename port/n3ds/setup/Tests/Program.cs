@@ -5,7 +5,9 @@ if (args.Length > 0)
 {
     // Developer integration runner uses the exact core called by the WinUI app.
     string command = args[0];
-    if (command == "texture-pack") { Textures.Generate(args[1],args[2]); Data.Require(Textures.Current(args[1],args[2]),"Archive verification failed"); Console.WriteLine("PASS native texture archive generated and verified"); }
+    if (command == "model-tests") { ModelLodTests.Run(); }
+    else if (command == "model-pack") { ModelLods.Generate(args[1],args[2]); Data.Require(ModelLods.Current(args[1],args[2]),"Model pack verification failed"); Console.WriteLine("PASS model pack " + new FileInfo(args[2]).Length); }
+    else if (command == "texture-pack") { Textures.Generate(args[1],args[2]); Data.Require(Textures.Current(args[1],args[2]),"Archive verification failed"); Console.WriteLine("PASS native texture archive generated and verified"); }
     else if (command == "texture-all") {
         Directory.CreateDirectory(args[2]);
         foreach (string name in Data.Catalog.Keys) {
@@ -68,6 +70,10 @@ if (args.Length > 0)
         Data.Require(!Directory.EnumerateDirectories(Path.Combine(dest, "halo-source"), ".halo-setup-*").Any(), "Cancelled staging was not cleaned");
         var first = Installer.Run(options);
         Data.Require(first.Prepared == 2, "Expanded maps installation failed");
+        string modelPack=Path.Combine(dest,"halo-source","bloodgulch.hld");
+        string modelMap=Path.Combine(dest,"halo-source","bloodgulch.map");
+        Data.Require(ModelLods.Current(modelMap,modelPack),"Setup did not generate the Original-model pack");
+        string modelHash=Data.HashFile(modelPack);
         Console.WriteLine("PASS expanded maps-only input with separately selected retail XBE");
         string save = Path.Combine(dest, "halo-source", "state", "keep.bin");
         Directory.CreateDirectory(Path.GetDirectoryName(save)!); File.WriteAllBytes(save, [1, 2, 3, 4]);
@@ -81,8 +87,14 @@ if (args.Length > 0)
         var again = Installer.Run(options);
         Data.Require(again.Prepared == 0 && again.AlreadyCorrect == 2, "Correct files were reprocessed");
         Console.WriteLine("PASS repeat-run skip");
+        File.WriteAllBytes(modelPack,new byte[32]);
+        var modelRepair=Installer.Run(options);
+        Data.Require(modelRepair.Prepared==0 && ModelLods.Current(modelMap,modelPack) && Data.HashFile(modelPack)==modelHash,
+            "Model pack repair replaced maps or changed its output");
+        Console.WriteLine("PASS model pack generation and repair without replacing maps");
         Installer.Run(options with { Source = "", LauncherOnly = true });
         Data.Require(File.ReadAllBytes(save).SequenceEqual(new byte[] { 1, 2, 3, 4 }), "Update altered saves");
+        Data.Require(Data.HashFile(modelPack)==modelHash,"Launcher-only update changed model pack");
         Console.WriteLine("PASS launcher-only update");
         // Reject a corrupt source before publishing that map.
         string corrupt = Path.Combine(input, "bloodgulch.map");

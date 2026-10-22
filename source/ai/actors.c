@@ -1,3 +1,4 @@
+/* New3DS integration additions by Kevin Boggs. */
 /*
 ACTORS.C
 
@@ -324,6 +325,7 @@ symbols in this file:
 enum
 {
 	_actor_mode_braindead = 0,
+	_actor_mode_asleep = 1,
 	_actor_mode_alert = 2,
 	_actor_mode_combat,
 	_actor_fire_target_none = 0,
@@ -4200,24 +4202,62 @@ static long long native_actor_cost[7];
 #endif
 #ifdef HALO_N3DS
 static unsigned int native_decisions_deferred;
+static unsigned int native_idle_decisions_deferred;
+
+/* Kevin Boggs: native_idle_decision_interval
+ * Only decision selection is budgeted. Perception, action timers, movement,
+ * danger and combat still run every tick. Never use visibility/fog as an AI
+ * activation boundary: an invisible actor may still matter to the mission. */
+static unsigned int native_idle_decision_interval(const struct actor_datum *a,
+ real distance_squared, boolean hostile, int original)
+{
+ if(!hostile || a->meta.force_active ||
+    (a->state.mode!=_actor_mode_alert && a->state.mode!=_actor_mode_asleep) ||
+    a->state.been_in_combat || a->state.searching || a->state.flying ||
+    a->state.command_list_delay_timer>0 || a->situation.area_fighting_friends ||
+    a->situation.visible_fighting_friends || a->external_orders.playfighting ||
+    a->input.melee_attacker_attached || a->input.delayed_attached_projectile_index!=NONE ||
+    a->output.analog_primary_trigger>0.f || a->output.throttle.i!=0.f ||
+    a->output.throttle.j!=0.f || a->output.throttle.k!=0.f ||
+    a->input.position.velocity.i!=0.f || a->input.position.velocity.j!=0.f ||
+    a->input.position.velocity.k!=0.f)return 2;
+ if(a->state.action!=_actor_action_sleep && a->state.action!=_actor_action_alert &&
+    a->state.action!=_actor_action_guard)return 2;
+ if(a->meta.encounter_index!=NONE && encounter_get(a->meta.encounter_index)->force_active)return 2;
+ real near=original?40.f:50.f, far=original?65.f:80.f;
+ if(distance_squared>=far*far)return 6;
+ if(distance_squared>=near*near)return 4;
+ return 2;
+}
+
+/* Kevin Boggs: native_decision_due */
 static boolean native_decision_due(long index,const struct actor_datum *a)
 {
- extern int n3ds_network_coop_active(void);
- if(n3ds_network_coop_active())return TRUE;
- static const struct actor_stimulus_data no_stimuli={0};
+ extern int n3ds_network_coop_active(void),n3ds_input_platform_original_model(void);
  extern boolean cinematic_in_progress(void);
- if(!((game_time_get()+DATUM_INDEX_TO_ABSOLUTE_INDEX(index))&1) || cinematic_in_progress() ||
+ static const struct actor_stimulus_data no_stimuli={0};
+ /* Keep network simulation independent of model-specific local budgets. */
+ if(n3ds_network_coop_active() || game_connection() || cinematic_in_progress() ||
   a->meta.swarm || a->meta.dormant || a->state.command_list_index!=NONE || a->state.action_changed ||
   a->target.target_prop_index!=NONE || a->situation.known_enemies || a->danger_zone.danger_type ||
   a->input.vehicle_index!=NONE || a->input.in_midair || a->input.recent_body_damage>0 || a->input.recent_shield_damage>0 ||
   a->input.burning_to_death || a->external_orders.conversation_index!=NONE || memcmp(&a->stimuli,&no_stimuli,sizeof(no_stimuli)))return TRUE;
- boolean found=FALSE;
+ boolean found=FALSE,hostile=TRUE;
+ real nearest=REAL_MAX;
  for(short local=local_player_get_next(NONE);local!=NONE;local=local_player_get_next(local)) {
   struct player_datum *p=player_get(local_player_get_player_index(local));if(p->unit_index==NONE)continue;
   struct unit_datum *u=unit_get(p->unit_index);found=TRUE;
-  if(distance_squared3d(&u->object.position,&a->input.position.body_position)<24.f*24.f)return TRUE;
+  real distance=distance_squared3d(&u->object.position,&a->input.position.body_position);
+  if(!(distance>=24.f*24.f))return TRUE;
+  if(distance<nearest)nearest=distance;
+  if(!game_team_is_enemy(a->meta.team_index,u->object.owner_team_index))hostile=FALSE;
  }
- return !found;
+ if(!found)return TRUE;
+ unsigned int interval=native_idle_decision_interval(a,nearest,hostile,n3ds_input_platform_original_model());
+ unsigned int phase=(unsigned int)game_time_get()+DATUM_INDEX_TO_ABSOLUTE_INDEX(index);
+ boolean due=phase%interval==0;
+ if(!due && interval>2)++native_idle_decisions_deferred;
+ return due;
 }
 #endif
 static void actor_update(
@@ -4283,6 +4323,15 @@ static void actor_update(
 void actors_update(
 	void)
 {
+#ifdef HALO_N3DS
+    /* Sparse diagnostics; no per-actor SD writes or new saved-state data. */
+    if(game_time_get()%300==0 && native_idle_decisions_deferred) {
+        extern void n3ds_log(const char *);
+        char message[128];
+        snprintf(message,sizeof(message),"IDLE AI: distant_decisions_deferred=%u all_decisions_deferred=%u",native_idle_decisions_deferred,native_decisions_deferred);
+        n3ds_log(message);
+    }
+#endif
 	#ifdef HALO_N3DS_CROWD_PROFILE
     native_actor_sample=game_time_get()%30==0;
     native_actor_count=0;memset(native_actor_cost,0,sizeof(native_actor_cost));

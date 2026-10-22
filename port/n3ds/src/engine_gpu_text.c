@@ -106,6 +106,7 @@ int n3ds_gpu_text_begin(float width,float height,unsigned int tint,int point,int
 {
     long long stamp=n3ds_engine_ticks();
     if(!program_ready || width<=0 || height<=0) return 0;
+    n3ds_gpu_fog_overlay();
     point_sampled=point; wrapped=wrap;
     C3D_BindProgram(&program);
     /* Projection depends only on logical screen dimensions, not each glyph.

@@ -524,6 +524,7 @@ static struct native_render_camera current_camera;
 static C3D_Mtx current_projection,current_model_projection;
 static struct native_render_camera first_person_world_camera;
 static int first_person_active,first_person_mask;
+#include "engine_gpu_fog.inl"
 static long long frame_wait_ticks;
 static int frame_sync=1;
 static unsigned int timing_frames;
@@ -603,6 +604,7 @@ int n3ds_gpu_sky_projection(float matrix[16])
 }
 void n3ds_gpu_opaque_sky_begin(void)
 {
+    n3ds_gpu_fog_sky(1);
     C3D_Mtx projection;
     if(!n3ds_gpu_sky_projection((float *)&projection)) svcBreak(USERBREAK_PANIC);
     C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER,matrix_location,&projection);
@@ -656,6 +658,9 @@ void n3ds_gpu_map_scratch_release(void)
 
 void n3ds_gpu_renderer_dispose(void)
 {
+    if(distance_fog_white && !n3ds_gpu_texture_barrier())abort();
+    n3ds_gpu_texture_destroy(distance_fog_white);distance_fog_white=NULL;
+    distance_fog_depth_w=-1;distance_fog_lut_far=0;distance_fog_mode=-99;
     if(vertex_buffer_requests) {
         char line[160];snprintf(line,sizeof(line),"NATIVE VERTEX BINDINGS: cacheable_requests=%llu reused=%llu; world draws invalidate; same-frame descriptors only",vertex_buffer_requests,vertex_buffer_reuses);n3ds_log(line);
         vertex_buffer_requests=vertex_buffer_reuses=0;
@@ -1023,7 +1028,7 @@ static void window_state_begin(const struct native_render_camera *camera)
     model_state_valid=0;
     environment_state_valid=0;bump_state_valid=0;environment_program_valid=0;plasma_state_valid=0;
     if(!camera->suppress_clear) first_person_active=first_person_mask=0;
-    current_camera=*camera;flashlight_model_camera_update();
+    current_camera=*camera;flashlight_model_camera_update();distance_fog_window();
     C3D_BindProgram(&program);
     C3D_AttrInfo *attributes = C3D_GetAttrInfo();
     AttrInfo_Init(attributes);
@@ -1151,6 +1156,8 @@ static int model_transform_draw(const void *vertices,const unsigned short *indic
       AttrInfo_AddLoader(a,0,GPU_FLOAT,3);AttrInfo_AddLoader(a,1,GPU_FLOAT,3);AttrInfo_AddLoader(a,2,GPU_FLOAT,2);
       if(skinned) AttrInfo_AddLoader(a,3,GPU_FLOAT,4);
     } else ++model_state_reuses;
+    n3ds_gpu_fog_sky(sky);
+    if(decal)n3ds_gpu_fog_blend(NATIVE_BLEND_ALPHA);
     if(!retained || ((model_state_key^key)&114) || !!m->multipurpose!=!!model_cached_material.multipurpose ||
        m->alpha_test!=model_cached_material.alpha_test || (detailed &&
        (m->detail_function!=model_cached_material.detail_function || m->detail_mask!=model_cached_material.detail_mask || m->detail_after!=model_cached_material.detail_after)))
@@ -1335,6 +1342,7 @@ done:
     if(ready) shaderProgramFree(&probe);if(binary) DVLB_Free(binary);
     linearFree(vertices);linearFree(pixels);return !ok;
 }
+#include "engine_gpu_fog_tests.inl"
 int n3ds_gpu_cube_tests(void)
 {
     unsigned char rgba[6*8*8*4];unsigned int *readback=linearAlloc(240*400*4);
@@ -3182,7 +3190,7 @@ int n3ds_gpu_water_draw(const struct native_render_vertex *vertices,const unsign
     C3D_Mtx projection;
     if(!n3ds_gpu_world_projection((float *)&projection) ||
        (m->sky && !n3ds_gpu_sky_projection((float *)&projection))) return 0;
-    n3ds_gpu_world_state_restore();
+    n3ds_gpu_world_state_restore();n3ds_gpu_fog_sky(m->sky);
     /* Two-dimensional mask and cube are independently filtered in one draw.
      * Null maps bind the neutral white texture, preserving authored absence. */
     if(!n3ds_gpu_texture_bind(0,m->cube) || !n3ds_gpu_texture_bind_sampler(1,m->base,
@@ -3230,6 +3238,7 @@ int n3ds_gpu_glass_native_sky_draw(const struct native_render_vertex *vertices,
     if(!glass_program.ready || !vertices || !indices || !count || !m) return 0;
     C3D_Mtx projection;if(!(sky?n3ds_gpu_sky_projection((float *)&projection):n3ds_gpu_world_projection((float *)&projection))) return 0;
     n3ds_gpu_world_state_restore();
+    n3ds_gpu_fog_sky(sky);n3ds_gpu_fog_blend(NATIVE_BLEND_ADD);
     if(!n3ds_gpu_texture_bind(0,m->cube) || !n3ds_gpu_texture_bind(1,m->diffuse)) return 0;
     C3D_BindProgram(&glass_program.program);
     C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER,glass_program.projection,&projection);

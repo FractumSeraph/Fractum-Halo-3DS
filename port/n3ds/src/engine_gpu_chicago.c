@@ -462,6 +462,7 @@ static int chicago_draw(const struct native_chicago_material *m,
     C3D_CullFace(m->two_sided?GPU_CULL_NONE:GPU_CULL_FRONT_CCW);
     C3D_AlphaTest(m->alpha_test,GPU_GREATER,127);
     n3ds_gpu_model_stencil_apply();
+    n3ds_gpu_fog_sky(m->sky);
     n3ds_gpu_framebuffer_blend(m->blend);
     if(m->meter) {
         /* Apply brightness in TEV so the blend unit only needs constant RGB.

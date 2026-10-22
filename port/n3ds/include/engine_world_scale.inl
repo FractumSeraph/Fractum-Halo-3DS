@@ -31,6 +31,8 @@ static void world_scale_feedback(float gpu,float prepare)
  if(!world_budget_enabled || diagnostic_mode)return;
  if(!scale_sample_ready)return;
  scale_sample_ready=0;
+ n3ds_engine_fog_feedback(scale_work_previous,gpu,scale_wait_previous,prepare,scale_policy.trial || scale_policy.cooldown>0);
+ if(n3ds_engine_fog_busy()){scale_policy.ready=0;return;}
  int next=resolution_policy_step_profile(&scale_policy,scale_work_previous,gpu,scale_wait_previous,prepare,n3ds_input_platform_original_model());
 #ifdef HALO_N3DS_WORLD_SCALE_TEST
  next=HALO_N3DS_WORLD_SCALE_TEST;

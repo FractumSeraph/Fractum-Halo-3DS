@@ -5,6 +5,7 @@
 #include "scenario/scenario.h"
 #include "structures/structure_bsp_definitions.h"
 #include "tag_files/tag_groups.h"
+#include "scenario/sky_definitions.h"
 #include "rasterizer/rasterizer.h"
 #include "rasterizer/rasterizer_geometry.h"
 #include "rasterizer/rasterizer_transparent_geometry.h"
@@ -327,7 +328,8 @@ static void flame_stream_draw(void)
  * Large boxes spanning the frustum are retained; no centroid-only rejection. */
 static int batch_outside_plane(const struct mission_batch *batch,const struct render_frustum *frustum)
 {
-    for(int plane=0;plane<4;++plane) {
+    for(int plane=0;plane<6;++plane) {
+        if(plane==4)continue; /* Keep near-plane intersections; reject fully distant batches. */
         const real_plane3d *p=frustum->world_planes+plane;
         real distance=dot_product3d(&p->n,(const real_vector3d *)&batch->center)-p->d;
         real radius=fabsf(p->n.i)*batch->extent.i+fabsf(p->n.j)*batch->extent.j+fabsf(p->n.k)*batch->extent.k;
@@ -587,6 +589,18 @@ int n3ds_engine_mission_render(long unit_index,long time)
         for(int axis=0;axis<3;++axis) window.camera.position.n[axis]+=right.n[axis]*offset;
         ++render.scene_index;
         n3ds_gpu_stereo_eye(eye,offset);
+#ifdef HALO_N3DS_AUDIO_TRACE
+        long long prep_visibility_start=n3ds_engine_ticks();
+#endif
+        structure_visibility_find_camera(&render.camera);
+        struct render_fog distance_fog={0};
+        const struct sky *fog_sky=scenario_get_sky((short)render.visible_sky_index);
+        if(fog_sky) {
+            distance_fog.atmospheric_color=fog_sky->outdoor_fog.color;
+            distance_fog.atmospheric_maximum_density=fog_sky->outdoor_fog.maximum_density;
+            distance_fog.atmospheric_maximum_distance=fog_sky->outdoor_fog.opaque_distance;
+        }
+        n3ds_engine_fog_prepare(&render.camera,&window.camera,&distance_fog,render.visible_sky_index!=NONE);
         /* Original visibility/projection must agree with the off-axis GPU view. */
         real_rectangle2d bounds;
         bounds.y0=-1;bounds.y1=1;
@@ -596,10 +610,6 @@ int n3ds_engine_mission_render(long unit_index,long time)
         shift=-offset/(1.5f*tanf(window.camera.vertical_field_of_view*.5f)*(400.f/240.f));
         bounds.x0=-1+shift;bounds.x1=1+shift;
         render_camera_build_frustum(&window.camera,stereo?&bounds:NULL,&window.frustum,TRUE);
-#ifdef HALO_N3DS_AUDIO_TRACE
-        long long prep_visibility_start=n3ds_engine_ticks();
-#endif
-        structure_visibility_find_camera(&render.camera);
 #ifdef HALO_N3DS_AUDIO_TRACE
         prep_detail[1]+=n3ds_engine_ticks()-prep_visibility_start;
         prep_visibility_start=n3ds_engine_ticks();
@@ -625,6 +635,7 @@ int n3ds_engine_mission_render(long unit_index,long time)
      * glow movement. The second eye reuses the first eye's updated state. */
     render.time_delta_since_tick_sec=eye==(stereo?1:0)?frame.dt:0.f;
     render_sky();
+    n3ds_gpu_fog_backdrop();
     n3ds_object_profile(0,n3ds_engine_ticks()-object_stamp);object_stamp=n3ds_engine_ticks();
     if(eye==(stereo?1:0)) {
         struct render_camera eye_camera=render.camera;

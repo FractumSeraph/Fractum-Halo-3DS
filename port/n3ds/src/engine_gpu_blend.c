@@ -29,5 +29,6 @@ int n3ds_gpu_framebuffer_blend(int mode)
     default: return 0; /* Invalid requests must not change the previous state. */
     }
     C3D_AlphaBlend(operation,operation,source_color,destination_color,source_alpha,destination_alpha);
+    n3ds_gpu_fog_blend(mode);
     return 1;
 }

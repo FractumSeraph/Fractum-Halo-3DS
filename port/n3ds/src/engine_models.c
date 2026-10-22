@@ -353,6 +353,7 @@ static unsigned long long upload_saved_bytes;
 static void index_cache_flush(void);
 static void merged_models_release(void);
 static void scenery_mesh_release(void);
+static void native_lod_meshes_release(void);
 static void pose_release(struct cached_pose *p)
 {
     free(p->posed);free(p->bones);pose_bytes-=p->bytes;memset(p,0,sizeof(*p));
@@ -381,7 +382,7 @@ void n3ds_model_decode_cache_flush(void)
         char message[160];snprintf(message,sizeof(message),"MODEL STREAM CACHE: hits=%u misses=%u bytes=%u",decoded_hits,decoded_misses,decoded_bytes);n3ds_log(message);
     }
     for(unsigned int i=0;i<DECODE_STREAMS;++i) decode_stream_release(decoded_streams+i);
-    scenery_batch_release();merged_models_release();scenery_mesh_release();
+    scenery_batch_release();merged_models_release();scenery_mesh_release();native_lod_meshes_release();
     decoded_hits=decoded_misses=decoded_next=0;memset(decoded_hints,0,sizeof(decoded_hints));last_decoded=NULL;
     pose_hits=pose_misses=pose_clock=pose_evictions=0;
 }
@@ -872,8 +873,19 @@ int n3ds_model_chicago_gpu_draw(const struct model_vertex_uncompressed *cached,u
     int result=n3ds_gpu_chicago_transform_draw(m,gpu,count,indices,index_count,rows,nodes,stream->rigid_node<0,uv);
     if(result) ++gpu_chicago_parts;return result;
 }
+#include "engine_model_lod.inl"
+
 void n3ds_model_offload_report(void)
-{n3ds_scenery_report();char skin[128];snprintf(skin,sizeof(skin),"GPU SKIN WORK: single_influence=%u stream_vertices=%u",skin_shortcut_vertices,skin_stream_vertices);n3ds_log(skin);skin_shortcut_vertices=skin_stream_vertices=0;char message[128];snprintf(message,sizeof(message),"MODEL OFFLOAD: depth_parts=%u cloak_parts=%u chicago_parts=%u",gpu_depth_parts,gpu_cloak_parts,gpu_chicago_parts);n3ds_log(message);}
+{
+    n3ds_scenery_report();
+    char skin[128];snprintf(skin,sizeof(skin),"GPU SKIN WORK: single_influence=%u stream_vertices=%u",skin_shortcut_vertices,skin_stream_vertices);
+    n3ds_log(skin);skin_shortcut_vertices=skin_stream_vertices=0;
+    char message[160];snprintf(message,sizeof(message),"MODEL OFFLOAD: depth_parts=%u cloak_parts=%u chicago_parts=%u",gpu_depth_parts,gpu_cloak_parts,gpu_chicago_parts);n3ds_log(message);
+    if(native_lod_pack) {
+        snprintf(message,sizeof(message),"ORIGINAL MODEL LODS: compacted_bytes=%u direct_draws=%u direct_triangles_saved=%u",native_lod_bytes,native_lod_hits,native_lod_saved);
+        n3ds_log(message);
+    }
+}
 int n3ds_model_gpu_upload_tests(void)
 {
     struct model_vertex_compressed raw[4]={0};
@@ -1043,7 +1055,15 @@ void _rasterizer_model_draw(struct shader *shader, short permutation,
         assert(indices && ((active_merged && indices==active_merged->triangles.base_address) || n3ds_cache_resolve(tags,indices,i)==indices));
     }
     const unsigned short *draw_indices;
-    if(dynamic_triangles==NONE) draw_indices=static_indices(triangle_type,indices,triangle_count,count,&index_count);
+    struct native_lod_mesh *lod=NULL;
+    if(!active_merged && !first_person_active && !(parameters.geometry_flags&(1u<<4)) && !depth_only && !parameters.effect.type &&
+       dynamic_vertices==NONE && dynamic_triangles==NONE && triangle_count==triangles->count &&
+       (shader->base.type==3 || shader->base.type==4 || shader->base.type==6))lod=native_lod_get(vertices,triangles);
+    if(lod) {
+        ++native_lod_hits;native_lod_saved+=lod->saved_triangles;
+        data=lod->vertices.base_address;count=lod->vertices.count;
+        draw_indices=lod->triangles.base_address;index_count=lod->triangles.count*3;
+    } else if(dynamic_triangles==NONE) draw_indices=static_indices(triangle_type,indices,triangle_count,count,&index_count);
     else {index_count=n3ds_model_triangle_list(triangle_type,indices,triangle_count,count,index_scratch,65535*3);draw_indices=index_scratch;}
     assert(index_count!=NONE);
     if (!index_count) return;

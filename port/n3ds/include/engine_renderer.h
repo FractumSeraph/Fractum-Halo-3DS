@@ -3,6 +3,17 @@
 /* Matches skin.v.pica: 87 bone vectors leave room for camera and constants. */
 enum { NATIVE_GPU_MODEL_BONES = 29 };
 struct native_render_vertex;
+struct render_camera;
+struct render_fog;
+void n3ds_engine_fog_prepare(struct render_camera *,struct render_camera *,const struct render_fog *,int);
+void n3ds_engine_fog_feedback(float,float,float,float,int);
+int n3ds_engine_fog_busy(void);
+void n3ds_gpu_fog_config(float,float,unsigned int);
+void n3ds_gpu_fog_blend(int);
+void n3ds_gpu_fog_sky(int);
+void n3ds_gpu_fog_overlay(void);
+int n3ds_gpu_fog_tests(void);
+void n3ds_gpu_fog_backdrop(void);
 void n3ds_gpu_world_budget(int enabled);
 struct native_screen_effect {float enhancement,desaturation,tint[3],noise;int additive,video,video_overbright;};
 void n3ds_gpu_screen_effect(const struct native_screen_effect *);

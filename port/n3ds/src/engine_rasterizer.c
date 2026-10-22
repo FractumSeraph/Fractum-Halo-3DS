@@ -29,6 +29,7 @@
 
 struct rasterizer_window_begin_parameters global_window_parameters;
 struct rasterizer_frame_begin_parameters global_frame_parameters;
+#include "engine_fog_policy.inl"
 _Static_assert(sizeof(global_window_parameters) == 600, "Original window ABI");
 _Static_assert(sizeof(struct native_render_vertex) == 32, "GPU vertex ABI");
 
@@ -186,7 +187,7 @@ void _rasterizer_window_begin(const struct rasterizer_window_begin_parameters *p
     memcpy(camera.up, input->up.n, sizeof(camera.up));
     camera.vertical_fov=input->vertical_field_of_view;
     camera.near_clip=input->z_near; camera.far_clip=input->z_far;
-    camera.clear_color=0x101822ff; /* Opaque pass; atmospheric fog is not implemented yet. */
+    camera.clear_color=0x101822ff; /* Fallback background where no sky model is authored. */
     camera.suppress_clear=parameters->suppress_clear;
     n3ds_gpu_window_begin(&camera); frame_state=3;
 }

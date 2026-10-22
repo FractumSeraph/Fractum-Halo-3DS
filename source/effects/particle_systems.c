@@ -647,7 +647,9 @@ static void particle_system_new_particles(
   * or damage objects use this budget; the emitter's state clock still runs. */
  if(system->object_index==NONE && !n3ds_combat_fx_name(tag_get_name(system->definition_index)) &&
     (type_definition->initial_particle_count>=16 || type->variables.particle_creation_rate>=30.f)) {
-  int original=n3ds_input_platform_original_model();native_density=original?.25f:.6f;native_cap=original?12:32;
+  /* Original already drew only one quarter of this reduced population.
+   * Create that final population directly, avoiding invisible simulation. */
+  int original=n3ds_input_platform_original_model();native_density=original?.0625f:.6f;native_cap=original?3:32;
  }
 #endif
 
@@ -1397,13 +1399,13 @@ static void particle_system_render(
                 /* Thin dense decorative emitters with a stable slot selection,
                  * never alternating frames. Small/low-rate bursts stay intact.
                  * Simulation, damage, contrails and projectiles are unchanged.
-                 * Original detached dense emitters keep 1/4; preserve the
-                 * existing attached effects and New-model 3/4 selection. */
+                 * Original detached dense emitters are already reduced at
+                 * creation; preserve attached effects and New-model 3/4 selection. */
                 boolean native_dense=!native_combat && (type_definition->initial_particle_count>=16 ||
                     type->variables.particle_creation_rate>=30.f);
                 unsigned int native_slot=(unsigned short)particle_index;
                 boolean native_keep=!native_dense ||
-                    (native_original?(system->object_index==NONE?(native_slot&3)==0:(native_slot&1)==0):(native_slot&3)!=3);
+                    (native_original?(system->object_index==NONE?TRUE:(native_slot&1)==0):(native_slot&3)!=3);
                 if(!native_combat && system->object_index==NONE && native_system_draws>=(native_original?64u:192u))native_keep=FALSE;
                 if(native_keep && particle->valid && render_location_visible(&particle->location)) {
                  ++native_particle_selected;if(system->object_index==NONE)++native_system_draws;

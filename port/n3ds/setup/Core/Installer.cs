@@ -233,6 +233,9 @@ public static class Installer
         var texturePending = names.Where(n => pending.Contains(n) || !Textures.Current(
             SafePath(game, n + ".map"), SafePath(game, n + ".ntx"), ct)).ToList();
         required += texturePending.Count * 64 * (long)Data.Chunk;
+        var modelPending = names.Where(n => n != "ui" && (pending.Contains(n) || !ModelLods.Current(
+            SafePath(game, n + ".map"), SafePath(game, n + ".hld"), ct))).ToList();
+        required += modelPending.Count * (long)ModelLods.MaximumBytes;
         // On Unix, stat the destination filesystem, including a mounted SD card,
         // rather than the filesystem containing '/'. Windows uses the drive root.
         string spacePath = OperatingSystem.IsWindows() ? Path.GetPathRoot(destination)! : destination;
@@ -294,6 +297,24 @@ public static class Installer
         }
         ct.ThrowIfCancellationRequested();
         Report("Installing the game launcher…", 97);
+        // Derived Original-model meshes can be added without replacing maps,
+        // saves or settings. A launcher-only update keeps its existing packs.
+        foreach (string name in modelPending)
+        {
+            ct.ThrowIfCancellationRequested();
+            Report($"Preparing Original 3DS models for {Data.Catalog[name].Title}…", 97);
+            string stage = SafePath(game, ".halo-setup-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(stage); bool safeToRemove = true;
+            try
+            {
+                string map = SafePath(game, name + ".map"), temporary = Path.Combine(stage, name + ".hld");
+                ModelLods.Generate(map, temporary, ct);
+                Data.Require(ModelLods.Current(map, temporary, ct), "Model preparation did not pass verification. Please check the SD card.");
+                ct.ThrowIfCancellationRequested(); safeToRemove = false;
+                Commit(stage, game, new[] { name + ".hld" }); safeToRemove = true;
+            }
+            finally { if (safeToRemove && Directory.Exists(stage)) Directory.Delete(stage, true); }
+        }
         PcMaps.Install(pcFiles, destination, ct, text => Report(text, 97));
         if (hud != null) AtomicWrite(hudPath, hud);
         if (loading != null) AtomicWrite(loadingPath, loading);
