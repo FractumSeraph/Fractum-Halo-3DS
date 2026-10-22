@@ -488,6 +488,17 @@ The first runs on a New 3DS (124 MB for the game; `CE MAPS: playable`):
     its `broker_close` then closed a socket. `close` is now wrapped
     (`port/n3ds/build.py`, `engine_soc_serial.c`): sockets are known by
     descriptor, and closing one after the service closed is no call.
+- **Console test 2026-10-21, late: multiplayer works; the server browser
+  opened a second time crashed** (`halo-source-fatal.log`:
+  `engine_hardware_bitmaps.c:142`). The font atlas is re-uploaded for every
+  glyph added, each upload retiring the previous texture until a GPU
+  barrier reclaims it, and a barrier can't run inside a frame. Opening the
+  browser again adds the whole screen's glyphs in one frame: 63 retired
+  copies of 64 KB hit the 4 MB cap, and the assert stopped the game. Now,
+  when no copy can be retired, the atlas is updated in place
+  (`n3ds_gpu_texture_update`), as the Xbox's single atlas was; a cell
+  replaced in that same frame may show its newer glyph in an earlier line
+  for that frame. Reproduced and verified in Azahar (the same 63 retired).
 - **A test of the socket service as the console has it.** With
   `halo-source/soc-serial.txt` present, every socket call is made under one
   lock (`engine_soc_serial.c`, wrapped at link time: `port/n3ds/build.py`).

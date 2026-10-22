@@ -296,6 +296,18 @@ void *n3ds_gpu_texture_create_cube(const unsigned char *rgba,unsigned int side)
     }
     return texture;
 }
+/* port: a texture's pixels replaced where they are (the font atlas, when
+ * its retired versions cannot be reclaimed inside a frame:
+ * engine_hardware_bitmaps.c). The draws queued this frame that refer to it
+ * sample the new pixels when they run, as the Xbox's one atlas was sampled:
+ * a cell replaced this frame may show its newer glyph in an earlier line */
+int n3ds_gpu_texture_update(void *resource,const void *pixels,unsigned int bytes)
+{
+    C3D_Tex *texture=resource;
+    if(!texture || !pixels || bytes!=texture->size) return 0;
+    memcpy(texture->data,pixels,bytes);
+    return !R_FAILED(GSPGPU_FlushDataCache(texture->data,bytes));
+}
 int n3ds_gpu_texture_barrier(void)
 {
     /* FrameBegin waits for submitted GPU commands. Refuse resource reclamation

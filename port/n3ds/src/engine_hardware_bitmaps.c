@@ -110,7 +110,12 @@ int n3ds_dynamic_bitmap_update(struct bitmap_data *bitmap)
        bitmap->hardware_format!=entry->resource || bitmap->width!=entry->width ||
        bitmap->height!=entry->height || bitmap->format!=entry->format) return update_failed("metadata",entry);
     n3ds_dynamic_bitmaps_collect();
-    if(retired_count==RETIRED_SLOTS || entry->bytes>BITMAP_BUDGET-total_bytes) return update_failed("retained-budget",entry);
+    /* port: no room to retire another version (inside a frame none can be
+     * reclaimed, and a screen of new text adds sixty glyphs to the font
+     * atlas in one frame: the server browser opened again, on the console):
+     * the pixels replaced in the version there is, n3ds_gpu_texture_update,
+     * rather than a stopped game */
+    int in_place=retired_count==RETIRED_SLOTS || entry->bytes>BITMAP_BUDGET-total_bytes;
     pixels=(malloc)(entry->bytes); if(!pixels) return update_failed("staging-heap",entry);
     width=entry->width; height=entry->height;
     int packed=entry->bytes==width*height*2;
@@ -125,6 +130,15 @@ int n3ds_dynamic_bitmap_update(struct bitmap_data *bitmap)
             unsigned int v=source[0]|(unsigned int)source[1]<<8;
             ((unsigned short *)pixels)[offset]=(v<<4)|(v>>12);
         } else pixels[offset]=n3ds_bitmap_decode_pixel(source,entry->format);
+    }
+    if(in_place) {
+        extern int n3ds_gpu_texture_update(void *resource,const void *pixels,unsigned int bytes);
+        static unsigned int in_place_logged;
+        int updated=n3ds_gpu_texture_update(entry->resource,pixels,entry->bytes);
+        free(pixels);
+        if(!updated) return update_failed("in-place",entry);
+        if(in_place_logged++<3) update_failed("in-place (updated where it is)",entry);
+        return 1;
     }
     resource=packed?n3ds_gpu_texture_create_rgba4(pixels,width,height):
         n3ds_gpu_texture_create(pixels,width,height); free(pixels);
@@ -148,10 +162,12 @@ void rasterizer_bitmap_delete(struct bitmap_data *bitmap)
     entry=find_bitmap(bitmap);
     if(!entry) { texture_cache_bitmap_delete(bitmap); return; }
     n3ds_dynamic_bitmaps_collect();
-    assert(retired_count<RETIRED_SLOTS);
     for(unsigned int stage=0;stage<3;++stage)
         if(n3ds_gpu_texture_bound(stage)==entry->resource) n3ds_gpu_texture_bind(stage,NULL);
-    retired[retired_count++]=(struct retired_bitmap){entry->resource,entry->bytes};
+    /* port: (no room to retire it: kept, its bytes counted, rather than a
+     * stopped game; reclaimed with the next collection that has room) */
+    if(retired_count<RETIRED_SLOTS) retired[retired_count++]=(struct retired_bitmap){entry->resource,entry->bytes};
+    else n3ds_log("DYNAMIC BITMAP DELETE: no retired slot; a version kept");
     bitmap->hardware_format=NULL; memset(entry,0,sizeof(*entry)); --live_count;
     /* CPU bitmap storage may now be freed; retired versions hold no owner pointer. */
 }
