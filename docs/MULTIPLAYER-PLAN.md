@@ -381,9 +381,9 @@ The first runs on a New 3DS (124 MB for the game; `CE MAPS: playable`):
   deletes a map. Hosting retries the map's identity every 3 s while it's
   not found.
 - **Fractum Halo.** The build embeds an SMDH (`port/n3ds/build.py`,
-  smdhtool): title "Fractum Halo", author "FractumSeraph", and the fork's
-  icon at 48 pixels (`port/n3ds/art/icon-48.png`, taken from the fork's
-  `port/windows/halo.ico`). The loading and stop screens say Fractum Halo.
+  smdhtool): title "Fractum Halo", author "FractumSeraph", and the logo
+  (a moon over a teal ring) at 48 pixels (`port/n3ds/art/icon-48.png`,
+  made from `port/n3ds/art/logo-512.png`, 2048 px as given). The loading and stop screens say Fractum Halo.
   The file name and folder stay Halo3DS's, for its setup tool.
 - **Custom Edition maps played through in Azahar** (20 from HaloWeb's
   assets): what stopped them is fixed.

@@ -159,7 +159,8 @@ def main():
     if any(line.split()[-1] not in allowed for line in undefined.splitlines()): raise RuntimeError('Unresolved runtime symbols:\n'+undefined)
     # The Homebrew Launcher's title, description, author and icon (the fork's
     # name: Fractum Halo, by FractumSeraph; its icon, port/n3ds/art/icon-48.png,
-    # the fork's artwork at 48 pixels), made by smdhtool beside 3dsxtool
+    # the Fractum Halo logo, port/n3ds/art/logo-512.png, at 48 pixels), made by
+    # smdhtool beside 3dsxtool
     smdh=out/'Halo3DS.smdh'
     smdhtool=str(Path(args.packer).with_name('smdhtool'+Path(args.packer).suffix))
     subprocess.run([smdhtool,'--create','Fractum Halo','Halo: Combat Evolved multiplayer for the New 3DS',

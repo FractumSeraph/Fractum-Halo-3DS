@@ -1,5 +1,7 @@
 # Fractum Halo
 
+<img src="port/n3ds/art/logo-512.png" alt="Fractum Halo logo" width="160">
+
 Fractum Halo, by FractumSeraph, is Generalkidd's [Halo3DS](https://github.com/Generalkidd/Halo3DS)
 with the multiplayer of the FractumSeraph/OpenCE fork: system link, internet
 play, the server browser, and Custom Edition maps with their downloads (on a
