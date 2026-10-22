@@ -260,6 +260,18 @@ static int peer_outgoing_address(int stream, int connecting, const struct sockad
 
 /* tells internet play the local port the game's socket has (bound, given
 one by a connection or a send, or listening) */
+#if defined(HALO_3DS) || defined(HALO_N3DS)
+/* port: the port each socket is bound to, once known (note_socket_port:
+a bind, a connect, a first send): socket_port asked the socket service for
+it (getsockname) before every datagram sent, a service call a packet, 500 a
+second for a host of 16 */
+#define N3DS_SOCKETS_TRACKED 1024
+static unsigned short n3ds_socket_ports[N3DS_SOCKETS_TRACKED];
+/* (the 3DS's tick, for title_address's cache: libctru's, not included here) */
+unsigned long long svcGetSystemTick(void);
+#define SYSCLOCK_ARM11 268123480
+#endif
+
 static void note_socket_port(SOCKET socket, int listening)
 {
 	struct sockaddr_in bound;
@@ -272,6 +284,10 @@ static void note_socket_port(SOCKET socket, int listening)
 	{
 		return;
 	}
+#if defined(HALO_3DS) || defined(HALO_N3DS)
+	if (socket < N3DS_SOCKETS_TRACKED)
+		n3ds_socket_ports[socket] = bound.sin_port;
+#endif
 	posix_socket_getsockopt((int)socket, SOL_SOCKET, SO_TYPE, &type, &type_length);
 	/* (one bound to this machine alone, as the telnet console's, is not for
 	peers to reach, and is not hosting; its port is still no stand-in's) */
@@ -309,8 +325,16 @@ static unsigned short socket_port(SOCKET socket)
 	struct sockaddr_in bound;
 	int length = sizeof(bound);
 
+#if defined(HALO_3DS) || defined(HALO_N3DS)
+	if (socket < N3DS_SOCKETS_TRACKED && n3ds_socket_ports[socket])
+		return n3ds_socket_ports[socket];
+#endif
 	if (posix_socket_getsockname((int)socket, &bound, &length) < 0 || bound.sin_family != AF_INET)
 		return 0;
+#if defined(HALO_3DS) || defined(HALO_N3DS)
+	if (socket < N3DS_SOCKETS_TRACKED)
+		n3ds_socket_ports[socket] = bound.sin_port;
+#endif
 	return bound.sin_port;
 }
 
@@ -400,7 +424,6 @@ socket service halts on getpeername of a socket that is not, whose empty
 address it converts all the same; the game asks every endpoint's peer,
 transport_endpoint_winsock.c's get_endpoint_address, a datagram socket's
 too) */
-#define N3DS_SOCKETS_TRACKED 1024
 static unsigned char n3ds_connected_sockets[N3DS_SOCKETS_TRACKED / 8];
 
 static void n3ds_socket_connected(SOCKET socket, int connected)
@@ -429,6 +452,10 @@ int WSAAPI halo_ws_closesocket(SOCKET socket)
 #endif
 	posix_socket_getsockopt((int)socket, SOL_SOCKET, SO_TYPE, &type, &type_length);
 	p2p_socket_closed((int)socket, type == SOCK_DGRAM ? socket_port(socket) : 0);
+#if defined(HALO_3DS) || defined(HALO_N3DS)
+	if (socket < N3DS_SOCKETS_TRACKED)
+		n3ds_socket_ports[socket] = 0;
+#endif
 	delayed_closed((int)socket);
 	return winsock_result(posix_socket_close((int)socket));
 }
@@ -1332,7 +1359,26 @@ static unsigned long title_address(void)
 
 	if (local_address_setting(&override))
 		return override;
+#if defined(HALO_3DS) || defined(HALO_N3DS)
+	/* port: (the 3DS) asked once a second: the menus ask the link's status
+	every frame (system_link_status_check, dim_if_no_system_link_cable), and
+	each asking makes a probe socket, connects it and asks its name (four
+	socket-service calls) */
+	{
+		static unsigned long cached, cached_at;
+		static int cached_once;
+		unsigned long now = (unsigned long)(svcGetSystemTick() / (SYSCLOCK_ARM11 / 1000));
+
+		if (cached_once && now - cached_at < 1000)
+			return cached;
+		cached = posix_local_ipv4_address();
+		cached_at = now;
+		cached_once = 1;
+		return cached;
+	}
+#else
 	return posix_local_ipv4_address();
+#endif
 }
 
 DWORD WSAAPI XNetGetTitleXnAddr(XNADDR *address)

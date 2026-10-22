@@ -348,7 +348,14 @@ int posix_3ds_poll(struct pollfd *descriptors, int count, int timeout)
 		waited = (long long)(now.tv_sec - start.tv_sec) * 1000 + (now.tv_nsec - start.tv_nsec) / 1000000;
 		if (timeout > 0 && waited >= timeout)
 			return 0;
-		svcSleepThread(4 * 1000000LL);
+		/* (a slice a quarter of what is left, 4 to 16 ms: a wait of 50 ms
+		polled every 4 ms was 250 service calls a second from the internet
+		play thread alone, each ahead of the game thread's own) */
+		{
+			long long slice = timeout > 0 ? (timeout - waited) / 4 : 16;
+
+			svcSleepThread((slice < 4 ? 4 : slice > 16 ? 16 : slice) * 1000000LL);
+		}
 	}
 }
 #endif

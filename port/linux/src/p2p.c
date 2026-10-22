@@ -95,10 +95,19 @@ enum
 	/* a host needs a UDP stand-in for two or three ports of every other
 	machine, and a stream for each one's connection; one peer can have no
 	more than these */
+#ifdef HALO_N3DS
+	/* port: (the 3DS's memory: a game of 16 at most, four stand-ins and
+	four streams a peer; the streams' buffers alone were 2.6 MB) */
+	MAXIMUM_PROXIES = 96,
+	MAXIMUM_PEER_PROXIES = 4,
+	MAXIMUM_LISTENERS = 16,
+	MAXIMUM_STREAMS = 64,
+#else
 	MAXIMUM_PROXIES = 512,
 	MAXIMUM_PEER_PROXIES = 4,
 	MAXIMUM_LISTENERS = 64,
 	MAXIMUM_STREAMS = 160,
+#endif
 	MAXIMUM_PEER_STREAMS = 4,
 	MAXIMUM_PEER_OPENING_STREAMS = 2,
 	/* the game's sockets' ports (xnet.c), and the ports it sent peers
@@ -575,10 +584,11 @@ static int open_socket(int type, unsigned long ip, unsigned short port, unsigned
 	if (result < 0)
 		return -1;
 	make_address(&address, ip, port);
-#ifdef HALO_3DS
+#if defined(HALO_3DS) || defined(HALO_N3DS)
 	/* port: the 3DS's socket service refuses a bind to port 0 (EINVAL, on
 	a New 3DS; the Azahar emulator's takes it): a port the game picks
-	itself, among the dynamic ones, until one is free */
+	itself, among the dynamic ones, until one is free (posix_socket_bind
+	does the same for every socket now; this is kept for the log) */
 	if (!port)
 	{
 		int attempt;
@@ -2134,7 +2144,11 @@ static void proxy_readable(struct proxy *proxy)
 	unsigned char data[MAXIMUM_INNER_SIZE - 5];
 	int count;
 
+#ifdef HALO_N3DS
+	for (count = 0; count < 16; count++)
+#else
 	for (count = 0; count < 64; count++)
+#endif
 	{
 		struct sockaddr_in from;
 		int from_length = sizeof(from);
@@ -2565,7 +2579,14 @@ static void tunnel_readable(void)
 	unsigned char packet[2048];
 	int count;
 
+	/* port: (the 3DS) fewer a pass: the pass holds p2p_lock, which the game
+	thread's sends to peers take, and each packet is two socket-service
+	calls; the rest wait for the next pass, 10 ms on */
+#ifdef HALO_N3DS
+	for (count = 0; count < 32; count++)
+#else
 	for (count = 0; count < 256; count++)
+#endif
 	{
 		struct sockaddr_in from;
 		int from_length = sizeof(from);

@@ -452,6 +452,20 @@ The first runs on a New 3DS (124 MB for the game; `CE MAPS: playable`):
     otherwise), and non-finite positions and texture coordinates are
     zeroed in conversion. HUD placements not on a word are left as they
     are. `ui.map` tag addresses must be word-aligned.
+  - *Network loop (third review):* each socket's port is remembered in
+    `xnet.c` (`getsockname` was a socket-service call on every datagram
+    sent); the link status the menus ask every frame is cached for 1 s;
+    `posix_3ds_poll` sleeps a quarter of the wait left (4–16 ms) instead
+    of 4 ms always (the internet-play thread alone made 250 polls a
+    second); the Online Games rows are rebuilt when the lobby changes or
+    every 250 ms (`p2p_lobby_generation`), not every frame; the tunnel
+    and stand-in receive batches are capped at 32 and 16 a pass (the pass
+    holds the lock the game thread's sends take); the internet-play
+    tables are sized for the 3DS (96 stand-ins, 16 listeners, 64 streams,
+    128 listed games); a join's connect waits 4 s, not 10, on the game
+    thread. Not done: the password key derivation (Argon2id, 4 MiB, three
+    passes, wire-fixed) still runs on the game thread when hosting or
+    joining a password game — a stall of a second or more on the console.
   - Compiler warnings in the fork's own code: a split-screen test path's
     widget name had unescaped backslashes (the string was wrong), and
     int/pointer conversions in `ce_bsp.c`/`ce_models.c` are explicit.

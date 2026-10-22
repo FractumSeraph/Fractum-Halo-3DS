@@ -1247,7 +1247,13 @@ short connect_endpoint(
 			error = WSAGetLastError();
 			if (error == WSAEWOULDBLOCK)
 			{
+#ifdef HALO_N3DS
+				/* port: (the 3DS) 4 s: the wait is the game thread's, the
+				whole game still while a host does not answer */
+				unsigned long timeout = system_milliseconds() + 4 * MILLISECONDS_PER_SECOND;
+#else
 				unsigned long timeout = system_milliseconds() + 10 * MILLISECONDS_PER_SECOND;
+#endif
 				struct timeval timeval;
 
 				do

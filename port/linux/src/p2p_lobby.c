@@ -91,8 +91,14 @@ enum
 		P2P_SIGNATURE_SIZE,
 	MINIMUM_LISTING_SIZE = 2 + 1 + 2 + 1 + 4 + 4 + P2P_KEY_SIZE + P2P_TOKEN_SIZE + 3 + 3 + STAMP_SIZE +
 		P2P_SIGNATURE_SIZE,
+#ifdef HALO_N3DS
+	/* port: (the 3DS's memory) */
+	MAXIMUM_GAMES = 128,
+	MAXIMUM_TOMBSTONES = 64,
+#else
 	MAXIMUM_GAMES = 256,
 	MAXIMUM_TOMBSTONES = 256,
+#endif
 	MAXIMUM_QUEUED = 64,
 
 	/* milliseconds */
@@ -603,6 +609,16 @@ void p2p_lobby_slot_heard(const char *hash_text, const unsigned char *payload, i
 }
 
 /* a queued listing, its signature checked: taken or not */
+/* port: the times the games listed changed (one listed, expired, probed
+or marked failed): the server browser rebuilds its rows when it has, not
+every frame (p2p_lobby_generation) */
+static unsigned long lobby_generation;
+
+unsigned long p2p_lobby_generation(void)
+{
+	return lobby_generation;
+}
+
 static void listing_take(const struct queued *queued, const struct listing *listing)
 {
 	struct tombstone *tombstone = find_tombstone(queued->key_hash);
@@ -611,6 +627,8 @@ static void listing_take(const struct queued *queued, const struct listing *list
 	unsigned char bytes[P2P_KEY_HASH_SIZE + P2P_TOKEN_SIZE];
 	char text[2 * (P2P_KEY_HASH_SIZE + P2P_TOKEN_SIZE) + 1];
 	int index;
+
+	lobby_generation++;
 
 	if (tombstone && listing->sequence <= tombstone->sequence)
 		return;
@@ -798,7 +816,10 @@ static void update_browsing(void)
 	for (index = 0; index < MAXIMUM_GAMES; index++)
 	{
 		if (lobby.games[index].used && elapsed(lobby.games[index].heard_time, GAME_EXPIRY))
+		{
 			lobby.games[index].used = 0;
+			lobby_generation++;
+		}
 		if (lobby.newer[index].used && elapsed(lobby.newer[index].heard_time, GAME_EXPIRY))
 			lobby.newer[index].used = 0;
 	}
@@ -809,6 +830,8 @@ static void update_browsing(void)
 void p2p_lobby_probed(const unsigned char *identifier, int ping)
 {
 	int index;
+
+	lobby_generation++;
 
 	for (index = 0; index < MAXIMUM_GAMES; index++)
 	{
@@ -1068,6 +1091,7 @@ int p2p_lobby_newer_games(void)
 void p2p_lobby_mark_failed(const unsigned char *identifier)
 {
 	pthread_mutex_lock(&p2p_lock);
+	lobby_generation++;
 	if (!identifier_failed(identifier) && lobby.failed_count < MAXIMUM_GAMES)
 		memcpy(lobby.failed[lobby.failed_count++], identifier, P2P_IDENTIFIER_SIZE);
 	pthread_mutex_unlock(&p2p_lock);

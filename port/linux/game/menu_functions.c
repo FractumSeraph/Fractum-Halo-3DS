@@ -4924,11 +4924,33 @@ static void lobby_browser_update(struct widget_instance *list)
 	lobby_browser_web_join_update();
 #endif
 
+#ifdef HALO_N3DS
+	/* port: (the 3DS) the games copied, filtered and sorted when the lobby
+	has changed, or every 250 ms (the sort order, the joins), not each
+	frame: the copy and its sort were a frame's time on the console */
+	{
+		extern unsigned long p2p_lobby_generation(void);
+		static unsigned long built_generation, built_at;
+		unsigned long generation = p2p_lobby_generation();
+
+		if (generation != built_generation || now - built_at >= 250 || !lobby_browser.shown)
+		{
+			built_generation = generation;
+			built_at = now;
+			lobby_browser.count = lobby_browser_valid_games(lobby_browser.games, lobby_browser_games_found());
+			lobby_browser_add_listed();
+			lobby_browser_sort();
+		}
+	}
+#else
 	lobby_browser.count = lobby_browser_valid_games(lobby_browser.games, lobby_browser_games_found());
 	lobby_browser_add_listed();
+#endif
 	/* (a map's download for a join under way: map_torrents.c) */
 	map_fetch_update(list);
+#ifndef HALO_N3DS
 	lobby_browser_sort();
+#endif
 	focused = lobby_browser_rows_place(list);
 	/* (the first game found takes the focus from the buttons, which had it
 	while there were none) */
