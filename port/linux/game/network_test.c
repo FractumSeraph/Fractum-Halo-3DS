@@ -93,7 +93,12 @@ debug.network_test_cue_players has a unit (tools/stagekit's scenarios).
 Called from the main loop every frame (main.c).
 */
 
+/* port: none of this in a console's build (halo_port_features.h) but
+network_test_update, which does nothing there */
+#ifndef HALO_CONSOLE_NO_NETWORK_TEST
+
 #include "cseries.h"
+#include "game_modes.h"
 #include "main/main.h"
 #include "bink/bink_playback.h"
 #include "interface/player_ui.h"
@@ -2259,14 +2264,21 @@ void network_test_update(
 				}
 				else
 				{
+					struct game_variant_options options;
+					/* (one of OpenCE's gametypes by its name: game_modes.c) */
+					boolean opence = game_modes_gametype_by_name(variant_name, &variant, &options);
+
 					network_game_server_change_map_name(global_network_game_server_get(), path);
 					/* the variant, as picking the game settings does */
-					variant = *game_engine_get_variant_by_name(&variant, variant_name);
+					if (!opence)
+						variant = *game_engine_get_variant_by_name(&variant, variant_name);
 					platform_log("network test: game %d, %s", network_test.variant_index + 1, variant_name);
 					/* debug.network_test_score: a short game, to test the next */
 					if (network_test.score_to_win > 0)
 						variant.universal_variant.score_to_win = network_test.score_to_win;
 					player_ui_set_game_variant(&variant);
+					if (opence)
+						player_ui_set_game_variant_options(&options);
 					network_game_server_change_game_variant(global_network_game_server_get(), &variant);
 				}
 				network_test.map_set = TRUE;
@@ -2375,3 +2387,24 @@ double network_test_game_seconds(
 {
 	return game_time_initialized() && game_in_progress() ? (double)game_time_get() / TICKS_PER_SECOND : -1.0;
 }
+
+#else
+
+#include "cseries.h"
+
+/* (the main loop's call, answered with nothing) */
+void network_test_update(
+	boolean main_menu_loaded,
+	real seconds)
+{
+	return;
+}
+
+/* (the scripted player's clock: no game here) */
+double network_test_game_seconds(
+	void)
+{
+	return -1.0;
+}
+
+#endif /* HALO_CONSOLE_NO_NETWORK_TEST */

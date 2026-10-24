@@ -125,15 +125,15 @@ enum
 	_distributed_message_map_share_offer = 84,
 	_distributed_message_map_share_sources = 85,
 	_distributed_message_map_share_progress = 86,
-	/* the text chat (network_chat.c): a player's line to the host,
-	reliably, which takes it only from the player's own machine's stream; and
-	the line the host sends on to each machine that hears it, reliably */
+	/* OpenCE's text chat, which Delta chat bridges (game/chat.c,
+	src/delta_chat_bridge.h): a player's line to the host and the host's line
+	(or notice) to a machine that hears it, reliably, each a 68-byte entry;
+	and the host's chat settings to each client, a 4-byte entry. 87 to 89 as
+	in OpenCE's version of 2026-10-18. (port, this fork: a build without
+	chat.c, HALO_PORT_CHAT, has OpenCE's own, network_chat.c) */
 	_distributed_message_chat_up = 87,
 	_distributed_message_chat_down = 88,
-	/* the host's text chat settings (network_chat.c): whether its players
-	may chat and send links, to every client, reliably */
 	_distributed_message_chat_config = 89,
-
 	/* the host's policy on aiming assist for the mouse and keyboard, reliably
 	to a client when it has loaded and when the host's setting changes
 	(network.block_mouse_aim_assist): 12 bytes, the header and a 16-bit
@@ -141,6 +141,12 @@ enum
 	(whose network_aim_assist.c reads the same message: network_distributed.c
 	hands it on) */
 	_distributed_message_aim_assist_policy = 90,
+	/* the host's shield effects (network_shield_effects.c), to every client,
+	reliably, when it is ready and when they change: 12 bytes, the header and
+	a 16-bit value (0 stock to 5) and 16 bits of 0. 91 as in OpenCE's network
+	version 36; a host before it sends none, and its clients draw the stock
+	ones */
+	_distributed_message_shield_effects = 91,
 
 	NUMBER_OF_DISTRIBUTED_MESSAGES
 };
@@ -341,6 +347,11 @@ word network_votekick_status_entry_size(void);
 a client (blocked until it speaks, or always allowed by a host of a version
 that has no such policy), never in single player or the menus */
 boolean network_aim_assist_blocked(void);
+/* whether the game is played by the rules of the network version or a
+later one: a client by its host's advertised version (one not known plays
+by the older rules, until its game settings record shows it is of 35 or
+later), a host by the number it announces (delta_legacy_announce) */
+boolean network_rules_of_version(unsigned int version);
 
 /* ---------- prototypes/NETWORK_CHAT.C */
 
@@ -452,5 +463,104 @@ void network_damage_client_tick(void);
 void network_damage_handle_events(void const *entries, short count);
 void network_damage_handle_reports(long machine_index, void const *entries, short count);
 word network_damage_entry_size(byte type);
+
+#ifdef HALO_BIG_ENDIAN
+/* ---------- the wire's byte order (a big-endian console)
+
+The messages go as the PCs and the original Xbox send them, each number
+little-endian. A big-endian machine (HALO_BIG_ENDIAN: the Xbox 360's and the
+Wii U's PowerPC) turns a message into that order as it is sent and back as
+it comes (network_distributed.c's distributed_wire_message), entry by entry
+by its kind; the entries the netcode packs itself (the units' states, the
+relayed actions) are put in that order as they are packed (distributed_put).
+A little-endian build has none of this: its structures are the wire's. */
+
+/* count numbers of size bytes each (2 or 4; any other size is left as it
+is) at data, each reversed in place; data need not be aligned */
+void distributed_wire_swap(void *data, long count, long size);
+/* a field of the structure at entry, its numbers of size bytes each */
+#define WIRE_SWAP_FIELD(entry, type, field, size) \
+	distributed_wire_swap((byte *)(entry) + offsetof(type, field), \
+		(long)(sizeof(((type *)0)->field) / (size)), (size))
+/* the fields from first to last of the structure at entry, all of them
+numbers of size bytes each, with no padding between them */
+#define WIRE_SWAP_FIELDS(entry, type, first, last, size) \
+	distributed_wire_swap((byte *)(entry) + offsetof(type, first), \
+		(long)((offsetof(type, last) + sizeof(((type *)0)->last) - offsetof(type, first)) / (size)), (size))
+
+/* the entries of a module's kinds of message (count of them at entries, of
+size bytes in all: only whole entries are turned) between this machine's
+order and the wire's, either way (each entry's layout is fixed); FALSE for
+a kind not the module's */
+boolean network_objects_wire_entries(byte type, byte *entries, short count, long size);
+boolean network_damage_wire_entries(byte type, byte *entries, short count, long size);
+boolean network_actors_wire_entries(byte type, byte *entries, short count, long size);
+boolean network_coop_wire_entries(byte type, byte *entries, short count, long size);
+/* (game_engine.c) the game type's state the host sends (game_engine_write_
+network_state), between this machine's order and the wire's */
+void game_engine_network_state_byte_swap(byte *buffer, long size);
+
+/* (network_distributed.c) a message of size bytes, its message header in
+this machine's order (the transport's on both sides), in the other order:
+its tick, then its entries by its kind (a kind no module knows, its header
+alone). A copy in one of two buffers (one for messages sent, one for those
+received), which the next message that way reuses; the message itself if
+it is too large to be one. */
+void *distributed_wire_copy(void const *message, word size, boolean received);
+/* what the netcode packs itself, a number at a time in the wire's order (a
+field of several by its parts' size) */
+byte *distributed_wire_put(byte *cursor, void const *data, short size, short part);
+boolean distributed_wire_take(byte const **cursor, byte const *end, void *data, short size, short part);
+#endif
+
+#if defined(HALO_BIG_ENDIAN) || defined(HALO_NETWORK_WIRE_CAPTURE)
+/* ---------- the wire's samples (network_distributed.c's
+network_wire_self_test)
+
+A sample of each kind of message, its fields filled one by one with numbers
+of their own types' sizes (in this machine's order): a little-endian build
+made with HALO_NETWORK_WIRE_CAPTURE writes their bytes, which are the wire's
+(wire_samples.h); a big-endian one turns its own into the wire's order and
+compares. */
+/* the field (of size bytes: a byte, a short or a long) given the next
+number */
+void wire_sample_set(void *field, long size);
+#define WIRE_SAMPLE(field) wire_sample_set(&(field), (long)sizeof(field))
+/* ... each element of an array of them */
+void wire_sample_array(void *array, long count, long size);
+#define WIRE_SAMPLES(array) \
+	wire_sample_array(array, (long)(sizeof(array) / sizeof((array)[0])), (long)sizeof((array)[0]))
+#define WIRE_SAMPLE_VECTOR(vector) (WIRE_SAMPLE((vector).i), WIRE_SAMPLE((vector).j), WIRE_SAMPLE((vector).k))
+/* each module's sample entries of a kind (two, or one of a kind its
+handler reads one of): their bytes, 0 for a kind not the module's */
+word network_objects_wire_sample(byte type, byte *entries);
+word network_damage_wire_sample(byte type, byte *entries);
+word network_actors_wire_sample(byte type, byte *entries);
+word network_coop_wire_sample(byte type, byte *entries);
+#endif
+
+/* network_distributed.c's hooks into its sends (each on the line it goes
+with, so that a little-endian build's code is what it was): nothing on a
+little-endian machine */
+#ifdef HALO_BIG_ENDIAN
+#define WIRE_MESSAGE(message, size) distributed_wire_copy(message, size, FALSE)
+#define WIRE_MESSAGE_OUT(message, size) ((message) = WIRE_MESSAGE(message, size))
+#define WIRE_HEADER_OUT(header) WIRE_SWAP_FIELD(header, struct distributed_message_header, game_time, sizeof(long))
+#define WIRE_WORD_OUT(value) distributed_wire_swap(value, 1, sizeof(word))
+/* (the one prefix, the relayed actions' update: a long) */
+#define WIRE_PREFIX_OUT(prefix, size) distributed_wire_swap(prefix, (size) == sizeof(long) ? 1 : 0, sizeof(long))
+#define distributed_put(cursor, data, size) distributed_wire_put(cursor, data, size, size)
+#define distributed_take(cursor, end, data, size) distributed_wire_take(cursor, end, data, size, size)
+#define distributed_put_parts(cursor, data, size, part) distributed_wire_put(cursor, data, size, part)
+#define distributed_take_parts(cursor, end, data, size, part) distributed_wire_take(cursor, end, data, size, part)
+#else
+#define WIRE_MESSAGE(message, size) (message)
+#define WIRE_MESSAGE_OUT(message, size)
+#define WIRE_HEADER_OUT(header)
+#define WIRE_WORD_OUT(value)
+#define WIRE_PREFIX_OUT(prefix, size)
+#define distributed_put_parts(cursor, data, size, part) distributed_put(cursor, data, size)
+#define distributed_take_parts(cursor, end, data, size, part) distributed_take(cursor, end, data, size)
+#endif
 
 #endif // __NETWORK_DISTRIBUTED_H

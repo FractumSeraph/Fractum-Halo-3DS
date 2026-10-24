@@ -142,6 +142,7 @@ symbols in this file:
 #ifdef HALO_N3DS
 #include "engine_decal_storage.h"
 #endif
+#include "halo_perf_log.h" /* port: console.perf_log */
 
 /* ---------- constants */
 
@@ -964,6 +965,7 @@ static void rasterizer_decals_draw_batch(
 
 	if (!decal_batch_count)
 		return;
+	HALO_PERF_COUNT(_halo_perf_draws, 1);
 	IDirect3DDevice8_Begin(global_d3d_device, D3DPT_QUADLIST);
 	for (batch_index = 0; batch_index < decal_batch_count; batch_index++)
 	{

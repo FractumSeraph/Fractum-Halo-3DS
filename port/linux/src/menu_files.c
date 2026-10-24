@@ -387,8 +387,12 @@ static long current_line(struct reader *reader)
 	return (long)XML_GetCurrentLineNumber(reader->parser);
 }
 
-/* this build's platform, as the platform attribute names it */
-#ifdef HALO_ANDROID
+/* this build's platform, as the platform attribute names it (the Switch's
+game is built as Android's, with HALO_SWITCH_CONSOLE too: "android" is the
+Android app's) */
+#if defined(HALO_SWITCH_CONSOLE)
+#define MENU_PLATFORM "switch"
+#elif defined(HALO_ANDROID)
 #define MENU_PLATFORM "android"
 #elif defined(HALO_WEB)
 #define MENU_PLATFORM "web"
@@ -416,9 +420,9 @@ static int for_this_platform(struct reader *reader, const XML_Char **attributes)
 				if (length)
 				{
 					if ((length != 7 || strncmp(name, "desktop", 7)) && (length != 7 || strncmp(name, "android", 7)) &&
-						(length != 3 || strncmp(name, "web", 3)))
+						(length != 3 || strncmp(name, "web", 3)) && (length != 6 || strncmp(name, "switch", 6)))
 					{
-						reader_error(reader, "platform=\"%s\" names one that is not desktop, android or web",
+						reader_error(reader, "platform=\"%s\" names one that is not desktop, android, web or switch",
 							attributes[index + 1]);
 						return 1;
 					}
@@ -1030,6 +1034,23 @@ void halo_menus_log(char const *file, long line, char const *message, char const
 {
 	platform_log("menus: %s:%ld: %s%s%s", file ? file : "?", line, message, detail ? " " : "", detail ? detail : "");
 }
+/* (a menu's texture, the renderer's: OpenGL's or the bgfx backend's) */
+static void menu_art_delete(unsigned int texture)
+{
+#ifdef HALO_BGFX
+	if (xgpu_bgfx)
+	{
+		xgpu_bgfx_texture_delete(texture);
+		return;
+	}
+#endif
+	{
+		GLuint name = texture;
+
+		glDeleteTextures(1, &name);
+	}
+}
+
 
 /* ---------- art */
 
@@ -1042,6 +1063,10 @@ static struct
 	int failed;
 } art[MAXIMUM_ART];
 static long art_count;
+#ifdef HALO_CONSOLE_HOST_ART
+/* changed whenever the art registered changes (menu_art_serial) */
+static unsigned long art_serial = 1;
+#endif
 
 void halo_menus_art_register(void const *texture, char const *png)
 {
@@ -1073,13 +1098,16 @@ void halo_menus_art_register(void const *texture, char const *png)
 		if (art[index].texture)
 		{
 			xgpu_gl_texture_deleted(art[index].texture);
-			glDeleteTextures(1, &art[index].texture);
+			menu_art_delete(art[index].texture);
 		}
 #endif
 	}
 	memset(&art[index], 0, sizeof(art[index]));
 	art[index].data = data;
 	art[index].png = strdup(png);
+#ifdef HALO_CONSOLE_HOST_ART
+	art_serial++;
+#endif
 }
 
 void halo_menus_art_forget(void)
@@ -1093,11 +1121,14 @@ void halo_menus_art_forget(void)
 		if (art[index].texture)
 		{
 			xgpu_gl_texture_deleted(art[index].texture);
-			glDeleteTextures(1, &art[index].texture);
+			menu_art_delete(art[index].texture);
 		}
 #endif
 	}
 	art_count = 0;
+#ifdef HALO_CONSOLE_HOST_ART
+	art_serial++;
+#endif
 }
 
 #ifdef HALO_3DS
@@ -1151,3 +1182,28 @@ unsigned int menu_art_texture(unsigned long data, unsigned long *levels)
 	*levels = art[index].levels;
 	return art[index].texture;
 }
+
+#ifdef HALO_CONSOLE_HOST_ART
+unsigned long menu_art_serial(void)
+{
+	return art_serial;
+}
+
+const char *menu_art_name(unsigned long data)
+{
+	long index;
+
+	for (index = 0; index < art_count; index++)
+	{
+		if (art[index].data == data)
+			return art[index].png;
+	}
+	return NULL;
+}
+
+const unsigned char *menu_art_png(const char *name, unsigned long *size)
+{
+	*size = 0;
+	return file_data(name, size);
+}
+#endif

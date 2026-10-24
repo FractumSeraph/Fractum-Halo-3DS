@@ -256,6 +256,27 @@ enum
 	VARIANT_VEHICLE_SET_CUSTOM = 0xFF
 };
 
+/* port: OpenCE's gametypes (port/linux/game/game_modes.c): a mode's rules
+over its game engine's (Slayer's), and Hardcore's over any */
+enum
+{
+	_game_mode_none = 0,
+	_game_mode_swat,
+	_game_mode_infection,
+	_game_mode_gun_game,
+	NUMBER_OF_GAME_MODES
+};
+
+enum
+{
+	/* Gun Game's weapons: the strongest first, the weakest first, or in an
+	order the host draws for each game */
+	_gun_game_order_strongest_first = 0,
+	_gun_game_order_weakest_first,
+	_gun_game_order_random,
+	NUMBER_OF_GUN_GAME_ORDERS
+};
+
 /* (the starting equipment, generic or the map's, is the variant's own:
 _game_variant_generic_starting_equipment_bit) */
 struct game_variant_options
@@ -280,9 +301,30 @@ struct game_variant_options
 	/* no weapons spawn on the map (its grenades and powerups do): for
 	a loadout of none, melee only */
 	boolean no_map_weapons;
+	/* port: OpenCE's gametypes (game_modes.c): the mode (_game_mode_*), and
+	Hardcore's rules (no motion sensor, no aim assist, a kill restores the
+	killer's health and shields) */
+	byte mode;
+	boolean hardcore;
+	/* Infection: the zombies chosen at the start, their speed and their
+	skull's melee damage (percent), their respawn time and the countdown
+	before the first are chosen (seconds), and whether they have shields */
+	byte infection_initial_zombies;
+	byte infection_zombie_speed;
+	byte infection_skull_damage;
+	byte infection_respawn_time;
+	byte infection_countdown;
+	boolean infection_zombie_shields;
+	/* Gun Game: the weapons' order (_gun_game_order_*), and whether a melee
+	kill takes the victim back a weapon */
+	byte gun_game_order;
+	boolean gun_game_melee_demotes;
+	byte reserved[6];
 };
 
-typedef char verify_game_variant_options_size[sizeof(struct game_variant_options) == 0x1C ? 1 : -1];
+typedef char verify_game_variant_options_size[sizeof(struct game_variant_options) == 0x2C ? 1 : -1];
+/* (builds before OpenCE's gametypes saved and sent only the first 0x1C bytes) */
+#define GAME_VARIANT_OPTIONS_V1_SIZE 0x1C
 
 struct game_engine
 {
@@ -558,6 +600,10 @@ void game_variant_options_default(
 	struct game_variant_options *options);
 void game_engine_playlist_initialize(
 	void);
+/* port: a loadout weapon's (_loadout_weapon_*) definition, NONE if the map
+has none */
+long game_engine_loadout_weapon_definition(
+	byte weapon);
 
 long game_globals_get_weapon(
 	struct game_globals *game_globals,
@@ -914,4 +960,25 @@ void game_show_score_extended(
 	long team_index);
 
 #endif
+#ifdef HALO_BIG_ENDIAN
+/* port: a big-endian console (port/linux/game/network_distributed.h): the
+game types' states the host sends (game_engine_write_network_state) are
+little-endian on the wire, as the PCs and the original Xbox send them. Each
+game type's turns its own between this machine's order and the wire's
+(either way: their layouts are fixed), a state of another size left as it
+is (its read refuses it). */
+void distributed_wire_swap(void *data, long count, long size);
+/* the fields from first to last of the state, numbers of size bytes each
+with no padding between them */
+#define GAME_ENGINE_NETWORK_STATE_SWAP(state, first, last, size) \
+	distributed_wire_swap(&(state)->first, \
+		(long)(((byte *)&(state)->last + sizeof((state)->last) - (byte *)&(state)->first) / (size)), (size))
+void game_engine_slayer_network_state_byte_swap(byte *buffer, long size);
+void game_engine_ctf_network_state_byte_swap(byte *buffer, long size);
+void game_engine_oddball_network_state_byte_swap(byte *buffer, long size);
+void game_engine_king_network_state_byte_swap(byte *buffer, long size);
+void game_engine_race_network_state_byte_swap(byte *buffer, long size);
+void game_engine_bomb_network_state_byte_swap(byte *buffer, long size);
+#endif
+
 #endif // __GAME_ENGINE_H

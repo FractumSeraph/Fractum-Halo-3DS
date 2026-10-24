@@ -26,6 +26,9 @@ struct xgpu_capabilities
 	BOOL border_clamp;
 	BOOL anisotropy;
 	BOOL s3tc;
+	/* KHR_texture_compression_astc_ldr: DXT1 as ASTC where there is no S3TC
+	(display.dxt1_astc) */
+	BOOL astc;
 	/* ES 3.2, or the EXT/OES_draw_elements_base_vertex extension: glDrawElementsBaseVertex */
 	BOOL base_vertex;
 	/* ES 3.1 with fragment atomic counters: exact visibility test counts */
@@ -171,6 +174,11 @@ struct nv2a_pixel_shader_key
 	/* Discrete meter thresholds in texture 0's red are read at level zero,
 	without filtering. Coverage/brightness still use the filtered lookup. */
 	unsigned char point_threshold;
+	/* a Custom Edition HUD meter drawn from a bitmap also drawn as artwork,
+	whose channels are as Halo PC keeps them: texture 0 sampled as a Halo PC
+	meter's swizzle does (alpha as the color, red as alpha; OpenCE's,
+	halo_custom_edition_hud_meter) */
+	unsigned char ce_meter_channels;
 	/* the source's blend factor, applied here instead (1 the blend color, 2
 	one less it, 3 its alpha, 4 one less that; 0 none): WebGL refuses a
 	blend of a constant color factor with a constant alpha one, as the
@@ -225,6 +233,7 @@ struct xgpu_texture_description
 	BOOL hires;         /* a high-res HUD texture drawn in the texture's place (hud_hires.h) */
 	BOOL hires_coverage; /* ... whose green is its coverage (a meter's) */
 	BOOL hires_point_threshold; /* ... whose red holds discrete segment data */
+	BOOL ce_meter_channels; /* a mixed-use CE meter's draw (halo_custom_edition_hud_meter) */
 };
 
 void xgpu_texture_describe(DWORD format_word, DWORD size_word, struct xgpu_texture_description *description);
@@ -271,6 +280,33 @@ struct xgpu_render_target
 
 /* the GL texture holding a render target with this physical address, or 0 */
 struct xgpu_render_target *xgpu_render_target_find(unsigned long data);
+
+#ifdef HALO_BGFX
+/* display.renderer is "bgfx": the bgfx test backend draws instead of OpenGL
+(d3d8_bgfx.inl), from platform_video_initialize on */
+extern BOOL xgpu_bgfx;
+/* a level of a texture that is not compressed, as 32-bit ARGB words (B, G,
+R, A in memory); FALSE without the memory for it */
+BOOL xgpu_texture_decode_level(const struct xgpu_texture_description *description, unsigned long level,
+	const unsigned char *source, const D3DCOLOR *palette, unsigned long *destination);
+/* a compressed texture's DXT kind (1, 3 or 5; 0 for any other), and the
+bytes of one of its levels */
+int xgpu_texture_dxt(const struct xgpu_texture_description *description);
+unsigned long xgpu_texture_level_bytes(const struct xgpu_texture_description *description, unsigned long level);
+/* the port's own textures under the bgfx backend (the high-res text's atlas,
+HUD sheets, menu art): RGBA texels, made with their smaller levels when
+mipmapped; a name (nonzero) as the OpenGL path's texture names are */
+unsigned int xgpu_bgfx_texture_create(unsigned long width, unsigned long height, const unsigned char *rgba,
+	BOOL mipmapped);
+void xgpu_bgfx_texture_rows(unsigned int name, unsigned long top, unsigned long width, unsigned long rows,
+	const unsigned char *rgba);
+void xgpu_bgfx_texture_delete(unsigned int name);
+/* the overlay's quads (ui_overlay.c) over the window's picture at Present */
+void xgpu_bgfx_overlay_draw(const void *vertices, int count, int vertex_bytes, const unsigned char *atlas, int atlas_size,
+	int dirty_top, int dirty_bottom, const unsigned char *icons, int icon_size, int icon_count,
+	const unsigned char *picture, int picture_width, int picture_height, int picture_serial,
+	const float cutouts[4][4], int window_width, int window_height);
+#endif
 
 /* ---------- anti-aliasing
 

@@ -69,6 +69,12 @@ short network_game_server_last_refusal_code(
 boolean network_game_server_drop_machine(
 	long machine_index,
 	short rejection_code);
+/* port (this fork): a client machine that takes the older game settings
+record dropped from a game of OpenCE's game types (as drop_machine, with
+_rejection_code_version_too_old), the host told; FALSE if it is none that
+joined */
+boolean network_game_server_refuse_game_type(
+	long machine_index);
 /* the host's ban command (console.c, hs.c) */
 enum
 {
@@ -97,6 +103,10 @@ void network_game_server_port_set_cooperative_friendly_fire(
 PLAYER COLLISIONS), kept for the levels after */
 void network_game_server_port_set_cooperative_player_collisions(
 	boolean player_collisions);
+/* port: whether co-op's players hurt their AI allies (Server Setup's ALLY
+FRIENDLY FIRE), kept for the levels after */
+void network_game_server_port_set_cooperative_ally_friendly_fire(
+	boolean ally_friendly_fire);
 boolean network_game_server_ban_player(
 	char const *text);
 /* port: the host's kick command: as the ban command, but nothing kept (no

@@ -113,6 +113,8 @@ Custom Edition map loaded relies on Halo PC's HUD for
 boolean cache_file_tags_are_ce(void);
 boolean ce_hud_halo_pc_overlay_blend_functions(void);
 boolean ce_hud_overlays_blocked(void);
+boolean ce_hud_gearbox_meters(void);
+boolean ce_hud_bitmap_is_mixed_meter(void const *bitmap);
 
 /* ---------- constants */
 
@@ -120,7 +122,7 @@ enum
 {
 	_hud_dont_scale_offset_bit = 0,
 	/* port: Halo PC's, which the Xbox's tags never set */
-	_hud_use_high_resolution_scale_bit = 2,
+	_hud_port_high_resolution_scale_bit = 2,
 };
 
 /* hud number and meter definitions (no shared header declares these yet;
@@ -437,7 +439,9 @@ static boolean hud_bad_bitmap_reported = FALSE;
 
 /* Inspect the guarded caller's frame, not the return site of this helper.
  * A normal prologue would replace EBP and defeat the paired stack check. */
-#ifndef HALO_N3DS
+#if defined(HALO_N3DS)
+/* port: (none on the 3DS: Halo3DS draws the HUD natively) */
+#elif !defined(HALO_XBOX_CONSOLE)
 __attribute__((noinline)) long get_return_eip(
 	void)
 {
@@ -453,6 +457,16 @@ __attribute__((noinline)) long get_return_eip(
 	/* the caller's return address, as [ebp+4] is in the naked original */
 	return (long)(__INTPTR_TYPE__)__builtin_return_address(1);
 #endif
+}
+#else
+__declspec(naked) long get_return_eip(
+	void)
+{
+	__asm
+	{
+		mov eax, [ebp+4]
+		ret
+	}
 }
 #endif
 
@@ -1177,8 +1191,10 @@ pixel32 get_flash_color(
 
 	csmemset(stack_buffer, 0x62, sizeof(stack_buffer));
 
+	/* port: the phase of the frame, not the tick
+	(port/linux/game/render_interpolation.c) */
 	flash_phase = (real)fmod(
-		(game_time_get() - reference_value) * (1.0f / TICKS_PER_SECOND),
+		render_interpolation_ticks_since(game_time_get(), reference_value) * (1.0f / TICKS_PER_SECOND),
 		hud_color->flash_period);
 	pixel32_to_real_argb_color(hud_color->color, &base_color);
 	pixel32_to_real_argb_color(hud_color->flash_color, &flash_color);
@@ -1422,6 +1438,7 @@ void hud_draw_bitmap(
 	return;
 }
 
+#ifndef HALO_XBOX_CONSOLE
 /* port: a screen wider than 640 widens the HUD's window, which the HUD's
 elements keep to by their corners (the ammo counter to the left edge). The
 zoomed view's elements (the sniper rifle's angle ticks and range numbers)
@@ -1481,6 +1498,7 @@ void hud_zoomed_layout_end(
 	render.camera.window_bounds = *saved_window_bounds;
 }
 
+#endif
 void hud_draw_static_element(
 	short local_player_index,
 	struct hud_absolute_placement_definition const *absolute_placement,
@@ -1680,7 +1698,12 @@ static void hud_draw_bitmap_internal(
 		_shader_framebuffer_blend_function_alpha_multiply_add;
 	parameters.map[0] = (struct bitmap_data *)bitmap;
 
+	/* port: shared CE HUD sheets need meter channels only for this draw
+	(port/linux/src/xbox_textures.c), leaving their static artwork intact.
+	(OpenCE's; the sheets, ChupathingyCE's loader's: port/linux/game/ce_hud.c) */
+	halo_custom_edition_hud_meter(meter_parameters && ce_hud_bitmap_is_mixed_meter(bitmap));
 	rasterizer_psuedo_dynamic_screen_quad_draw(&parameters, vertices);
+	halo_custom_edition_hud_meter(FALSE); /* port: end the CE meter draw scope */
 
 	match_assert_stack_frame("c:\\halo\\SOURCE\\interface\\hud_draw.c", 985);
 
@@ -2028,6 +2051,11 @@ void hud_draw_meter(
 		meter_parameters.tint_color = real_alpha_intensity_to_pixel32(
 			PIN(meter->fade, 0.0f, 1.0f),
 			PIN(1.0f-meter->opacity, 0.0f, 1.0f));
+		/* port: PC meter shading does not multiply the emitted color by
+		the Xbox opacity tint. Keep this compatibility limited to the CE
+		maps identified as depending on Gearbox meters (port/linux/game/ce_hud.c). */
+		if (ce_hud_gearbox_meters())
+			meter_parameters.tint_color |= 0x00FFFFFF;
 		meter_parameters.gradient = 1.0f;
 		meter_parameters.flash_color_is_negative = FALSE;
 		meter_parameters.tint_mode_2 = TRUE;
@@ -2144,6 +2172,8 @@ void hud_draw_numbers(
 				scale = hud_globals_get_scale(
 					TEST_FLAG(draw_flags, _hud_draw_in_multiplayer_bit));
 			}
+			if (TEST_FLAG(numbers->placement.multiplayer_scaling_flags, _hud_port_high_resolution_scale_bit))
+				scale *= 0.5f;
 #ifdef HALO_CUSTOM_EDITION
 			/* port: the digits' bitmap drawn at its HUD scale, their spacing
 			(the HUD number's widths, in pixels of the screen) at the HUD's */

@@ -365,7 +365,7 @@ static void relay_frame(struct delta_peer *peer, struct delta_peer_relay *relay,
 		{
 			int size = peer->env.legacy_table_signed(peer->env.context, peer->table_out, (int)sizeof(peer->table_out));
 
-			peer->table_out_serial = size > 0 && size <= DELTA_LEGACY_SIGNED_SIZE ? serial : 0;
+			peer->table_out_serial = size > 0 && size <= (int)sizeof(peer->table_out) ? serial : 0;
 			peer->table_out_size = peer->table_out_serial ? size : 0;
 			if (!peer->table_out_serial)
 				return;
@@ -1797,6 +1797,13 @@ int delta_peer_machine_pending(const struct delta_peer *peer, delta_u32 now, int
 	if (!machine || machine->local || peer->peers[machine_index].used || !peer->machine_seen[machine_index])
 		return 0;
 	return !elapsed(now, peer->machine_seen_time[machine_index], DELTA_PEER_HANDSHAKE_TIME);
+}
+
+int delta_peer_machine_legacy_version(const struct delta_peer *peer, int machine_index)
+{
+	if (peer->mode != _mode_host || !valid_machine(machine_index) || !peer->peers[machine_index].used)
+		return 0;
+	return peer->peers[machine_index].hello.legacy_version;
 }
 
 int delta_peer_machine_lacks(const struct delta_peer *peer, delta_u32 now, int machine_index, int capability)

@@ -220,6 +220,7 @@ symbols in this file:
 #include "game/cheats.h"
 #include "game/game.h"
 #include "game/game_engine.h"
+#include "infection.h" /* port: port/linux/game/infection.c */
 #include "game/players.h"
 #include "game/aim_assist.h" /* port: the reticle's read-only shot direction */
 #include "interface/first_person_weapons.h"
@@ -874,6 +875,9 @@ boolean weapon_new(
 
 	weapon->weapon.state = _weapon_state_idle;
 	weapon->weapon.overheated_effect_index = NONE;
+	/* port: nothing tracked yet; left at zero, it read as object index 0
+	(any identifier), which finds whatever object sits in slot 0 */
+	weapon->weapon.tracked_object_index = NONE;
 
 	for (magazine_index = 0; magazine_index<weapon_magazine_count(weapon_definition); ++magazine_index)
 	{
@@ -936,7 +940,17 @@ void weapon_delete(
 	object_delete_initial_recursive) */
 	if (game_engine_running() && !CACHE_FILE_TAGS_ARE_CE() && !network_objects_client_deleting())
 	{
-		match_assert("c:\\halo\\SOURCE\\items\\weapons.c", 234, !weapon_is_flag(weapon_index));
+		/* port: (but an Infection zombie's skull: infection.c) */
+#if defined(HALO_CONSOLE) || defined(HALO_XBOX_CONSOLE)
+		/* port: on the consoles a warning in debug.txt, and the game goes on:
+		a modded host's game that deleted the oddball stopped an Xbox here.
+		Nothing follows that the check protects */
+		match_warn("c:\\halo\\SOURCE\\items\\weapons.c", 234,
+			!weapon_is_flag(weapon_index) || infection_can_delete_skull(weapon_index));
+#else
+		match_assert("c:\\halo\\SOURCE\\items\\weapons.c", 234,
+			!weapon_is_flag(weapon_index) || infection_can_delete_skull(weapon_index));
+#endif
 	}
 
 	return;

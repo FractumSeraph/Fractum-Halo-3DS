@@ -89,6 +89,8 @@ def main():
     defines.append('-DHALO_GAME_BROWSER')
     # (and its Halo PC maps: Custom Edition's, HaloMD's; port/linux/game/ce_*.c)
     defines.append('-DHALO_CUSTOM_EDITION')
+    # (the menus' map list of every family, as the fork's Custom Edition builds: tools/linux_build.py)
+    defines.append('-DHALO_MAP_LIST')
     if args.diagnostics: defines.append('-DHALO_N3DS_RENDERER_TESTS=1')
     if args.original_memory: defines.append('-DHALO_N3DS_LOW_MEMORY_TEST=1')
     native = [str(gcc),*COMMON,'-D__3DS__','-I',str(args.libctru/'include'),'-I',str(args.citro3d/'include')]

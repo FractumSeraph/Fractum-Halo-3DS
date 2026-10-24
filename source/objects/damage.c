@@ -103,6 +103,7 @@ symbols in this file:
 
 #include "cseries.h"
 #include "damage.h"
+#include "game_modes.h" /* port: port/linux/game/game_modes.c */
 #include "ai/ai.h"
 #include "cseries/errors.h"
 #include "effects/effects.h"
@@ -154,10 +155,19 @@ void network_damage_aftermath(long object_index, struct damage_data const *damag
 act of god: the host's word, network_distributed.c, or the world's) */
 static boolean distributed_damage_authorized;
 
-/* whether this machine runs objects' shields (their stun, recharge and
+/* port/linux/game/network_damage.c's: whether a client runs the object's
+shields itself (a static target's, from network version 34) */
+boolean network_damage_client_runs_shields(long object_index);
+
+/* whether this machine runs the object's shields (their stun, recharge and
 overcharge): not a client of the distributed netcode, which has the host's
-(damage_set_network_state) */
-#define objects_update_shields() (!network_game_distributed_client())
+(damage_set_network_state), but for the map's scenery and devices that
+damage can break, whose damage every machine deals as the host did and of
+which the host sends no state (network_damage.c's static targets, of a host
+of network version 34 or later: a scenery's shield, broken, came back on no
+client) */
+#define objects_update_shields(object_index) \
+	(!network_game_distributed_client() || network_damage_client_runs_shields(object_index))
 
 /* ---------- constants */
 
@@ -507,6 +517,7 @@ void damage_data_new(
 	damage_data->owner_object_index = NONE;
 	damage_data->owner_team_index = NONE;
 	damage_data->location.cluster_index = NONE;
+	damage_data->location.bonus = NONE;
 	damage_data->scale = 1.f;
 	damage_data->multiplier = 1.f;
 	return;
@@ -1124,6 +1135,8 @@ static void object_damage_aftermath(
 
 			game_stats_kill_damage(damage->definition_index);
 #endif
+			/* port: whether it is a melee's (Gun Game's demotion: game_modes.c) */
+			game_modes_kill_by_melee(damage_effect->damage.category == _damage_category_melee);
 			game_statistics_record_kill(
 				object_index,
 				damage->owner_player_index,
@@ -1132,6 +1145,7 @@ static void object_damage_aftermath(
 #ifdef HALO_GAME_BROWSER
 			game_stats_kill_damage(NONE);
 #endif
+			game_modes_kill_by_melee(FALSE);
 		}
 	}
 	else if (game_engine_can_score())
@@ -1240,7 +1254,14 @@ static void object_damage_body(
 	{
 		if (damage_amount > 0.f && TEST_FLAG(damage_material->flags, _damage_material_head_bit))
 		{
-			if (TEST_FLAG(damage_definition->flags, _damage_can_cause_headshots_bit))
+			/* port: SWAT's headshots, a shot of any weapon's (game_modes.c) */
+			if (TEST_FLAG(damage_definition->flags, _damage_can_cause_headshots_bit) ||
+				game_modes_headshot_kills(object_index,
+					damage_definition->category == _damage_category_bullet ||
+					damage_definition->category == _damage_category_sniper ||
+					damage_definition->category == _damage_category_plasma ||
+					damage_definition->category == _damage_category_needle ||
+					damage_definition->category == _damage_category_shotgun))
 			{
 				if (game_engine_running() ||
 					object->object.type != _object_type_biped ||
@@ -2065,10 +2086,10 @@ void object_damage_update(
 				FLAG(_object_die_act_of_god_no_statistics_bit));
 	}
 
-	if (objects_update_shields())
+	if (objects_update_shields(object_index))
 		SET_FLAG(object->object.damage_flags, _object_shield_charging_bit, FALSE);
 	damage_flags = object->object.damage_flags;
-	if (objects_update_shields() &&
+	if (objects_update_shields(object_index) &&
 		object->object.maximum_shield_vitality > 0.f &&
 		!TEST_FLAG(damage_flags, _object_dead_bit))
 	{
@@ -2820,9 +2841,10 @@ void damage_get_network_state(
 	state->recent_shield_damage = object->object.recent_shield_damage;
 }
 
-/* the automated network tests (port/linux/game/network_test.c): kills the
-object as falling damage does (an act of god), but credited to a player, so
-that the kill counts in the game's scores */
+/* kills the object as falling damage does (an act of god), but credited to a
+player, so that the kill counts in the game's scores: the network tests'
+(port/linux/game/network_test.c) and, in every build, the host's kills for
+a player (network_damage_host_kill_for_player: Bomb's goal blast) */
 void damage_kill_object_for_player(
 	long object_index,
 	long player_index)
@@ -2847,7 +2869,8 @@ void damage_kill_object_for_player(
 
 /* port: the object killed now, counting nothing (no death, no kill, no
 statistics), as unit_kill_no_statistics has it at its next update: Bomb's
-blast (game_engine_bomb.c) */
+blast (game_engine_bomb.c); damage_kill_object_for_player, above, is the
+kill that credits a player */
 void damage_kill_object_no_statistics(
 	long object_index)
 {

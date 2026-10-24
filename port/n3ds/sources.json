@@ -3441,6 +3441,83 @@
     {
       "source": "port/n3ds/src/engine_ce_relocate.c",
       "compiler": "gcc"
+    },
+    {
+      "source": "port/linux/game/game_modes.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/gun_game.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/infection.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/map_packs.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/network_game_layout.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/network_shield_effects.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/profile_names.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/src/delta_profile.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
+    },
+    {
+      "source": "port/linux/src/delta_chat_bridge.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
+    },
+    {
+      "source": "port/linux/src/gametype_folder.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
+    },
+    {
+      "source": "port/linux/src/thread_stop.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
+    },
+    {
+      "source": "port/linux/src/clan_emblem.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
+    },
+    {
+      "source": "port/linux/src/map_torrents.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
+    },
+    {
+      "source": "port/linux/src/controller_layout.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
     }
   ],
   "runtime": [

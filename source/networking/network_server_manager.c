@@ -445,6 +445,7 @@ symbols in this file:
 /* ---------- headers */
 
 #include "cseries.h"
+#include "game_modes.h" /* port: port/linux/game/game_modes.c */
 #include "bungie_net/common/message_header.h"
 #include "bungie_net/network/transport.h"
 #include "bungie_net/network/transport_address_constants.h"
@@ -479,6 +480,7 @@ symbols in this file:
 #include "tag_files/tag_files.h"
 #include "map_share.h" /* port: port/linux/game/map_share.c */
 #include "bots.h" /* port: port/linux/game/bots.c */
+#include "game_modes.h" /* port: port/linux/game/game_modes.c */
 
 /* port: the map the hosted game is on, seeded for players joining it
 (port/linux/src/map_torrents.c) */
@@ -486,8 +488,8 @@ void map_torrents_playing(const char *level_name, unsigned long version, int hos
 /* port: internet play's Discord presence (port/linux/src/p2p.c), and the
 server browser's listing of a public game (p2p_lobby.c) */
 void p2p_set_game_player_counts(int count, int maximum);
-void p2p_set_game_listing(const char *name, const char *map, const char *gametype, int engine_type, int open,
-	int in_progress, int has_teams);
+void p2p_set_game_listing(const char *name, const char *map, const char *gametype, int engine_type, int kind,
+	int open, int in_progress, int has_teams);
 #ifdef HALO_GAME_BROWSER
 /* port: Delta Peer (port/linux/src/delta_peer.h), beside the game's
 protocol, which it leaves as it is: the hosted game's machines and players
@@ -765,6 +767,8 @@ static boolean network_game_server_queue_held_players(
 	struct network_game_server *server,
 	long machine_index);
 static void network_game_server_release_map_fetchers(
+	struct network_game_server *server);
+static void network_game_server_start_waiting_late_joiners(
 	struct network_game_server *server);
 static void network_game_server_keep_late_joiners_alive(
 	struct network_game_server *server);
@@ -1302,6 +1306,43 @@ boolean network_game_server_drop_machine(
 	return TRUE;
 }
 
+/* (network_distributed.c's) */
+void network_distributed_host_notice(char const *text);
+
+/* port (this fork): a client machine that takes the older game settings
+record from this host (a build before network version 35's: ChupathingyCE
+0.8.0e, whose HELLO says 32; an OpenCE machine of a number before 35) has no
+room in it for OpenCE's game types (network_server_message_handler.c,
+network_rules_host_takes_game_type): it would play the plain game type out
+of step with the others. In a game of one it is dropped as a machine without
+Bomb is from a Bomb game, the host told who and why, and it may join again
+for the next game; FALSE if it is none that joined (or the host's own) */
+boolean network_game_server_refuse_game_type(
+	long machine_index)
+{
+	struct network_game_server *server = global_network_game_server_get();
+	wchar_t const *kind;
+	char names[96];
+	char gametype[24];
+	char notice[192];
+	long character;
+
+	if (!network_game_server_drop_machine(machine_index, _rejection_code_version_too_old))
+		return FALSE;
+	network_game_server_machine_names(server, server->client_machines[machine_index].machine_index, names,
+		sizeof(names));
+	kind = game_modes_variant_kind_name(&server->game.variant, &server->game.variant_options);
+	for (character = 0; kind && kind[character] && character < (long)sizeof(gametype) - 1; character++)
+		gametype[character] = kind[character] >= 0x20 && kind[character] < 0x7F ? (char)kind[character] : '?';
+	gametype[kind ? character : 0] = 0;
+	snprintf(notice, sizeof(notice), "%s cannot play %s: their build is older than OpenCE's game types (network version 35)",
+		names[0] ? names : "A player", gametype[0] ? gametype : "OpenCE's game types");
+	network_event("client machine #%ld takes the older game settings record (before network version 35), "
+		"which has no room for OpenCE's game types: dropped", machine_index);
+	network_distributed_host_notice(notice);
+	return TRUE;
+}
+
 /* (a client machine's player queued to add in game: one refused is as one
 the game has no room for) */
 static boolean network_game_server_machine_may_add_player_ingame(
@@ -1601,8 +1642,10 @@ static void network_game_server_list(
 		snprintf(gametype + length, sizeof(gametype) - length, " %s", difficulty_names[game->difficulty]);
 	}
 	/* (the scenario's name, not its path: the listing has 32 characters) */
-	p2p_set_game_listing(name, tag_name_strip_path(game->map.name), gametype, game->variant.game_engine_index, open,
-		in_progress, game->variant.universal_variant.teams);
+	/* port: (and its OpenCE gametype's kind: port/linux/game/game_modes.c) */
+	p2p_set_game_listing(name, tag_name_strip_path(game->map.name), gametype, game->variant.game_engine_index,
+		game_modes_kind(&game->variant, &game->variant_options), open, in_progress,
+		game->variant.universal_variant.teams);
 	/* port: the map seeded for those joining (costs little when unchanged) */
 	map_torrents_playing(game->map.name, (unsigned long)game->map.version, 1);
 }
@@ -1730,6 +1773,9 @@ boolean network_game_server_idle(
 #ifdef HALO_GAME_BROWSER
 	network_game_server_delta_frame(server);
 #endif
+	/* (the settings record to machines it waited for: network version 35's) */
+	network_game_server_settings_frame(server);
+	network_game_server_start_waiting_late_joiners(server);
 
 	if (network_game_server_game_is_valid(server))
 	{
@@ -3054,6 +3100,13 @@ static boolean network_game_server_player_among(
 	return FALSE;
 }
 
+/* port: machines joining the game in progress whose start waits for their
+settings record's size (network version 35's longer record: a Delta host
+that announces 35 or later waits for a joining machine's HELLO first,
+network_server_message_handler.c); started by
+network_game_server_start_waiting_late_joiners once it is known */
+static boolean network_game_server_late_joiner_waiting[MAXIMUM_NETWORK_MACHINE_COUNT];
+
 /* the settings (with the machine's players) and the start, to the machine
 alone, the start with the host's game time */
 static void network_game_server_start_late_joiner(
@@ -3062,6 +3115,23 @@ static void network_game_server_start_late_joiner(
 {
 	struct message_server_begin_game begin_game = { 0 };
 	struct network_message *message;
+
+	{
+		long slot = machine - server->client_machines;
+
+		if (network_game_server_settings_waiting(server, machine))
+		{
+			if (slot >= 0 && slot < MAXIMUM_NETWORK_MACHINE_COUNT && !network_game_server_late_joiner_waiting[slot])
+			{
+				network_game_server_late_joiner_waiting[slot] = TRUE;
+				network_event("machine #%d joins the game in progress once its game settings record's size is known",
+					machine->machine_index);
+			}
+			return;
+		}
+		if (slot >= 0 && slot < MAXIMUM_NETWORK_MACHINE_COUNT)
+			network_game_server_late_joiner_waiting[slot] = FALSE;
+	}
 
 	/* (the message carries 16 bits: the client has the rest from its first
 	game update; never 0, which is a game starting) */
@@ -3245,6 +3315,32 @@ static void network_game_server_release_map_fetchers(
 		/* (one that had no players added before the start has none held: it
 		starts now, and its add request is queued as any late joiner's) */
 		if (!network_game_server_queue_held_players(server, machine_index))
+			network_game_server_start_late_joiner(server, machine);
+	}
+}
+
+/* port: each frame, the machines joining the game in progress whose start
+waited for their settings record's size (above), once it is known */
+static void network_game_server_start_waiting_late_joiners(
+	struct network_game_server *server)
+{
+	long slot;
+
+	for (slot = 0; slot < MAXIMUM_NETWORK_MACHINE_COUNT; slot++)
+	{
+		struct network_game_server_client_machine *machine = server->client_machines + slot;
+
+		if (!network_game_server_late_joiner_waiting[slot])
+			continue;
+		if (server->state != _network_game_server_state_ingame ||
+			!network_game_server_client_machine_is_joined_to_game(server, machine) ||
+			TEST_FLAG(machine->flags, _network_client_machine_level_loaded_bit) ||
+			TEST_FLAG(machine->flags, _network_client_machine_started_late_bit))
+		{
+			network_game_server_late_joiner_waiting[slot] = FALSE;
+			continue;
+		}
+		if (!network_game_server_settings_waiting(server, machine))
 			network_game_server_start_late_joiner(server, machine);
 	}
 }
@@ -3493,7 +3589,7 @@ void network_game_server_begin_game_start_countdown(
 
 /**
  * @brief Whether a team game lacks a player on one of its teams, which
- * holds back the start. Never with debug.solo_game.
+ * holds back the start. Never with game.start_with_one_player.
  * @param server the server whose game is asked about
  * @return TRUE if the start has to wait for more players
  */
@@ -3586,7 +3682,8 @@ boolean server_has_a_player_on_each_machine(
 }
 
 /**
- * @brief Whether enough machines joined to start: the host's own.
+ * @brief Whether enough machines joined to start: two, or one for a
+ * splitscreen game or with game.start_with_one_player.
  * @param server the server whose game is asked about
  * @return TRUE if the game may start with the machines that joined
  */
@@ -3594,12 +3691,9 @@ boolean server_has_enough_machines(
 	struct network_game_server *server)
 {
 	boolean has_enough_machines;
-	/* port: a system link or internet game starts with the host's machine
-	alone, and others join it in progress (OpenCE's 6b1d81c7, which an
-	earlier merge of this fork had lost to the Xbox's two, or one for a
-	split screen game or debug.solo_game; the players are counted by
-	server_ok_to_countdown) */
-	long minimum_machine_count = 1;
+	long minimum_machine_count =
+		network_game_solo_game() ||
+		network_game_is_splitscreen_local() ? 1 : 2;
 	long machine_count = 0;
 	long client_machine_index;
 
@@ -4395,8 +4489,8 @@ static void network_game_server_dump(
 
 /**
  * @brief Starts, adjusts or stops the pregame countdown on an event.
- * With debug.solo_game a lone machine starts the countdown without a
- * remote client.
+ * With game.start_with_one_player a lone machine starts the countdown
+ * without a remote client.
  * @param server the server, in the pregame state
  * @param countdown_event a _network_game_server_countdown_event_*
  */
@@ -4791,6 +4885,11 @@ void network_game_server_port_set_cooperative(
 {
 	if (!server || server->state != _network_game_server_state_pregame)
 		return;
+#ifdef HALO_XBOX_CONSOLE
+	/* port: no network co-op on the console (port/xbox/game/xbox_coop.c) */
+	(void)difficulty;
+	return;
+#endif
 	server->game.difficulty = difficulty;
 	/* (Server Setup's default for co-op, menu_functions.c's
 	COOPERATIVE_DEFAULT_PLAYERS, until it sets its own) */
@@ -4825,6 +4924,18 @@ void network_game_server_port_set_cooperative_player_collisions(
 		network_event("network_game_server_port_set_cooperative_player_collisions() failed to send updated game settings to clients");
 }
 
+void network_game_server_port_set_cooperative_ally_friendly_fire(
+	boolean ally_friendly_fire)
+{
+	struct network_game_server *server = global_network_game_server_get();
+
+	if (!server)
+		return;
+	SET_FLAG(server->game.cooperative_flags, _network_game_cooperative_no_ally_friendly_fire_bit, !ally_friendly_fire);
+	if (server->state == _network_game_server_state_pregame && !network_game_server_send_game_data_pregame(server))
+		network_event("network_game_server_port_set_cooperative_ally_friendly_fire() failed to send updated game settings to clients");
+}
+
 /* port: a gametype's PC options: the menus' (player_ui_set_game_variant_options)
 when it is the menus' gametype, else its defaults */
 static void network_game_server_variant_options(
@@ -4841,7 +4952,7 @@ static void network_game_server_variant_options(
 
 /**
  * @brief Opens the server's game for the stage its variant names. The
- * minimum player count is 1 with debug.solo_game, else 2.
+ * minimum player count is 1 with game.start_with_one_player, else 2.
  * @param server the server
  * @return TRUE if the game was opened; FALSE if the stage is not found
  * (probably a missing playlist)
@@ -5388,6 +5499,8 @@ static boolean network_game_server_idle_pregame_tasks(
 			else if (countdown_timer_get_time_remaining(
 				&server->countdown_state.timer) == 0 &&
 				network_game_server_have_all_machines_have_precached(server) &&
+				/* (port: and none still waits for its settings record) */
+				!network_game_server_settings_owed(server) &&
 				server->countdown_state.paused == FALSE)
 			{
 				/* (the game stays open: a machine may join it in progress,
@@ -5752,7 +5865,7 @@ unsigned long network_game_server_machine_ipv4_address(
 			csmemset(&reliable, 0, sizeof(reliable));
 			csmemset(&unreliable, 0, sizeof(unreliable));
 			network_connection_get_address(machine->connection, &reliable, &unreliable);
-			return SWAP4(reliable.address.ipv4_address);
+			return NETWORK_SWAP4(reliable.address.ipv4_address);
 		}
 	}
 

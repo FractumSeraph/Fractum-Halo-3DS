@@ -19,12 +19,15 @@ void render_interpolation_reset(void);
 void render_interpolation_frame_begin(void);
 void render_interpolation_frame_end(void);
 float render_interpolation_fraction(void);
+unsigned char render_interpolation_drawing(void);
 struct real_matrix4x3 *render_interpolation_object_node_matrices(long object_index);
+float *render_interpolation_object_function_values(long object_index);
 struct observer_result const *render_interpolation_camera(short local_player_index,
 	struct observer_result const *observer);
 void render_interpolation_first_person(short local_player_index, struct real_matrix4x3 *node_matrices,
 	short node_count, struct render_camera const *camera);
 float render_interpolation_game_time_sec(long ticks);
+float render_interpolation_ticks_since(long now, long then);
 
 /* whether the map being loaded, by the name it was loaded by, is a
 downloaded one, whose scripts may call and set less: one map sharing
@@ -41,6 +44,13 @@ char const *pc_menus_screen(char const *name);
 /* debug.fixed_step: a game of this machine alone runs a tick a frame
 (port/linux/src/port_config.c; game_time.c, main.c) */
 int halo_fixed_step(void);
+/* a Custom Edition map's HUD meter drawn from a bitmap its HUD draws as
+artwork too, whose channels are kept as they are (not a Halo PC meter's
+swizzle: port/linux/game/ce_hud.c): set for that draw alone, which then
+samples the fill order from alpha and the shape from red (hud_draw.c;
+port/linux/src/xbox_textures.c, nv2a_psh.c). OpenCE's, for ChupathingyCE's
+Custom Edition loader */
+void halo_custom_edition_hud_meter(int active);
 /* the width of the screen the game draws, 480 lines tall: the device's or
 the display's shape, or 640 (port/linux/src/d3d8_gl.c) */
 long halo_screen_width(void);
@@ -72,6 +82,17 @@ void halo_draw_picture(const unsigned char *rgba, long width, long height);
 /* display.hdr's tone mapping of a window's 3D view, before its
 anti-aliasing (source/render/render.c) */
 void halo_screen_tone_map(short x0, short y0, short x1, short y1);
+#ifdef HALO_SWITCH_CONSOLE
+/* whether the zoom's blur is drawn on a small copy of the screen and blended
+over it once (source/rasterizer/xbox/rasterizer_xbox_screen_effect.c), and
+that blend's shader on or off for the draws that follow: the Switch's
+renderer (port/switch/guest/d3d8_dk.c; debug.original_zoom) */
+unsigned char halo_screen_fast_warp(void);
+void halo_screen_warp_blend(unsigned char on);
+/* whether a blur screen effect is drawn on small targets (the same file;
+debug.original_blur) */
+unsigned char halo_screen_fast_blur(void);
+#endif
 /* the mouse in the menus (source/interface/ui_widget.c) */
 #include "halo_ui_pointer.h"
 /* a level not in the maps folder (source/cache/cache_files_windows.c): a

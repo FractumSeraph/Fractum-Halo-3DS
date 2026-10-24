@@ -4,7 +4,7 @@ P2P.H
 Internet play (p2p.c): machines that shared an invite reach each other's
 system link games as if they were on one LAN. xnet.c routes the game's
 traffic for them through here; sdl_platform.c passes invite links in and
-out through the clipboard.
+out through the clipboard, as the player's settings allow.
 
 Addresses and ports are in network byte order.
 */
@@ -41,6 +41,7 @@ void p2p_hosting_invite_announced(const char *invite);
 unsigned long p2p_peer_public_address(unsigned long game_address);
 unsigned long p2p_public_address(void);
 int p2p_joined_invite(char *text, int size);
+void p2p_joining_host(const unsigned char *identifier);
 #endif
 #endif
 
@@ -105,7 +106,7 @@ a stream's) */
 void p2p_socket_closed(int socket, unsigned short datagram_port);
 
 /* text for the clipboard (a new invite link), once; NULL if none. Called
-from the main thread */
+from the main thread, which copies it only with network.copy_to_clipboard */
 const char *p2p_take_clipboard_text(void);
 
 /* whether a game this machine hosts may be joined from the internet (an
@@ -148,8 +149,8 @@ void p2p_set_hosting_dedicated(int dedicated);
 /* the hosted game's details as listed (printable ASCII is kept; NULL leaves
 one as it was): the game's server calls it as they change (calling it with
 the same again costs little) */
-void p2p_set_game_listing(const char *name, const char *map, const char *gametype, int engine_type, int open,
-	int in_progress, int has_teams);
+void p2p_set_game_listing(const char *name, const char *map, const char *gametype, int engine_type, int kind,
+	int open, int in_progress, int has_teams);
 /* the server browser: while on, the public games are gathered (asked for
 when turned on, and by p2p_lobby_refresh) */
 void p2p_lobby_browse(int on);
@@ -179,6 +180,9 @@ struct p2p_listing
 	char map[P2P_LISTING_MAP_SIZE + 1];
 	char gametype[P2P_LISTING_GAMETYPE_SIZE + 1];
 	unsigned char player_count, maximum_player_count, engine_type;
+	/* the game's kind: an OpenCE gametype's mode, and Hardcore
+	(port/linux/game/game_modes.h's game_modes_kind) */
+	unsigned char kind;
 	unsigned char open, in_progress, has_teams, dedicated;
 	/* joining it failed this run (p2p_lobby_mark_failed) */
 	unsigned char failed;
@@ -216,6 +220,12 @@ int p2p_listing_older_copy(const struct p2p_listing *games, const unsigned long 
 /* how many hosts list a game of a newer network version, which is not
 shown (an old build sees none of the games) */
 int p2p_lobby_newer_games(void);
+/* p2p_listing_older_copy, for a client that joins versions minimum to
+maximum: games of other versions are kept too (the browser marks them, and
+joins none), but each as a game of their own side of the window only, and
+never beside a copy that is joinable */
+int p2p_listing_hidden_copy(const struct p2p_listing *games, const unsigned long *heard_times, int count, int index,
+	int minimum, int maximum);
 /* a game the browser could not join: kept, marked failed, for this run */
 void p2p_lobby_mark_failed(const unsigned char *identifier);
 /* a locked game's invite (into its invite), if the password is its own:

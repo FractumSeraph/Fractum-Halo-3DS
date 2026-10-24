@@ -34,13 +34,26 @@ being hit looks and feels like on the clients).
 - The damage to a unit goes to the machines of the players it concerns
   (the unit's, its riders', the damage's owner's) and those sent the
   unit's player this tick, which see it; a killing blow to all.
-- Scenery and devices that can be destroyed (lights, panels) are the
-  map's, at the same index on every machine. A client reports its hits on
-  them like any other, and every client deals the host's damage to its own
-  copy, which breaks and plays its effects as the host's did.
+- Scenery and devices that can be destroyed (lights, panels), or whose
+  shields can be broken (energy shields, a map's tripmines: from network
+  version 34, network_rules_of_version), are the map's, at the same index
+  on every machine. A client reports its hits on them like any other, and
+  every client deals the host's damage to its own copy, which breaks and
+  plays its effects as the host's did. Their shields' stun and recharge each
+  machine runs itself (damage.c's objects_update_shields), as the host sends
+  no state of them: the same damage, and the same recharge. What one of them
+  deals itself, its shield or body breaking (a tripmine going off), the host
+  deals whoever owns it, and no client of 34 on reports: a client's player's
+  tripmine is set off where the host has it (a machine that still reports
+  it, an older build's, has its report taken instead:
+  network_game_server_machine_reports_static_damage). One made in the game
+  (a tripmine a grenade's effect places) is at an index of its own on each
+  machine: a machine given another's index of one takes its own nearest
+  where the other had it (static_target_nearest).
 */
 
 #include "cseries.h"
+#include "infection.h"
 #include "cseries/errors.h"
 #include "game/game.h"
 #include "game/game_globals.h"
@@ -59,6 +72,7 @@ being hit looks and feels like on the clients).
 /* port (this fork): the host's fair play checks, and its recordings */
 #include "network_fairplay.h"
 #include "network_recording.h"
+#include "network_rules.h"
 
 #include <math.h>
 
@@ -77,6 +91,9 @@ boolean distributed_get_death(short dead_player_index, byte *killing_player_inde
 	boolean *killed_by_vehicle);
 /* cache_files.c's */
 boolean tag_index_is_group(long tag_index, long group_tag);
+/* (the host) whether a machine's players report a static target's own
+damage (network_server_message_handler.c) */
+boolean network_game_server_machine_reports_static_damage(long machine_index);
 /* game_engine.c's */
 long game_engine_network_player_score(long player_index);
 /* physics.c's (world units a tick, each tick) */
@@ -509,12 +526,75 @@ static boolean distributed_damage_to_data(
 	return TRUE;
 }
 
-/* whether the object is scenery or a device that damage can destroy */
+/* whether the object is scenery or a device that damage can destroy, or,
+from network version 34 (network_rules_of_version: a client of an older
+host keeps that version's rule, as the host does), one whose shield alone
+damage can break (Rat Race's energy shields, a map's tripmines): every
+machine of a game takes the same ones */
 static boolean static_target(
 	long object_index)
 {
 	return object_try_and_get_and_verify_type(object_index, STATIC_TARGET_TYPES) &&
-		object_get_maximum_body_vitality(object_index, TRUE) > 0.0f;
+		(object_get_maximum_body_vitality(object_index, TRUE) > 0.0f ||
+			(network_rules_of_version(NETWORK_RULES_STATIC_SHIELDS_VERSION) &&
+				object_get_maximum_shield_vitality(object_index, TRUE) > 0.0f));
+}
+
+/* (a client) whether it runs the object's shields itself, their stun and
+recharge: a static target's, from network version 34, as the host sends no
+shield of one (else a broken one stays broken on the client's screen) */
+boolean network_damage_client_runs_shields(
+	long object_index)
+{
+	return network_rules_of_version(NETWORK_RULES_STATIC_SHIELDS_VERSION) && static_target(object_index);
+}
+
+/* whether the damage is a static target's own (an effect of its shield or
+body breaking: a map's tripmine going off), which from network version 34
+the host deals whoever its owner is: a client's player's tripmine is set off
+where the host has it (a vehicle running over it), so their machine has no
+hit of it to report (but an older build's still does:
+network_game_server_machine_reports_static_damage) */
+static boolean static_target_damage(
+	struct damage_data const *damage)
+{
+	return network_rules_of_version(NETWORK_RULES_STATIC_SHIELDS_VERSION) &&
+		damage->owner_object_index != NONE && static_target(damage->owner_object_index);
+}
+
+/* the nearest static target to the point, within its bounding sphere and
+the reach: another machine's copy of one made during play (a tripmine),
+which each machine makes at an index of its own, named by that machine's
+index (a host's event, a client's report). NONE for none; the first found
+of two as near. */
+static long static_target_nearest(
+	real_point3d const *point,
+	real reach)
+{
+	struct object_iterator iterator;
+	struct object_datum *object;
+	long nearest = NONE;
+	real nearest_distance = 0.0f;
+
+	object_iterator_new(&iterator, STATIC_TARGET_TYPES, 0);
+	while ((object = object_iterator_next(&iterator)) != NULL)
+	{
+		real_point3d origin;
+		real distance;
+
+		if (!static_target(iterator.index))
+			continue;
+		object_get_origin(iterator.index, &origin);
+		distance = (origin.x - point->x) * (origin.x - point->x) + (origin.y - point->y) * (origin.y - point->y) +
+			(origin.z - point->z) * (origin.z - point->z);
+		if (network_rules_static_within(distance, object->object.bounding_sphere_radius, reach) &&
+			(nearest == NONE || distance < nearest_distance))
+		{
+			nearest = iterator.index;
+			nearest_distance = distance;
+		}
+	}
+	return nearest;
 }
 
 /* ---------- object_cause_damage (damage.c) */
@@ -662,8 +742,10 @@ boolean network_damage_deals(
 
 			damage_replay_player_effect(unit->unit.player_index, &effect, 0.0f);
 		}
-		/* a hit of this machine's own player's, on the host's object */
-		if (distributed_player_is_local(damage->owner_player_index) &&
+		/* a hit of this machine's own player's, on the host's object (but
+		not a static target's own, a tripmine's going off, which from network
+		version 34 the host deals itself, whoever placed it: static_target_damage) */
+		if (distributed_player_is_local(damage->owner_player_index) && !static_target_damage(damage) &&
 			(network_objects_client_has(object_index) || static_target(object_index)) &&
 			damage_report_count < MAXIMUM_HIT_REPORTS_PER_TICK)
 		{
@@ -693,9 +775,14 @@ boolean network_damage_deals(
 		damage->owner_player_index != NONE && !distributed_player_is_local(damage->owner_player_index))
 	{
 		struct player_datum *owner = player_try_and_get(damage->owner_player_index);
+		long owner_machine = distributed_player_machine((short)DATUM_INDEX_TO_ABSOLUTE_INDEX(damage->owner_player_index));
 
-		if (owner && !owner->quit_out_of_game &&
-			distributed_player_machine((short)DATUM_INDEX_TO_ABSOLUTE_INDEX(damage->owner_player_index)) != NONE)
+		/* (from network version 34, a static target's own damage, a
+		tripmine's going off, dealt here whoever placed it, unless the
+		placer's machine still reports it: an older build's, such as
+		ChupathingyCE 0.8.0e's, whose HELLO says 32) */
+		if (owner && !owner->quit_out_of_game && owner_machine != NONE &&
+			!(static_target_damage(damage) && !network_game_server_machine_reports_static_damage(owner_machine)))
 		{
 			distributed_damage_material((struct damage_data *)damage, object_index, material_index);
 			return FALSE;
@@ -1910,6 +1997,14 @@ static boolean distributed_report_valid(
 	{
 		return FALSE;
 	}
+	/* an Infection zombie's blow at a rider (not the vehicle, as the game's
+	melee has it) only past the host's own line to them (infection.c) */
+	if (melee && infection_unit_is_zombie(distributed_living_unit(player)) && target->object.type == _object_type_biped &&
+		target->object.parent_object_index != NONE &&
+		!infection_melee_rider_visible(distributed_living_unit(player), report->object_index, &report->damage.direction))
+	{
+		return FALSE;
+	}
 	if (collision && !distributed_player_drove_into(player_index, &report->damage.epicenter, &report->target_position,
 		target->object.bounding_sphere_radius, ticks))
 	{
@@ -1990,7 +2085,8 @@ static boolean distributed_report_valid(
 	{
 		normalize3d(&damage->direction);
 	}
-	damage->multiplier = 1.0f;
+	/* (an Infection zombie's skull's blow: its multiplier the host's own) */
+	damage->multiplier = melee ? infection_melee_multiplier(distributed_living_unit(player)) : 1.0f;
 	damage->owner_player_index = DATUM_INDEX_NEW(player_index, player->identifier);
 	damage->owner_team_index = (short)player->team_index;
 	/* (the players' traits' multipliers go by the object) */
@@ -2011,8 +2107,31 @@ void network_damage_handle_reports(
 	for (index = 0; index < count; index++)
 	{
 		struct distributed_hit_report const *report = &reports[index];
+		struct distributed_hit_report matched;
 		struct damage_data damage;
 
+		/* (from network version 34, a report on an index that names none of
+		this machine's units, weapons, equipment or static targets: the
+		client's own copy of a static target made during play, a tripmine,
+		is this machine's nearest to where the client had it, within its
+		bounding sphere and 1.0 more) */
+		if (network_rules_of_version(NETWORK_RULES_STATIC_SHIELDS_VERSION) &&
+			distributed_object_index_valid(report->object_index) &&
+			DATUM_INDEX_TO_ABSOLUTE_INDEX(report->object_index) < MAXIMUM_OBJECTS_PER_MAP &&
+			distributed_point_valid(&report->target_position, REPORT_WORLD_BOUND) &&
+			!object_try_and_get_and_verify_type(report->object_index,
+				_object_mask_biped | _object_mask_vehicle | _object_mask_weapon | _object_mask_equipment) &&
+			!static_target(report->object_index))
+		{
+			long nearest = static_target_nearest(&report->target_position, NETWORK_RULES_STATIC_REPORT_REACH);
+
+			if (nearest != NONE)
+			{
+				matched = *report;
+				matched.object_index = nearest;
+				report = &matched;
+			}
+		}
 		if (!distributed_report_valid(machine_index, report, &damage))
 		{
 			damage_rejected_reports++;
@@ -2307,14 +2426,34 @@ void network_damage_handle_events(
 			}
 			break;
 		case _damage_event_static:
-			if (distributed_object_index_valid(event->object_index) && static_target(event->object_index) &&
-				distributed_damage_indices_valid(event->object_index, event->node_index, event->region_index,
+		{
+			long object_index = event->object_index;
+
+			/* (from network version 34, an index that names no object here,
+			the host's own copy of one made during play: the nearest static
+			target to where the damage is from, within reach, an area
+			effect's its cutoff radius more; an index that names another
+			object is not taken for one) */
+			if (distributed_object_index_valid(object_index) && !static_target(object_index) &&
+				network_rules_of_version(NETWORK_RULES_STATIC_SHIELDS_VERSION) &&
+				DATUM_INDEX_TO_ABSOLUTE_INDEX(object_index) < MAXIMUM_OBJECTS_PER_MAP &&
+				!object_try_and_get_and_verify_type(object_index, -1))
+			{
+				boolean area = TEST_FLAG(damage.flags, _damage_area_of_effect_bit) &&
+					tag_index_is_group(damage.definition_index, DAMAGE_EFFECT_DEFINITION_TAG);
+
+				object_index = static_target_nearest(&damage.origin, network_rules_static_event_reach(area,
+					area ? damage_effect_definition_get(damage.definition_index)->cutoff_radius : 0.0f));
+			}
+			if (distributed_object_index_valid(object_index) && static_target(object_index) &&
+				distributed_damage_indices_valid(object_index, event->node_index, event->region_index,
 					event->material_index))
 			{
-				damage_replay_static(event->object_index, &damage, event->node_index, event->region_index,
+				damage_replay_static(object_index, &damage, event->node_index, event->region_index,
 					event->material_index);
 			}
 			break;
+		}
 		}
 	}
 }
@@ -2429,3 +2568,142 @@ void network_damage_new_game(
 	for (player_index = 0; player_index < DAMAGE_RATE_CACHE_SIZE; player_index++)
 		damage_rate_cache[player_index].source_index = NONE;
 }
+
+#ifdef HALO_BIG_ENDIAN
+/* (network_distributed.h) this module's entries in the wire's order */
+static void distributed_damage_wire(
+	struct distributed_damage *damage)
+{
+	WIRE_SWAP_FIELDS(damage, struct distributed_damage, definition_index, flags, sizeof(long));
+	WIRE_SWAP_FIELD(damage, struct distributed_damage, owner_team_index, sizeof(short));
+	WIRE_SWAP_FIELD(damage, struct distributed_damage, owner_object_index, sizeof(long));
+	/* (the origin, epicenter and direction, then the scales) */
+	WIRE_SWAP_FIELDS(damage, struct distributed_damage, origin, material_effect_scale, sizeof(real));
+	WIRE_SWAP_FIELD(damage, struct distributed_damage, material_type, sizeof(short));
+}
+
+boolean network_damage_wire_entries(
+	byte type,
+	byte *entries,
+	short count,
+	long size)
+{
+	short index;
+
+	switch (type)
+	{
+	case _distributed_message_damage_events:
+	{
+		struct distributed_damage_event *events = (struct distributed_damage_event *)entries;
+
+		for (index = 0; index < count && (index + 1) * (long)sizeof(*events) <= size; index++)
+		{
+			WIRE_SWAP_FIELD(&events[index], struct distributed_damage_event, object_index, sizeof(long));
+			distributed_damage_wire(&events[index].damage);
+			WIRE_SWAP_FIELD(&events[index], struct distributed_damage_event, being_damaged_flags, sizeof(long));
+			WIRE_SWAP_FIELDS(&events[index], struct distributed_damage_event, shield_damage, total_damage,
+				sizeof(real));
+			WIRE_SWAP_FIELDS(&events[index], struct distributed_damage_event, body_part, material_index,
+				sizeof(short));
+			WIRE_SWAP_FIELD(&events[index], struct distributed_damage_event, killer_score, sizeof(long));
+		}
+		return TRUE;
+	}
+	case _distributed_message_hit_reports:
+	{
+		struct distributed_hit_report *reports = (struct distributed_hit_report *)entries;
+
+		for (index = 0; index < count && (index + 1) * (long)sizeof(*reports) <= size; index++)
+		{
+			WIRE_SWAP_FIELD(&reports[index], struct distributed_hit_report, object_index, sizeof(long));
+			distributed_damage_wire(&reports[index].damage);
+			WIRE_SWAP_FIELDS(&reports[index], struct distributed_hit_report, target_position, object_normal,
+				sizeof(real));
+			WIRE_SWAP_FIELDS(&reports[index], struct distributed_hit_report, node_index, material_index,
+				sizeof(short));
+			WIRE_SWAP_FIELD(&reports[index], struct distributed_hit_report, host_time, sizeof(long));
+		}
+		return TRUE;
+	}
+	}
+	return FALSE;
+}
+#endif
+
+#if defined(HALO_BIG_ENDIAN) || defined(HALO_NETWORK_WIRE_CAPTURE)
+/* (network_distributed.h) this module's sample entries */
+static void distributed_damage_sample(
+	struct distributed_damage *damage)
+{
+	WIRE_SAMPLE(damage->definition_index);
+	WIRE_SAMPLE(damage->flags);
+	WIRE_SAMPLE(damage->owner_player_index);
+	WIRE_SAMPLE(damage->owner_team_index);
+	WIRE_SAMPLE(damage->owner_object_index);
+	WIRE_SAMPLES(damage->origin.n);
+	WIRE_SAMPLES(damage->epicenter.n);
+	WIRE_SAMPLES(damage->direction.n);
+	WIRE_SAMPLE(damage->scale);
+	WIRE_SAMPLE(damage->multiplier);
+	WIRE_SAMPLE(damage->material_effect_scale);
+	WIRE_SAMPLE(damage->material_type);
+}
+
+word network_damage_wire_sample(
+	byte type,
+	byte *entries)
+{
+	short index;
+
+	switch (type)
+	{
+	case _distributed_message_damage_events:
+	{
+		struct distributed_damage_event *events = (struct distributed_damage_event *)entries;
+
+		for (index = 0; index < 2; index++)
+		{
+			struct distributed_damage_event *event = &events[index];
+
+			WIRE_SAMPLE(event->kind);
+			WIRE_SAMPLE(event->player_index);
+			WIRE_SAMPLE(event->kill_flags);
+			WIRE_SAMPLE(event->object_index);
+			distributed_damage_sample(&event->damage);
+			WIRE_SAMPLE(event->being_damaged_flags);
+			WIRE_SAMPLE(event->shield_damage);
+			WIRE_SAMPLE(event->body_damage);
+			WIRE_SAMPLE(event->body_damage_multiplier);
+			WIRE_SAMPLE(event->total_damage);
+			WIRE_SAMPLE(event->body_part);
+			WIRE_SAMPLE(event->node_index);
+			WIRE_SAMPLE(event->region_index);
+			WIRE_SAMPLE(event->material_index);
+			WIRE_SAMPLE(event->killer_score);
+		}
+		return (word)(2 * sizeof(*events));
+	}
+	case _distributed_message_hit_reports:
+	{
+		struct distributed_hit_report *reports = (struct distributed_hit_report *)entries;
+
+		for (index = 0; index < 2; index++)
+		{
+			struct distributed_hit_report *report = &reports[index];
+
+			WIRE_SAMPLE(report->object_index);
+			distributed_damage_sample(&report->damage);
+			WIRE_SAMPLES(report->target_position.n);
+			WIRE_SAMPLES(report->object_normal.n);
+			WIRE_SAMPLE(report->node_index);
+			WIRE_SAMPLE(report->region_index);
+			WIRE_SAMPLE(report->material_index);
+			WIRE_SAMPLE(report->has_normal);
+			WIRE_SAMPLE(report->host_time);
+		}
+		return (word)(2 * sizeof(*reports));
+	}
+	}
+	return 0;
+}
+#endif

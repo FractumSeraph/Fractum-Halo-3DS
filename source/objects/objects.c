@@ -5,6 +5,7 @@ OBJECTS.C
 /* ---------- headers */
 
 #include "cseries.h"
+#include "infection.h" /* port: port/linux/game/infection.c */
 #include "objects.h"
 #include "coop_pickups.h" /* port: the host's extra campaign pickups */
 #include "coop_vehicles.h" /* port: the host's extra campaign vehicles */
@@ -1314,6 +1315,18 @@ real_matrix4x3 *object_get_node_matrices(
 	return (real_matrix4x3 *)object_header_block_get(object_index, &object_get(object_index)->object.node_matrices);
 }
 
+/* port: the object's outgoing functions; while a frame is drawn, between
+the last two ticks (port/linux/game/render_interpolation.c) */
+real *object_get_function_values(
+	long object_index)
+{
+	real *interpolated = render_interpolation_object_function_values(object_index);
+
+	if (interpolated)
+		return interpolated;
+	return object_get(object_index)->object.outgoing_function_values;
+}
+
 char const *object_get_attachment_marker_name(
 	long object_index,
 	short attachment_index)
@@ -1575,7 +1588,7 @@ boolean object_get_function_value(
 		it reads as off */
 		if (VALID_INDEX(function_index, NUMBER_OF_OUTGOING_OBJECT_FUNCTIONS))
 		{
-			*value_reference = object->object.outgoing_function_values[function_index];
+			*value_reference = object_get_function_values(object_index)[function_index];
 
 			result = TEST_FLAG(object->object.functions_active_flags, function_index);
 		}
@@ -1811,7 +1824,9 @@ static void object_delete_initial_recursive(
 	if (game_engine_running() && object->object.type == _object_type_weapon &&
 		!network_game_distributed_client() && !network_objects_client_deleting() && !CACHE_FILE_TAGS_ARE_CE())
 	{
-		match_assert("c:\\halo\\SOURCE\\objects\\objects.c", 829, !(weapon_is_flag(object_index)));
+		/* port: (but an Infection zombie's skull: infection.c) */
+		match_assert("c:\\halo\\SOURCE\\objects\\objects.c", 829,
+			!weapon_is_flag(object_index) || infection_can_delete_skull(object_index));
 	}
 	
 	if (object->object.first_child_object_index!=NONE)
@@ -4152,6 +4167,27 @@ void objects_scripting_attach(
 	return;
 }
 
+#ifdef HALO_XBOX_CONSOLE
+/* port: the objects in use and the object pool's free memory, for the
+console's memory log (port/xbox/src/xbox_memory.c); FALSE with no map */
+int objects_usage(
+	long *count,
+	long *maximum,
+	long *pool_free,
+	long *pool_size,
+	long *pool_contiguous_free)
+{
+	if (!object_header_data || !object_memory_pool || !object_header_data->valid)
+		return FALSE;
+	*count = object_header_data->actual_count;
+	*maximum = MAXIMUM_OBJECTS_PER_MAP;
+	*pool_size = OBJECT_MEMORY_POOL_SIZE;
+	*pool_free = memory_pool_get_free_size(object_memory_pool);
+	*pool_contiguous_free = memory_pool_get_contiguous_free_size(object_memory_pool);
+	return TRUE;
+}
+#endif
+
 void object_delete_immediately(
 	long object_index)
 {
@@ -4169,9 +4205,17 @@ Xbox's amount */
 static long active_garbage_limit(
 	long limit_per_16_players)
 {
+#ifdef HALO_XBOX_CONSOLE
+	/* port: the console's object pool is the Xbox's 1 MB whatever its
+	players (a test build of more than 16, configure.py --console-players):
+	a game it hosts keeps the Xbox's amount of garbage. 16 players or fewer
+	got this amount already */
+	return limit_per_16_players;
+#else
 	long player_count = player_data ? player_data->actual_count : 0;
 
 	return limit_per_16_players * MAX(16, player_count) / 16;
+#endif
 }
 
 /* port: whether a collection of active garbage may be tried

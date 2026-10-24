@@ -266,6 +266,9 @@ void collision_log_enable(
 	return;
 }
 
+#ifndef HALO_CONSOLE_NO_DEBUG_TOOLS
+/* (a console's build without its developer tools has none of the counting
+and timing below: collision_usage.h) */
 static void collision_log_store_period(
 	short time_period,
 	boolean unused)
@@ -314,6 +317,7 @@ void collision_log_end_period(
 
 	return;
 }
+#endif
 
 static void collision_log_format_usage(
 	char *buffer,
@@ -542,6 +546,9 @@ void collision_log_render(
 	return;
 }
 
+#ifndef HALO_CONSOLE_NO_DEBUG_TOOLS
+/* (a console's build without its developer tools has none of the counting
+and timing below: collision_usage.h) */
 static short collision_log_get_current_user(
 	short collision_function)
 {
@@ -644,6 +651,7 @@ void collision_log_usage(
 
 	return;
 }
+#endif
 
 void collision_log_display(
 	char *buffer)

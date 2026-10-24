@@ -537,3 +537,45 @@ unsigned char pc_menu_profile_edit_begin(void)
 void ui_widget_port_map_fetch_cancel(void)
 {
 }
+
+/* ---------- the fork's desktop screens after network version 38 (fork_update.py
+ * 8ab6b1324..8bc228b04): the Delta profile screen, the controls screen, the PC
+ * menus' marquee and controller capture, the loading screen's skip. Halo3DS's
+ * frontend has its own (or none): never open here */
+struct widget_instance;
+struct game_variant;
+struct game_variant_options;
+struct halo_ui_pointer;
+boolean profile_screen_active(void) { return FALSE; }
+boolean profile_screen_available(void) { return FALSE; }
+boolean profile_screen_dialog_only(void) { return FALSE; }
+void profile_screen_open(boolean from_online_games) { (void)from_online_games; }
+void profile_screen_process(void) {}
+void profile_screen_pointer(struct halo_ui_pointer const *pointer) { (void)pointer; }
+void profile_screen_render(void) {}
+boolean controls_screen_active(void) { return FALSE; }
+void controls_screen_update(boolean menu_open) { (void)menu_open; }
+void controls_screen_process(void) {}
+void controls_screen_pointer(struct halo_ui_pointer const *pointer) { (void)pointer; }
+void controls_screen_render(void) {}
+long pc_menu_text_marquee(struct widget_instance const *widget, boolean focus) { (void)widget; (void)focus; return 0; }
+boolean pc_menu_delta_profile_open(void) { return FALSE; }
+boolean pc_menu_controller_capture(void) { return FALSE; }
+boolean loading_screen_skip_pressed(void) { return FALSE; }
+/* (the fork's audio probe tool, a desktop test mode) */
+boolean probe_active(void) { return FALSE; }
+/* (the high-resolution HUD meter flag: the 3DS draws its meters natively) */
+void halo_custom_edition_hud_meter(int active) { (void)active; }
+/* (gametypes written to a folder as files: the fork's dedicated server's) */
+void gametype_files_profile_saved(long profile_index, struct game_variant const *variant,
+	struct game_variant_options const *options) { (void)profile_index; (void)variant; (void)options; }
+void gametype_files_profile_deleted(long profile_index) { (void)profile_index; }
+
+/* the fork's frame interpolation (port/linux/game/render_interpolation.c,
+ * display.interpolation): the 3DS draws one frame a tick, so never between
+ * ticks; these give what that file gives with it off */
+#define N3DS_TICKS_PER_SECOND 30.0f
+unsigned char render_interpolation_drawing(void) { return 0; }
+float *render_interpolation_object_function_values(long object_index) { (void)object_index; return NULL; }
+float render_interpolation_ticks_since(long now, long then) { return (float)(now - then); }
+float render_interpolation_game_time_sec(long ticks) { return (float)ticks * (1.0f / N3DS_TICKS_PER_SECOND); }

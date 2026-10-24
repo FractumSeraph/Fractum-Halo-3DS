@@ -49,6 +49,11 @@ boolean network_game_client_set_team(
 boolean network_game_client_advertised_game_in_progress(
 	struct network_game_client *client,
 	struct network_advertised_game const *game);
+/* port: the advertised game's kind (port/linux/game/game_modes.h's
+game_modes_kind) */
+byte network_game_client_advertised_game_kind(
+	struct network_game_client *client,
+	struct network_advertised_game const *game);
 boolean network_game_client_advertised_game_compatible(
 	struct network_game_client *client,
 	struct network_advertised_game const *game,
@@ -110,6 +115,9 @@ short network_game_client_get_machine_index(
 /* port: the joined game's host's network version (0xFFFF: not known) */
 unsigned int network_game_client_host_network_version(
 	void);
+/* port: ... where it was not known, the version it showed it is at least */
+void network_game_client_note_host_network_version(
+	unsigned int version);
 boolean network_game_client_advertised_game_is_valid(
 	struct network_advertised_game *advertised_game);
 struct network_advertised_game *network_game_client_get_available_games(

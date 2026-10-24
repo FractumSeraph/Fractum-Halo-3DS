@@ -16,6 +16,9 @@ and the debug keyboard that the game's console reads.
 #include <emscripten/emscripten.h>
 #endif
 #include "gl.h"
+#ifdef HALO_BGFX
+#include "xgpu.h"
+#endif
 #include "port_config.h"
 #include "p2p.h"
 #include "posix.h"
@@ -147,6 +150,9 @@ static void screen_keyboard_update(void);
 /* the windows' icon, a PNG (tools/embed_assets.py, from port/assets/icon) */
 extern const unsigned int platform_window_icon[];
 extern const unsigned long platform_window_icon_size;
+/* the menus' pointer, a PNG (tools/embed_assets.py, from port/assets/cursor) */
+extern const unsigned int platform_menu_cursor[];
+extern const unsigned long platform_menu_cursor_size;
 #endif
 #endif
 /* map_torrents.c's: Custom Edition maps downloaded and seeded */
@@ -154,6 +160,8 @@ void map_torrents_initialize(void);
 void map_torrents_poll(void);
 /* (and the version, for the window's title) */
 const char *updater_version(void);
+/* (whether the game runs under gamescope, where no dialog is shown) */
+int updater_gamescope(void);
 
 /* the older folders of Halo PC maps (maps/ce, md_maps) moved into the new
 ones (maps_ce, maps_md) once, as game.move_old_map_folders says: asked, in
@@ -168,7 +176,7 @@ static void old_map_folders_offer(BOOL quiet)
 	const char *setting = config_string("game.move_old_map_folders");
 	char moves[256];
 	char text[1024];
-	SDL_MessageBoxData question = { SDL_MESSAGEBOX_INFORMATION, NULL, "ChupathingyCE: map folders", text, 2,
+	SDL_MessageBoxData question = { SDL_MESSAGEBOX_INFORMATION, NULL, "Chupathingy: map folders", text, 2,
 		buttons, NULL };
 	int answer = 0;
 
@@ -184,11 +192,9 @@ static void old_map_folders_offer(BOOL quiet)
 			return;
 		}
 		snprintf(text, sizeof(text),
-			"Halo PC maps have folders of their own beside the maps folder now: maps_ce for Custom Edition "
-			"maps, maps_md for HaloMD maps and maps_pc for the maps of your Halo PC disc.\n\n"
+			"Halo PC maps now go in maps_ce (Custom Edition), maps_md (HaloMD) and maps_pc (Halo PC disc).\n\n"
 			"Move your older folders there?\n\n%s\n\n"
-			"Each folder is moved whole: nothing is copied or deleted. If you leave them, their maps still "
-			"play from where they are.",
+			"Nothing is copied or deleted.",
 			moves);
 		if (!SDL_ShowMessageBox(&question, &answer))
 			return;
@@ -209,11 +215,12 @@ static void old_map_folders_offer(BOOL quiet)
 }
 
 /* whether the game is run without anyone to answer a question (a test run,
-a null renderer) */
+a null renderer), or where a question cannot be shown (under gamescope, the
+Steam Deck's Game Mode: updater_gamescope) */
 static BOOL platform_run_is_quiet(void)
 {
 	BOOL quiet = config_boolean("debug.hidden_window") || config_real("debug.exit_after") > 0.0 ||
-		config_boolean("debug.null_renderer");
+		config_boolean("debug.null_renderer") || updater_gamescope();
 
 #ifdef HALO_GAME_BROWSER
 	quiet = quiet || browser_headless();
@@ -237,7 +244,7 @@ static void new_defaults_offer(BOOL quiet)
 	};
 	char changes[1024];
 	char text[1536];
-	SDL_MessageBoxData question = { SDL_MESSAGEBOX_INFORMATION, NULL, "ChupathingyCE: new settings", text, 2,
+	SDL_MessageBoxData question = { SDL_MESSAGEBOX_INFORMATION, NULL, "Chupathingy: new settings", text, 2,
 		buttons, NULL };
 	int answer = 0;
 
@@ -246,14 +253,14 @@ static void new_defaults_offer(BOOL quiet)
 	if (quiet)
 	{
 		platform_log("settings: this version changes some defaults (%s); they are asked about when the game is "
-			"run with someone to answer, and until then your settings stay as they were", changes);
+			"run where it can ask (not a test run, nor Steam Deck Game Mode), and until then your settings stay "
+			"as they were", changes);
 		return;
 	}
 	snprintf(text, sizeof(text),
-		"This version changes some of the game's default settings, which you have not changed yourself:\n\n"
+		"This version changes some default settings:\n\n"
 		"%s\n\n"
-		"Use the new settings, or keep your settings as they are now? You can change any of them later in "
-		"the game's settings or in config.toml.",
+		"Use the new settings, or keep yours?",
 		changes);
 	if (!SDL_ShowMessageBox(&question, &answer))
 	{
@@ -284,10 +291,8 @@ static void data_check_maps(void)
 	new_defaults_offer(quiet);
 	platform_maps_folder_check(&maps);
 	snprintf(where, sizeof(where),
-		"Put the Xbox maps from your Halo: Combat Evolved disc image in %s/maps. Halo PC "
-		"maps go in folders beside it: Custom Edition maps (with Custom Edition's bitmaps.map, "
-		"sounds.map and loc.map) in maps_ce, HaloMD maps in maps_md, and the maps of your "
-		"Halo PC disc in maps_pc.",
+		"Put the Xbox maps from your Halo: Combat Evolved disc image in %s/maps. "
+		"Custom Edition maps go in maps_ce, HaloMD maps in maps_md, Halo PC disc maps in maps_pc.",
 		maps.root);
 	switch (maps.state)
 	{
@@ -296,19 +301,17 @@ static void data_check_maps(void)
 		if (!maps.stray_pc_maps)
 			return;
 		snprintf(message, sizeof(message),
-			"These maps in the maps folder are Halo PC maps, which play only from maps_ce, maps_md or "
-			"maps_pc: %s%s.\n\n%s",
+			"These Halo PC maps are in the maps folder: %s%s.\n\n%s",
 			maps.stray_names, maps.stray_pc_maps > PLATFORM_MAPS_FOLDER_NAMED ? " and more" : "", where);
 		platform_log("maps folder: %ld Halo PC maps in %s/maps (%s)", maps.stray_pc_maps, maps.root,
 			maps.stray_names);
 		if (!quiet)
-			SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, "ChupathingyCE", message, NULL);
+			SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, "Chupathingy", message, NULL);
 		return;
 	case _maps_folder_halo_pc:
 		snprintf(message, sizeof(message),
 			"The maps folder holds Halo PC maps, not the Xbox maps: its ui.map is from %s.\n\n%s\n\n"
-			"To copy the Xbox maps out of your disc image again, move this maps folder aside and "
-			"start ChupathingyCE.",
+			"To copy the Xbox maps from your disc image, move this maps folder aside and start Chupathingy.",
 			maps.ui_version == 609 ? "Halo PC (Custom Edition)" : "Halo PC", where);
 		break;
 	default:
@@ -321,10 +324,9 @@ static void data_check_maps(void)
 		}
 		snprintf(message, sizeof(message),
 			"Halo's Xbox maps were not found: %s/maps has no ui.map.%s\n\n%s\n\n"
-			"To copy the Xbox maps out of your disc image, move the maps folder aside and start "
-			"ChupathingyCE.",
+			"To copy the Xbox maps from your disc image, move the maps folder aside and start Chupathingy.",
 			maps.root, maps.stray_pc_maps || maps.pc_maps_beside ?
-				" Its Halo PC maps play only alongside the Xbox maps." : "",
+				" Halo PC maps need the Xbox maps too." : "",
 			where);
 		break;
 	}
@@ -332,7 +334,7 @@ static void data_check_maps(void)
 		maps.ui_version);
 	platform_log("%s", message);
 	if (!quiet)
-		SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "ChupathingyCE", message, NULL);
+		SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Chupathingy", message, NULL);
 	exit(EXIT_FAILURE);
 }
 #endif
@@ -348,14 +350,12 @@ static void crash_reports_start(void)
 		{ SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 0, "No" },
 	};
 	static const char text[] =
-		"ChupathingyCE crashed the last time it ran.\n\n"
-		"Do you want to send crash reports to the developers? They help us find and fix crashes.\n\n"
-		"A report holds the game's version, where in the game it crashed and the calls that led there, and the "
-		"end of its log, debug.txt, with IP addresses taken out. Reports go to the ChupathingyCE site "
-		"(network.browser_url) and its developers.\n\n"
-		"The answer is kept in config.toml (crash_reports.upload): Yes sends the report of this crash and of "
-		"every later one, No never sends one.";
-	SDL_MessageBoxData question = { SDL_MESSAGEBOX_WARNING, NULL, "ChupathingyCE crashed", text, 2, buttons, NULL };
+		"Chupathingy crashed the last time it ran.\n\n"
+		"Send crash reports to the developers?\n\n"
+		"A report holds the game's version, where it crashed and the end of debug.txt, with IP addresses "
+		"removed.\n\n"
+		"Yes sends this report and later ones. No never sends one.";
+	SDL_MessageBoxData question = { SDL_MESSAGEBOX_WARNING, NULL, "Chupathingy crashed", text, 2, buttons, NULL };
 	char folder[1024], log[1024], old_folder[1024], old_log[1024];
 	const char *consent;
 	int pending, answer = 0;
@@ -382,9 +382,10 @@ static void crash_reports_start(void)
 	}
 	if (strcmp(consent, "yes"))
 	{
-		/* (not for runs nobody is watching: the reports wait) */
+		/* (not for runs nobody is watching, nor under gamescope: the reports
+		wait) */
 		if (config_boolean("debug.hidden_window") || config_real("debug.exit_after") > 0.0 ||
-			!SDL_ShowMessageBox(&question, &answer))
+			updater_gamescope() || !SDL_ShowMessageBox(&question, &answer))
 		{
 			return;
 		}
@@ -1128,9 +1129,8 @@ static BOOL data_make_folders(const char *destination)
 	platform_log("made the maps folders in %s", destination);
 	snprintf(message, sizeof(message),
 		"The folders are in %s:\n\n"
-		"maps: the Xbox maps (the maps folder of your Halo: Combat Evolved disc, with ui.map). "
-		"Fractum Halo needs these to play.\n"
-		"maps_ce: Custom Edition maps, with Custom Edition's bitmaps.map, sounds.map and loc.map.\n"
+		"maps: the Xbox maps, with ui.map. Required.\n"
+		"maps_ce: Custom Edition maps, with bitmaps.map, sounds.map and loc.map.\n"
 		"maps_pc: the maps from your Halo PC disc.\n"
 		"maps_md: HaloMD maps.\n\n"
 		"Put the files in, then choose Check again.",
@@ -1190,12 +1190,17 @@ BOOL platform_offer_game_data(const char *destination)
 	char found[1024];
 	BOOL image_found;
 
-	/* not for runs nobody is watching */
-	if (config_boolean("debug.hidden_window") || config_real("debug.exit_after") > 0.0 ||
-		!SDL_Init(SDL_INIT_VIDEO))
+	/* not for runs nobody is watching, nor under gamescope (the player adds
+	the maps from the desktop) */
+	if (config_boolean("debug.hidden_window") || config_real("debug.exit_after") > 0.0)
+		return FALSE;
+	if (updater_gamescope())
 	{
+		platform_log("no game data: start Chupathingy once from Desktop Mode to add the maps");
 		return FALSE;
 	}
+	if (!SDL_Init(SDL_INIT_VIDEO))
+		return FALSE;
 	if (download)
 	{
 		const char *start = url + 8;
@@ -1208,21 +1213,20 @@ BOOL platform_offer_game_data(const char *destination)
 			"about 0.5 GB. The campaign's maps are offered when you first play the campaign.\n\n"
 			"Everything: the campaign's maps as well, about 2 GB.\n\n"
 			"Or add them yourself:\n"
-			"Xbox disc image: copy the maps folder out of a disc image (.iso) of Halo: Combat Evolved.\n"
-			"Halo PC or Custom Edition (optional): add the maps from your Halo PC CD image (.iso) or the "
+			"Xbox disc image: a disc image (.iso) of Halo: Combat Evolved, its maps copied in.\n"
+			"Halo PC or Custom Edition (optional): a Halo PC CD image (.iso) or the "
 			"Custom Edition installer (halocesetup_en_1.00.exe).\n"
-			"Make the folders: make the empty map folders, and put the files in yourself.",
+			"Make the folders: empty map folders to fill yourself.",
 			host, destination);
 	}
 	else
 	{
 		snprintf(message, sizeof(message),
-			"Fractum Halo plays Halo with the maps from your Xbox disc. How do you want to add them?\n\n"
-			"Xbox disc image: copy the maps folder out of a disc image (.iso) of Halo: Combat Evolved, "
-			"about 2 GB, into %s/maps.\n\n"
-			"Halo PC or Custom Edition (optional): add the maps from your Halo PC CD image (.iso) or the "
+			"Fractum Halo needs the maps from your Halo: Combat Evolved Xbox disc. Add them from:\n\n"
+			"Xbox disc image: a disc image (.iso), copied into %s/maps.\n\n"
+			"Halo PC or Custom Edition (optional): a Halo PC CD image (.iso) or the "
 			"Custom Edition installer (halocesetup_en_1.00.exe).\n\n"
-			"Make the folders: make the empty map folders, and put the files in yourself.\n\n"
+			"Make the folders: empty map folders to fill yourself.\n\n"
 			"(Or set paths.data in config.toml.)",
 			destination);
 	}
@@ -1323,8 +1327,7 @@ BOOL platform_offer_game_data(const char *destination)
 			char done[1400];
 
 			platform_log("imported %llu MB of maps into %s/%s", written >> 20, destination, folder);
-			snprintf(done, sizeof(done), "%s\n\nFractum Halo still needs the Xbox maps to play: choose "
-				"Xbox disc image or a download next.",
+			snprintf(done, sizeof(done), "%s\n\nNext, add the Xbox maps: choose Xbox disc image or a download.",
 				written ? (kind == _data_halo_pc_disc ? "The Halo PC maps are in maps_pc." :
 					"The Custom Edition maps are in maps_ce.") :
 				(kind == _data_halo_pc_disc ? "maps_pc already has these maps." :
@@ -1931,6 +1934,116 @@ BOOL platform_video_hdr(float *sdr_white, float *headroom)
 }
 #endif
 
+#ifndef HALO_ANDROID
+#ifndef HALO_GLES
+/* ---------- the menus' cursor
+
+The blue arrow the menus show for the mouse, in place of the system's. Halo
+PC drew its cursor in the menus' 640 x 480, so it took the same part of the
+screen at any resolution; this one is made again whenever the window's size
+in pixels changes (menu_cursor_fit, from platform_pump_events). */
+
+/* the arrow's height in the menus' 480 lines (72 pixels at 1080p) */
+#define MENU_CURSOR_HEIGHT 32
+/* the arrow's tip in the picture, past its soft edge: the click point */
+#define MENU_CURSOR_TIP 2
+
+static SDL_Surface *menu_cursor_picture;
+static SDL_Cursor *menu_cursor;
+static int menu_cursor_height;
+
+/* the picture at a height, halved first while it is twice that or more (one
+linear scaling to less than half the size skips pixels) */
+static SDL_Surface *menu_cursor_scale(int height)
+{
+	int width = (menu_cursor_picture->w * height + menu_cursor_picture->h / 2) / menu_cursor_picture->h;
+	SDL_Surface *surface = SDL_DuplicateSurface(menu_cursor_picture);
+
+	while (surface && surface->h / 2 >= height)
+	{
+		SDL_Surface *half = SDL_ScaleSurface(surface, surface->w / 2, surface->h / 2, SDL_SCALEMODE_LINEAR);
+
+		SDL_DestroySurface(surface);
+		surface = half;
+	}
+	if (surface && surface->h != height)
+	{
+		SDL_Surface *sized = SDL_ScaleSurface(surface, width > 0 ? width : 1, height, SDL_SCALEMODE_LINEAR);
+
+		SDL_DestroySurface(surface);
+		surface = sized;
+	}
+	return surface;
+}
+
+/* the cursor made for the window's size, when that has changed: its height
+the part of the window the menus' 480 lines take (their 4:3 fits a window of
+another shape), in pixels; where the desktop counts in points (macOS, Wayland
+at a scale) the cursor is that size in points, with the pixels' image as its
+alternate */
+static void menu_cursor_fit(void)
+{
+	int width = 0, height = 0, lines, cursor_height;
+	float density;
+	SDL_Surface *pixels, *points;
+	SDL_Cursor *cursor = NULL;
+
+	if (!menu_cursor_picture || !SDL_GetWindowSizeInPixels(platform_window, &width, &height) ||
+		width <= 0 || height <= 0)
+		return;
+	lines = height < width * 3 / 4 ? height : width * 3 / 4;
+	cursor_height = lines * MENU_CURSOR_HEIGHT / 480;
+	if (cursor_height < 16)
+		cursor_height = 16;
+	if (cursor_height == menu_cursor_height)
+		return;
+	menu_cursor_height = cursor_height;
+	density = SDL_GetWindowPixelDensity(platform_window);
+	pixels = menu_cursor_scale(cursor_height);
+	points = density > 1.0f ? menu_cursor_scale((int)(cursor_height / density + 0.5f)) : pixels;
+	if (pixels && points && (points == pixels || SDL_AddSurfaceAlternateImage(points, pixels)))
+		cursor = SDL_CreateColorCursor(points,
+			(MENU_CURSOR_TIP * points->w + menu_cursor_picture->w / 2) / menu_cursor_picture->w,
+			(MENU_CURSOR_TIP * points->h + menu_cursor_picture->h / 2) / menu_cursor_picture->h);
+	if (cursor && SDL_SetCursor(cursor))
+	{
+		SDL_DestroyCursor(menu_cursor);
+		menu_cursor = cursor;
+	}
+	else
+	{
+		platform_log("cannot set the menus' cursor: %s", SDL_GetError());
+		if (cursor)
+			SDL_DestroyCursor(cursor);
+	}
+	if (points != pixels)
+		SDL_DestroySurface(points);
+	SDL_DestroySurface(pixels);
+}
+
+/* A controller's buttons or sticks, used while a menu is up, hide the
+cursor, and the mouse moved or clicked shows it again, so a player on a
+controller has no arrow left over the menus; a menu opened while the
+controller was used last opens without it
+(platform_ui_pointer_set_active). */
+static BOOL menu_cursor_controller;
+
+static void menu_cursor_controller_used(BOOL in_menus)
+{
+	menu_cursor_controller = TRUE;
+	if (in_menus && SDL_CursorVisible())
+		SDL_HideCursor();
+}
+
+static void menu_cursor_mouse_used(BOOL in_menus)
+{
+	menu_cursor_controller = FALSE;
+	if (in_menus && !SDL_CursorVisible())
+		SDL_ShowCursor();
+}
+#endif
+#endif
+
 BOOL platform_video_initialize(unsigned long width, unsigned long height)
 {
 	int version;
@@ -1941,6 +2054,11 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 	platform_video_tried = TRUE;
 	if (!platform_sdl_initialize())
 		return FALSE;
+#ifdef HALO_BGFX
+	/* the bgfx test backend draws instead (d3d8_bgfx.inl): a window without
+	an OpenGL context, whose Metal layer bgfx draws into */
+	xgpu_bgfx = strcmp(config_string("display.renderer"), "bgfx") == 0;
+#endif
 #ifndef HALO_ANDROID
 #ifdef HALO_WEB
 	/* (a browser's canvas has 8 bits a channel) */
@@ -2034,7 +2152,12 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 	(void)height;
 	platform_window_size_setting(&platform_window_width, &platform_window_height);
 	platform_window = SDL_CreateWindow(title, (int)platform_window_width, (int)platform_window_height,
-		SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY |
+#ifdef HALO_BGFX
+		(xgpu_bgfx ? SDL_WINDOW_METAL : SDL_WINDOW_OPENGL) |
+#else
+		SDL_WINDOW_OPENGL |
+#endif
+		SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY |
 		(config_boolean("debug.hidden_window") ? SDL_WINDOW_HIDDEN : 0) |
 		(platform_fullscreen_setting() ? SDL_WINDOW_FULLSCREEN : 0));
 #endif
@@ -2059,6 +2182,16 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 			platform_log("cannot set the window's icon: %s", SDL_GetError());
 		SDL_DestroySurface(icon);
 	}
+	/* the pointer the menus show (platform_ui_pointer_set_active), in place
+	of the system's, at the window's size */
+	if (platform_menu_cursor_size && !menu_cursor_picture)
+	{
+		menu_cursor_picture = SDL_LoadPNG_IO(SDL_IOFromConstMem(platform_menu_cursor, platform_menu_cursor_size), true);
+		if (!menu_cursor_picture)
+			platform_log("cannot read the menus' cursor: %s", SDL_GetError());
+	}
+	menu_cursor_height = 0;
+	menu_cursor_fit();
 #endif
 	platform_fullscreen_requested = platform_fullscreen_setting();
 	platform_window_mode = platform_display_mode();
@@ -2073,6 +2206,15 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 #endif
 #ifdef HALO_WINDOWS
 	win32_window_borderless_apply(platform_window);
+#endif
+#ifdef HALO_BGFX
+	if (xgpu_bgfx)
+	{
+		platform_event_thread = SDL_GetCurrentThreadID();
+		platform_log("renderer: bgfx");
+		platform_mouse_capture(TRUE);
+		return TRUE;
+	}
 #endif
 	platform_gl_context = SDL_GL_CreateContext(platform_window);
 #ifdef HALO_GLES
@@ -2191,11 +2333,11 @@ void platform_video_drawable_size(int *width, int *height)
 	SDL_GetWindowSizeInPixels(platform_window, width, height);
 }
 
-#ifndef HALO_ANDROID
 /* with vsync off, the time between frames display.max_fps asks for (0:
 twice the display's refresh rate), or 0 for no limit. A GPU never left idle
 can hang (Intel's Raptor Lake graphics, whose reset then takes the desktop
-with it); the limit gives it a rest every frame. */
+with it), and a phone drawing as fast as it can heats up and drains its
+battery; the limit gives either a rest every frame. */
 static Uint64 frame_interval_ns(void)
 {
 	static int vsync;
@@ -2214,14 +2356,41 @@ static Uint64 frame_interval_ns(void)
 	rate = (float)maximum;
 	if (!maximum)
 	{
+#ifndef HALO_ANDROID
 		SDL_DisplayID display = SDL_GetDisplayForWindow(platform_window);
 		const SDL_DisplayMode *mode = display ? SDL_GetCurrentDisplayMode(display) : NULL;
 
 		rate = 2.0f * (mode && mode->refresh_rate > 0.0f ? mode->refresh_rate : 60.0f);
+#else
+		/* (the Android guest's SDL has no display modes to ask) */
+		rate = 2.0f * 60.0f;
+#endif
 	}
 	return (Uint64)(1e9f / rate);
 }
 
+#ifndef HALO_ANDROID
+#define frame_clock_ns SDL_GetTicksNS
+#define frame_delay_ns SDL_DelayPrecise
+#else
+/* (the Android guest's SDL has neither SDL_GetTicksNS nor
+SDL_DelayPrecise: the system's clock and sleep) */
+static Uint64 frame_clock_ns(void)
+{
+	struct timespec now;
+
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	return (Uint64)now.tv_sec * 1000000000u + (Uint64)now.tv_nsec;
+}
+
+static void frame_delay_ns(Uint64 nanoseconds)
+{
+	struct timespec wait;
+
+	wait.tv_sec = (time_t)(nanoseconds / 1000000000u);
+	wait.tv_nsec = (long)(nanoseconds % 1000000000u);
+	nanosleep(&wait, NULL);
+}
 #endif
 #ifdef HALO_BROWSER
 void platform_web_frame_begin(void)
@@ -2303,7 +2472,7 @@ void web_js_post(int kind, const char *text);
 void platform_video_swap(void)
 {
 	Uint64 swap_start = SDL_GetTicks(), swap_time;
-#ifndef HALO_ANDROID
+#ifndef HALO_BROWSER
 	static Uint64 next_frame;
 	Uint64 interval, now;
 #endif
@@ -2317,6 +2486,10 @@ void platform_video_swap(void)
 	win32_window_borderless_apply(platform_window);
 #endif
 
+#ifdef HALO_BGFX
+	/* (the device presents: d3d8_bgfx.inl; this paces the frames) */
+	if (!xgpu_bgfx)
+#endif
 	SDL_GL_SwapWindow(platform_window);
 #endif
 	/* (a frame the graphics driver held for seconds: the game froze, and
@@ -2327,14 +2500,16 @@ void platform_video_swap(void)
 #ifdef HALO_WEB
 	web_frame_shown();
 #endif
-#ifndef HALO_ANDROID
+#ifndef HALO_BROWSER
+	/* (Android's too, since ChupathingyCE's parity-fixes; not this fork's
+	browser build, whose frames the page's animation frames pace) */
 	interval = frame_interval_ns();
 	if (!interval)
 		return;
-	now = SDL_GetTicksNS();
+	now = frame_clock_ns();
 	if (next_frame > now)
 	{
-		SDL_DelayPrecise(next_frame - now);
+		frame_delay_ns(next_frame - now);
 		now = next_frame;
 	}
 	/* (a frame more than an interval late starts the count again) */
@@ -2342,6 +2517,13 @@ void platform_video_swap(void)
 #endif
 }
 
+#ifdef HALO_BGFX
+SDL_Window *platform_sdl_window(void)
+{
+	return platform_window;
+}
+
+#endif
 #if !defined(HALO_ANDROID) && !defined(HALO_WEB)
 /* when SDL_SetWindowRelativeMouseMode has no XInput2 (32-bit libSDL3 on X11
 without 32-bit libXi.so.6), the mouse is held with a hidden cursor, a window
@@ -2591,7 +2773,7 @@ void platform_clipboard_set(const char *text)
 	SDL_SetClipboardText(text);
 }
 
-/* network.join_from_clipboard: "ask" (the default), "always" or "never"
+/* network.join_from_clipboard: "never" (the default), "ask" or "always"
 (true and false, of older versions, are "always" and "never":
 port_config.c) */
 enum
@@ -2608,9 +2790,9 @@ static int platform_clipboard_join_setting(void)
 	/* (in lowercase, true and false read as these: config_check_words) */
 	if (!strcmp(setting, "always"))
 		return _clipboard_join_always;
-	if (!strcmp(setting, "never"))
-		return _clipboard_join_never;
-	return _clipboard_join_ask;
+	if (!strcmp(setting, "ask"))
+		return _clipboard_join_ask;
+	return _clipboard_join_never;
 }
 
 /* an invite found on the clipboard, waiting for the player's answer (the
@@ -2631,8 +2813,10 @@ int platform_take_clipboard_invite(char *text, int size)
 	return taken;
 }
 
-/* puts a new invite on the clipboard, and joins one found there when the
-game comes to the front, or asks first (network.join_from_clipboard) */
+/* puts a new invite on the clipboard (network.copy_to_clipboard), and joins
+one found there when the game comes to the front, or asks first
+(network.join_from_clipboard); both off by default, so the clipboard is the
+player's own until a setting says otherwise */
 static void platform_invite_clipboard(BOOL look)
 {
 	/* the last clipboard text looked at, so each invite is joined once */
@@ -2647,17 +2831,21 @@ static void platform_invite_clipboard(BOOL look)
 #endif
 	if (invite)
 	{
+		/* (the game's own invite is never joined, copied or not) */
+		snprintf(seen, sizeof(seen), "%s", invite);
 #ifdef HALO_WEB
 		/* (a page may write the clipboard only when it is clicked: the page
 		shows the link, with a button that copies it) */
 		web_js_post(2, invite);
 #else
-		SDL_SetClipboardText(invite);
-		snprintf(seen, sizeof(seen), "%s", invite);
-		platform_log("Internet play: the invite link is on the clipboard");
+		if (config_boolean("network.copy_to_clipboard"))
+		{
+			SDL_SetClipboardText(invite);
+			platform_log("Internet play: the invite link is on the clipboard");
+#if defined(HALO_ANDROID) && !defined(HALO_BROWSER)
+			SDL_ShowAndroidToast("Invite link copied", 1, -1, 0, 0);
 #endif
-	#if defined(HALO_ANDROID) && !defined(HALO_BROWSER)
-		SDL_ShowAndroidToast("Hosting: the invite link is on the clipboard", 1, -1, 0, 0);
+		}
 #endif
 	}
 	setting = look ? platform_clipboard_join_setting() : _clipboard_join_never;
@@ -2687,7 +2875,7 @@ static void platform_invite_clipboard(BOOL look)
 				if (p2p_join_invite(text))
 				{
 #if defined(HALO_ANDROID) && !defined(HALO_BROWSER)
-					SDL_ShowAndroidToast("Joining the invite on the clipboard", 1, -1, 0, 0);
+					SDL_ShowAndroidToast("Joining the invite", 1, -1, 0, 0);
 #endif
 				}
 			}
@@ -2768,14 +2956,22 @@ static void platform_game_list_requests(void)
 			return;
 		}
 		snprintf(message, sizeof(message),
-			"A link asks to replace this copy's player key, which confirms your games on the game list.\n\n"
-			"Your games are now confirmed as player %.8s. With the new key they will be player %.8s.\n\n"
-			"Replace the key only with your own, from your profile on the game list.",
+			"A link asks to replace your player key.\n\n"
+			"Current: player %.8s. New: player %.8s.\n\n"
+			"Replace it only with your own key, from your profile on the game list.",
 			old_id[0] ? old_id : "(none)", new_id);
+		/* (no question under gamescope: the key stays) */
+		if (updater_gamescope())
+		{
+			platform_log("Game list: a link asks to replace the player key; not asking under gamescope "
+				"(Steam Deck Game Mode): open it from Desktop Mode");
+			browser_answer_key_link(0);
+			return;
+		}
 		memset(&question, 0, sizeof(question));
 		question.flags = SDL_MESSAGEBOX_WARNING;
 		question.window = platform_window;
-		question.title = "Halo: replace your player key?";
+		question.title = "Chupathingy: replace your player key?";
 		question.message = message;
 		question.numbuttons = 2;
 		question.buttons = buttons;
@@ -2871,7 +3067,8 @@ static void platform_show_pending_message(void)
 	memcpy(title, platform_message_title, sizeof(title));
 	memcpy(text, platform_message_text, sizeof(text));
 	pthread_mutex_unlock(&platform_message_lock);
-	if (!pending)
+	/* (under gamescope, the log only: platform_show_message logged it) */
+	if (!pending || updater_gamescope())
 		return;
 #ifdef HALO_ANDROID
 	SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, title, text, NULL);
@@ -3115,6 +3312,9 @@ void platform_pump_events(void)
 #ifdef HALO_GAME_BROWSER
 	platform_game_list_requests();
 #endif
+#if !defined(HALO_ANDROID) && !defined(HALO_GLES)
+	menu_cursor_fit();
+#endif
 #ifndef HALO_ANDROID
 	updater_poll(platform_window);
 	/* (Settings > Audio's output device, as it changes: dsound_sdl.c) */
@@ -3141,7 +3341,7 @@ void platform_pump_events(void)
 		case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
 			if (SDL_GetModState() & SDL_KMOD_GUI)
 			{
-				platform_quit_notice("Command-W does not close the game: press Command-Q twice to quit");
+				platform_quit_notice("Press Command-Q twice to quit");
 				break;
 			}
 			pthread_mutex_unlock(&input_lock);
@@ -3217,6 +3417,13 @@ void platform_pump_events(void)
 			break;
 		case SDL_EVENT_MOUSE_MOTION:
 		#if !defined(HALO_ANDROID) || defined(HALO_BROWSER)
+#ifndef HALO_GLES
+			/* (not the warps: to the middle as a menu opens, and back to
+			where the mouse is held without relative mode) */
+			if (input_state.ui_pointer ? event.motion.x != ui_pointer.x || event.motion.y != ui_pointer.y :
+				!mouse_warp_capture || (int)event.motion.x != mouse_warp_x || (int)event.motion.y != mouse_warp_y)
+				menu_cursor_mouse_used(input_state.ui_pointer);
+#endif
 			if (scoreboard_pointer_active)
 			{
 				scoreboard_pointer.x = event.motion.x;
@@ -3246,6 +3453,10 @@ void platform_pump_events(void)
 			break;
 		case SDL_EVENT_MOUSE_BUTTON_DOWN:
 		case SDL_EVENT_MOUSE_BUTTON_UP:
+#if !defined(HALO_ANDROID) && !defined(HALO_GLES)
+			if (event.button.down)
+				menu_cursor_mouse_used(input_state.ui_pointer);
+#endif
 			if (event.button.button < 32)
 			{
 				if (event.button.down)
@@ -3415,6 +3626,17 @@ void platform_pump_events(void)
 			}
 #endif
 			break;
+#if !defined(HALO_ANDROID) && !defined(HALO_GLES)
+		case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+			menu_cursor_controller_used(input_state.ui_pointer);
+			break;
+		case SDL_EVENT_GAMEPAD_AXIS_MOTION:
+			/* (past a stick's or trigger's rest, as gamepad_idle in
+			xinput_sdl.c has it) */
+			if (event.gaxis.value > 8000 || event.gaxis.value < -8000)
+				menu_cursor_controller_used(input_state.ui_pointer);
+			break;
+#endif
 		case SDL_EVENT_GAMEPAD_REMOVED:
 			/* (SDL keeps a gamepad open until it is closed, even once the
 			controller has gone) */
@@ -3526,6 +3748,10 @@ void platform_ui_pointer_set_active(BOOL active)
 	memset(mouse_buttons_pressed, 0, sizeof(mouse_buttons_pressed));
 	pthread_mutex_unlock(&input_lock);
 	platform_mouse_capture(!active && !input_state.mouse_released);
+#ifndef HALO_GLES
+	if (active && menu_cursor_controller)
+		SDL_HideCursor();
+#endif
 	if (active)
 	{
 		int width, height;
@@ -3542,6 +3768,48 @@ void platform_ui_pointer_set_active(BOOL active)
 	{
 		show_pointer(FALSE);
 	}
+}
+
+/* debug.test_input's mouse (xinput_sdl.c): the event a mouse would send,
+at a point of the window; button 0 moves, SDL_BUTTON_LEFT or _RIGHT clicks
+(down and up), and wheel turns the wheel that many notches instead */
+void platform_test_pointer_event(float x, float y, int button, int wheel)
+{
+	SDL_Event event;
+	SDL_WindowID window = platform_window ? SDL_GetWindowID(platform_window) : 0;
+
+	memset(&event, 0, sizeof(event));
+	if (wheel)
+	{
+		event.type = SDL_EVENT_MOUSE_WHEEL;
+		event.wheel.windowID = window;
+		event.wheel.y = (float)wheel;
+		event.wheel.integer_y = wheel;
+		event.wheel.mouse_x = x;
+		event.wheel.mouse_y = y;
+		SDL_PushEvent(&event);
+		return;
+	}
+	if (!button)
+	{
+		event.type = SDL_EVENT_MOUSE_MOTION;
+		event.motion.windowID = window;
+		event.motion.x = x;
+		event.motion.y = y;
+		SDL_PushEvent(&event);
+		return;
+	}
+	event.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+	event.button.windowID = window;
+	event.button.button = (Uint8)button;
+	event.button.down = TRUE;
+	event.button.clicks = 1;
+	event.button.x = x;
+	event.button.y = y;
+	SDL_PushEvent(&event);
+	event.type = SDL_EVENT_MOUSE_BUTTON_UP;
+	event.button.down = FALSE;
+	SDL_PushEvent(&event);
 }
 
 /* what the pointer did since the last call; FALSE when it is not active */

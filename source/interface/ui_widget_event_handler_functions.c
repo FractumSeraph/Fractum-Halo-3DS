@@ -941,7 +941,7 @@ boolean playlist_profile_get_options(long playlist_profile_index, struct game_va
 #include "text/unicode.h"
 #include "halo_menus.h" /* port: PC_MENU_FUNCTION_BASE */
 
-#ifdef HALO_CUSTOM_EDITION
+#ifdef HALO_MAP_LIST
 #include "halo_ui_map_list.h"
 #include "halo_map_families.h" /* port: map_family_campaign */
 #endif
@@ -1074,7 +1074,11 @@ boolean network_game_client_add_player(
 	short controller_index);
 void playlist_profiles_enumerate_available_to_local_player_index(
 	short local_player_index,
+#if defined(__BIG_ENDIAN__) || (defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)
+	word *profile_count,
+#else
 	long *profile_count,
+#endif
 	long *profile_indices);
 extern byte cached_variant_profile[0x144];
 static boolean new_campaign_chosen(
@@ -1778,7 +1782,7 @@ struct event_handler_globals event_handler_functions =
 	NONE
 };
 
-#ifdef HALO_CUSTOM_EDITION
+#ifdef HALO_MAP_LIST
 /* port: the row of the menus' map list that plays a map's name, the list
 filled anew for a name it lacks (a game's map the list hasn't been shown
 since, or one new in maps\ce): NONE if none does. A name looked for in vain
@@ -3102,7 +3106,7 @@ static boolean multiplayer_level_list_initialize(
 {
 	char map_name[256];
 	struct ui_widget_definition *definition = ui_widget_definition_get(widget->definition_tag_index);
-#ifdef HALO_CUSTOM_EDITION
+#ifdef HALO_MAP_LIST
 	/* port: the menus' map list, the Xbox's thirteen then the Custom
 	Edition maps */
 	short level_count;
@@ -3478,7 +3482,13 @@ static boolean multiplayer_profiles_list_initialize(
 	profile_indices = widget->parameters.list.list_items;
 	if (profile_indices)
 	{
+#if defined(__BIG_ENDIAN__) || (defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)
+		/* port: a word on a big-endian machine, as the count the
+		enumeration writes (a long's low half only on a little-endian one) */
 		word profile_count;
+#else
+		long profile_count;
+#endif
 
 		profile_count = 100;
 		playlist_profiles_enumerate_available_to_local_player_index(0, &profile_count, profile_indices);
@@ -4339,12 +4349,16 @@ static boolean player_profile_initialize_controller_settings(
 			option_spinner->parameters.list.selected_index = 4;
 			break;
 		case _button_preset_bumper_jumper:
-			/* (the Xbox's own list has the five layouts of its map: this one is
+		case _button_preset_custom:
+			/* (the Xbox's own list has the five layouts of its map: these are
 			shown in the PC and Chupathingy menus, and here as the default) */
-			option_spinner->parameters.list.selected_index = 5 < option_spinner->parameters.list.number_of_items ? 5 : 0;
+			option_spinner->parameters.list.selected_index =
+				profile->controller_settings.button_preset < option_spinner->parameters.list.number_of_items ?
+					profile->controller_settings.button_preset : 0;
 			/* (shown as the first layout; the stored choice is kept until the
 			player picks another one here) */
-			g_button_preset_kept_index = 5 < option_spinner->parameters.list.number_of_items ? NONE : 0;
+			g_button_preset_kept_index =
+				profile->controller_settings.button_preset < option_spinner->parameters.list.number_of_items ? NONE : 0;
 			g_list_widget_watched = option_spinner;
 			g_list_widget_watched_stepped = FALSE;
 			break;
@@ -4994,7 +5008,7 @@ static boolean player_profile_change_controller_settings(
 		/* (Bumper Jumper shown as the first layout on a list without it: left
 		as it is unless the player stepped the spinner, Default included) */
 		if (g_button_preset_kept_index != NONE &&
-			profile->controller_settings.button_preset == _button_preset_bumper_jumper &&
+			profile->controller_settings.button_preset >= _button_preset_bumper_jumper &&
 			g_list_widget_watched == option_spinner &&
 			!g_list_widget_watched_stepped)
 			return TRUE;
@@ -5006,6 +5020,7 @@ static boolean player_profile_change_controller_settings(
 		case _button_preset_swap_b_and_left_trigger: profile->controller_settings.button_preset = _button_preset_swap_b_and_left_trigger; return TRUE;
 		case _button_preset_swap_b_and_right_thumb: profile->controller_settings.button_preset = _button_preset_swap_b_and_right_thumb; return TRUE;
 		case _button_preset_bumper_jumper: profile->controller_settings.button_preset = _button_preset_bumper_jumper; return TRUE;
+		case _button_preset_custom: profile->controller_settings.button_preset = _button_preset_custom; return TRUE;
 		default: error(2, "unknown button config option selected"); return TRUE;
 		}
 	}
@@ -5897,7 +5912,7 @@ static boolean multiplayer_level_select(
 		definition->child_count == 3,
 		"expected 3 list items for 'multiplayer level list' widget");
 	level_list = widget->child->child;
-#ifdef HALO_CUSTOM_EDITION
+#ifdef HALO_MAP_LIST
 	/* port: the menus' map list (on the 3DS, which may be empty: only the
 	maps the SD card holds, ui_map_list.c) */
 #ifdef HALO_N3DS
@@ -5969,7 +5984,7 @@ static boolean multiplayer_level_select(
 		if (server)
 			network_game_server_change_map_name(server, map_name);
 	}
-#ifdef HALO_CUSTOM_EDITION
+#ifdef HALO_MAP_LIST
 	level_index = ui_map_list_find(map_name);
 	if (level_index != NONE)
 		saved_game_file_remember_last_used_multiplayer_map(ui_map_list_names()[level_index]);
@@ -6060,6 +6075,14 @@ static boolean multiplayer_profile_set_for_game(
 			fclose(file);
 		}
 		player_ui_set_game_variant(&profile);
+		/* port: and its PC options (a custom loadout, the vehicles: as the
+		PC menus' choice gives them, ui_widget_port_gametype_choose) */
+		{
+			struct game_variant_options options;
+
+			if (playlist_profile_get_options(profile_index, &options))
+				player_ui_set_game_variant_options(&options);
+		}
 #ifdef HALO_N3DS
 		if(strstr(tag_get_name(widget->definition_tag_index),"\\split_screen\\"))
 		{
@@ -6193,8 +6216,9 @@ static boolean solo_level_initialize_list_single_player(
 	return TRUE;
 }
 
-#ifdef HALO_GAME_BROWSER
-/* port: Online Games (port/linux/game/browser_screen.c), as System Link's
+#if defined(HALO_GAME_BROWSER) || defined(HALO_CONSOLE_ONLINE_GAMES)
+/* port: Online Games (port/linux/game/browser_screen.c, and the console's
+port/xbox/game/xbox_browser_screen.c), as System Link's
 list: opened, the network searching for games (its list's "initialize net
 game server list"); Y, a game of this machine's (its "start network game
 server") */
@@ -6229,7 +6253,7 @@ short ui_widget_port_multiplayer_maps(
 {
 	char map_name[256];
 	short level_index;
-#ifdef HALO_CUSTOM_EDITION
+#ifdef HALO_MAP_LIST
 	short level_count;
 
 	if (last_used || !ui_map_list_count())
@@ -6274,7 +6298,7 @@ boolean ui_widget_port_multiplayer_map_choose(
 	char const *map_name;
 	void *server = global_network_game_server_get();
 
-#ifdef HALO_CUSTOM_EDITION
+#ifdef HALO_MAP_LIST
 	if (level_index < 0 || level_index >= ui_map_list_count())
 		return FALSE;
 	map_name = ui_map_list_names()[level_index];
