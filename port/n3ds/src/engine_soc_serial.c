@@ -15,6 +15,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <errno.h>
+#include <netinet/in.h>
 
 int n3ds_soc_serial;
 static RecursiveLock serial_lock;
@@ -82,13 +83,92 @@ void n3ds_soc_close(void)
     type __wrap_##name params { if(!soc_enter()) return failed; u64 serial_start_=serial_enter(); type serial_result_=__real_##name args; serial_leave(serial_start_,#name); soc_leave(); return serial_result_; }
 #define WRAP(type,name,params,args) WRAP_FAILING(type,name,params,args,(type)-1)
 
+static unsigned char soc_fds[1024/8];
+/* (and which are bound, by a bind, a connect or a send, and which connected:
+ * a getsockname of a socket not bound, or a getpeername of one not connected,
+ * stopped the Azahar emulator, CTRSockAddr::FromPlatform; the console's
+ * service answers EINVAL and ENOTCONN, as these do) */
+static unsigned char soc_bound[1024/8],soc_connected[1024/8];
+#define SOC_FD_SET(set,fd) do { if((fd)>=0 && (fd)<1024) (set)[(fd)/8]|=(unsigned char)(1<<((fd)%8)); } while(0)
+#define SOC_FD_CLEAR(set,fd) do { if((fd)>=0 && (fd)<1024) (set)[(fd)/8]&=(unsigned char)~(1<<((fd)%8)); } while(0)
+#define SOC_FD_TEST(set,fd) ((fd)<0 || (fd)>=1024 || (((set)[(fd)/8]>>((fd)%8))&1))
+
+/* port: an address not IPv4 refused before the service sees it (EAFNOSUPPORT,
+ * as the console's service answers): the Azahar emulator's stops on one
+ * (CTRSockAddr::ToPlatform). The first few logged with their caller */
+static int address_refused(const struct sockaddr *a,socklen_t l,const char *what,void *caller)
+{
+    if(!a || (l>=(socklen_t)sizeof(struct sockaddr_in) && a->sa_family==AF_INET)) return 0;
+    static int logged;
+    if(logged<6) {
+        logged++;
+        char text[128];snprintf(text,sizeof(text),"SOC: %s refused an address of family %d, length %d (caller %p)",
+            what,(int)a->sa_family,(int)l,caller);
+        n3ds_log(text);
+    }
+    errno=EAFNOSUPPORT;
+    return 1;
+}
+int __real_bind(int s,const struct sockaddr *a,socklen_t l);
+int __wrap_bind(int s,const struct sockaddr *a,socklen_t l)
+{
+    if(address_refused(a,l,"bind",__builtin_return_address(0)) || !soc_enter()) return -1;
+    u64 serial_start_=serial_enter(); int r=__real_bind(s,a,l); serial_leave(serial_start_,"bind"); soc_leave();
+    if(!r) SOC_FD_SET(soc_bound,s);
+    return r;
+}
+int __real_connect(int s,const struct sockaddr *a,socklen_t l);
+int __wrap_connect(int s,const struct sockaddr *a,socklen_t l)
+{
+    if(address_refused(a,l,"connect",__builtin_return_address(0)) || !soc_enter()) return -1;
+    u64 serial_start_=serial_enter(); int r=__real_connect(s,a,l); serial_leave(serial_start_,"connect"); soc_leave();
+    /* (a connect under way binds too; connected once it is made: a
+     * datagram socket's at once, a stream's by the time it is asked, the
+     * port's callers asking only after the connect is done) */
+    if(!r || errno==EINPROGRESS || errno==EALREADY || errno==EAGAIN) {SOC_FD_SET(soc_bound,s);SOC_FD_SET(soc_connected,s);}
+    return r;
+}
+ssize_t __real_sendto(int s,const void *b,size_t n,int f,const struct sockaddr *a,socklen_t l);
+ssize_t __wrap_sendto(int s,const void *b,size_t n,int f,const struct sockaddr *a,socklen_t l)
+{
+    if(address_refused(a,l,"sendto",__builtin_return_address(0)) || !soc_enter()) return -1;
+    u64 serial_start_=serial_enter(); ssize_t r=__real_sendto(s,b,n,f,a,l); serial_leave(serial_start_,"sendto"); soc_leave();
+    if(r>=0) SOC_FD_SET(soc_bound,s);
+    return r;
+}
+
 /* port: the sockets, by descriptor: a close of one after the service has
  * closed (n3ds_soc_close, at the game's end, while the internet play thread
  * still runs) is no call: the C library's close looked the device up in a
  * table socExit had emptied (a null read: the crash on leaving the game
  * from the HOME menu) */
-static unsigned char soc_fds[1024/8];
-static void soc_fd_made(int fd) {if(fd>=0 && fd<1024) soc_fds[fd/8]|=(unsigned char)(1<<(fd%8));}
+static void soc_odd_call(const char *what,int fd,void *caller)
+{
+    static int logged;
+    if(logged<6) {
+        logged++;
+        char text[128];snprintf(text,sizeof(text),"SOC: %s of socket %d, which is not %s (caller %p)",what,fd,
+            what[3]=='p'?"connected":"bound",caller);
+        n3ds_log(text);
+    }
+}
+int __real_getsockname(int s,struct sockaddr *a,socklen_t *l);
+int __wrap_getsockname(int s,struct sockaddr *a,socklen_t *l)
+{
+    if(!SOC_FD_TEST(soc_bound,s)) {soc_odd_call("getsockname",s,__builtin_return_address(0));errno=EINVAL;return -1;}
+    if(!soc_enter()) return -1;
+    u64 serial_start_=serial_enter(); int r=__real_getsockname(s,a,l); serial_leave(serial_start_,"getsockname"); soc_leave();
+    return r;
+}
+int __real_getpeername(int s,struct sockaddr *a,socklen_t *l);
+int __wrap_getpeername(int s,struct sockaddr *a,socklen_t *l)
+{
+    if(!SOC_FD_TEST(soc_connected,s)) {soc_odd_call("getpeername",s,__builtin_return_address(0));errno=ENOTCONN;return -1;}
+    if(!soc_enter()) return -1;
+    u64 serial_start_=serial_enter(); int r=__real_getpeername(s,a,l); serial_leave(serial_start_,"getpeername"); soc_leave();
+    return r;
+}
+static void soc_fd_made(int fd) {if(fd>=0 && fd<1024) {soc_fds[fd/8]|=(unsigned char)(1<<(fd%8));soc_bound[fd/8]&=(unsigned char)~(1<<(fd%8));soc_connected[fd/8]&=(unsigned char)~(1<<(fd%8));}}
 int __real_socket(int d,int t,int p);
 int __wrap_socket(int d,int t,int p)
 {
@@ -101,24 +181,22 @@ int __wrap_accept(int s,struct sockaddr *a,socklen_t *l)
 {
     if(!soc_enter()) return -1;
     u64 serial_start_=serial_enter(); int r=__real_accept(s,a,l); serial_leave(serial_start_,"accept"); soc_leave();
-    soc_fd_made(r); return r;
+    soc_fd_made(r); SOC_FD_SET(soc_bound,r); SOC_FD_SET(soc_connected,r); return r;
 }
 int __real_close(int fd);
 int __wrap_close(int fd)
 {
     if(fd<0 || fd>=1024 || !((soc_fds[fd/8]>>(fd%8))&1)) return __real_close(fd);
     soc_fds[fd/8]&=(unsigned char)~(1<<(fd%8));
+    SOC_FD_CLEAR(soc_bound,fd);SOC_FD_CLEAR(soc_connected,fd);
     if(!soc_enter()) return 0;
     u64 serial_start_=serial_enter(); int r=__real_close(fd); serial_leave(serial_start_,"close"); soc_leave();
     return r;
 }
-WRAP(int,bind,(int s,const struct sockaddr *a,socklen_t l),(s,a,l))
-WRAP(int,connect,(int s,const struct sockaddr *a,socklen_t l),(s,a,l))
 WRAP(int,listen,(int s,int b),(s,b))
 WRAP(ssize_t,recv,(int s,void *b,size_t n,int f),(s,b,n,f))
 WRAP(ssize_t,recvfrom,(int s,void *b,size_t n,int f,struct sockaddr *a,socklen_t *l),(s,b,n,f,a,l))
 WRAP(ssize_t,send,(int s,const void *b,size_t n,int f),(s,b,n,f))
-WRAP(ssize_t,sendto,(int s,const void *b,size_t n,int f,const struct sockaddr *a,socklen_t l),(s,b,n,f,a,l))
 WRAP(int,poll,(struct pollfd *f,nfds_t n,int t),(f,n,t))
 WRAP(int,select,(int n,fd_set *r,fd_set *w,fd_set *e,struct timeval *t),(n,r,w,e,t))
 WRAP(int,getaddrinfo,(const char *n,const char *s,const struct addrinfo *h,struct addrinfo **r),(n,s,h,r))
@@ -126,6 +204,4 @@ WRAP_FAILING(struct hostent *,gethostbyname,(const char *n),(n),NULL)
 WRAP_FAILING(long,gethostid,(void),(),0)
 WRAP(int,setsockopt,(int s,int l,int o,const void *v,socklen_t n),(s,l,o,v,n))
 WRAP(int,getsockopt,(int s,int l,int o,void *v,socklen_t *n),(s,l,o,v,n))
-WRAP(int,getsockname,(int s,struct sockaddr *a,socklen_t *l),(s,a,l))
-WRAP(int,getpeername,(int s,struct sockaddr *a,socklen_t *l),(s,a,l))
 WRAP(int,shutdown,(int s,int h),(s,h))
