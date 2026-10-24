@@ -64,6 +64,9 @@ versions 11 to 33):
 - **Hosting**: **Y** in Online Games creates a game on the internet. Its
   invite is shown on the bottom screen for friends to join; a public game
   (the default, `network.host_public`) is also listed in everyone's browser.
+- **Map downloads**: a game's Custom Edition map is downloaded only if it
+  is on the approved map list. Copy `map_torrents.txt` from the release
+  into `halo-source/` on the SD card.
 - **Custom Edition maps** (Halo PC's, `<map>@ce`) play on a **New 3DS**
   whose game is given 96 MB of memory (`halo-source-engine.log` says
   `CE MAPS: playable` at start-up, or why not):

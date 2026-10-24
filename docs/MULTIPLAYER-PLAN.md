@@ -499,6 +499,57 @@ The first runs on a New 3DS (124 MB for the game; `CE MAPS: playable`):
   (`n3ds_gpu_texture_update`), as the Xbox's single atlas was; a cell
   replaced in that same frame may show its newer glyph in an earlier line
   for that frame. Reproduced and verified in Azahar (the same 63 retired).
+- **Network version 38 (2026-10-23).** The fork followed OpenCE to 38
+  (fork 8bc228b04); the 3DS followed with `fork_update.py` from 8ab6b1324:
+  245 files merged, 48 added, 24 conflicted files resolved keeping both
+  sides (`halo_port_capacity.h` rebuilt from the fork's with the 3DS's
+  sizes; `platform.h` the fork's with the 3DS thread wrappers). Hosts
+  announce 38 and join 11-39; Delta wire `chupa-32a`, legacy newest 38.
+  `HALO_MAP_LIST` is defined beside `HALO_CUSTOM_EDITION`, as the fork's
+  builds do. New units: OpenCE gametypes, infection, gun game, map packs,
+  the v35 game settings layout, shield effects, the Delta profile and chat
+  bridge, clan emblems, controller layouts, and `map_torrents.c` for the
+  approved map list only (its BitTorrent fetches stay off on the 3DS).
+  The desktop-only screens are stubbed; frame interpolation is off.
+  - *Approved maps.* Map sharing now downloads only maps on the approved
+    list, `map_torrents.txt` (the fork's `port/assets/network`, copied to
+    `port/n3ds/assets/`), which must be in `halo-source/` on the SD card.
+    Without it a download is refused with a message naming the file.
+  - *Tested in Azahar:* the 3DS joined the fork's v38 Windows dedicated
+    server (built from 8bc228b04 in `build/opence-v32`, `--without-ffmpeg`;
+    scratchpad `server38.sh`, 3DS on 127.0.0.3) and played: "ChupathingyCE
+    0.8.0f-dev, network version 38", capabilities agreed. The Online Games
+    list shows the public v38 hosts.
+  - *Azahar's socket service* stopped on a `getsockname` of a socket not
+    yet bound (new in the v38 join). The socket wrappers
+    (`engine_soc_serial.c`) now track which sockets are bound and connected
+    and answer such calls EINVAL / ENOTCONN, as the console does; an
+    address that isn't IPv4 is refused EAFNOSUPPORT.
+- **Performance (2026-10-23).** From the console's logs of a joined public
+  game (about 28 players): simulation 35-50 ms a frame (all of it
+  `objects_update`), input 7-17 ms, and render hitches of 50-600 ms.
+  - *Hitches:* the first time a texture is drawn it was read from the
+    map's `.ntx` on the SD card. A map's archive (22-26 MB for multiplayer
+    maps) is now read whole in the background as the map loads, into the
+    Halo PC maps' space when that exists (kept for the run, free while an
+    Xbox map is loaded, so nothing new fragments the heap), else into its
+    own buffer when the heap keeps 20 MB besides. Blood Gulch's is in memory
+    about 5 s after loading starts; the menus' (ui) is not read. A Halo PC
+    map load takes the space back first. A first try with a buffer of its
+    own fragmented the heap: extinction's model data then failed.
+  - *Simulation:* the object sampler's hooks had been lost in a merge and
+    are back (OBJECT TICK SAMPLE / OBJECT TYPE SAMPLE, plus postprocess),
+    with PROJECTILE STAGES. In Azahar a local game with 15 bots
+    (`config.bots.toml`) costs 18-21 ms of objects a tick against 2.7 ms
+    alone: projectiles (0.2-0.5 ms each), living and dead bipeds, weapons
+    being fired, bone matrices (3.5 ms) and attached lights (3 ms).
+  - *Input:* SOC CALLS logs the socket calls by function every 10 s (the
+    game thread's apart) and SOC RECEIVERS the receive callers. A joined
+    game makes about 10 socket-service calls a frame on the game thread,
+    two thirds of the receives finding nothing waiting.
+  - *Next:* the console's counts from a full game (these lines in its
+    log) decide between batching the receives behind one poll a frame and
+    trimming the object update (projectile collision, lights, weapons).
 - **A test of the socket service as the console has it.** With
   `halo-source/soc-serial.txt` present, every socket call is made under one
   lock (`engine_soc_serial.c`, wrapped at link time: `port/n3ds/build.py`).

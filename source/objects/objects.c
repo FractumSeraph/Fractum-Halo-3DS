@@ -3922,6 +3922,9 @@ static boolean object_update(
 	real_point3d elevator_sample;
 	if (!TEST_FLAG(header->flags, _object_header_do_not_update_bit))
 	{
+		/* port: (the 3DS) its stages timed in the sampled tick (objects_update) */
+		NATIVE_OBJECT_START();
+
 		if (TEST_FLAG(object->object.flags, _object_garbage_bit))
 		{
 			++object_globals->active_garbage_object_count;
@@ -3942,10 +3945,12 @@ static boolean object_update(
 			machine_elevator_sample(object_index, &elevator_sample);
 
 		object_type_update(object_index);
+		NATIVE_OBJECT_TYPE();
 		if (object_definition->object.collision_model.index!=NONE)
 		{
 			object_damage_update(object_index);
 		}
+		NATIVE_OBJECT_STAGE(1);
 
 		object_type_export_function_values(object_index);
 
@@ -3953,6 +3958,7 @@ static boolean object_update(
 		{
 			object_compute_node_matrices(object_index);
 		}
+		NATIVE_OBJECT_STAGE(2);
 
 		if (elevator_sampled)
 		{
@@ -3961,6 +3967,7 @@ static boolean object_update(
 
 		object_compute_function_values(object_index);
 		object_compute_change_colors(object_index);
+		NATIVE_OBJECT_STAGE(4);
 
 		if (
 			TEST_FLAG(object->object.flags, _object_dynamic_lighting_recompute_bit) &&
@@ -3972,6 +3979,7 @@ static boolean object_update(
 		{
 			object_connect_lights(object_index, TRUE, TRUE);
 		}
+		NATIVE_OBJECT_STAGE(5);
 
 		// Update children (if we have any)
 		if (object->object.first_child_object_index!=NONE)
@@ -3987,7 +3995,13 @@ static boolean object_update(
 			}
 		}
 
+		/* (the stamp past the children's own: theirs counted in their call) */
+#ifdef HALO_N3DS
+		if (native_object_sample)
+			native_object_stamp = n3ds_engine_ticks();
+#endif
 		object_postprocess_node_matrices(object_index);
+		NATIVE_OBJECT_STAGE(3);
 	}
 
 	return result;
@@ -4691,8 +4705,8 @@ void objects_update(
 #ifdef HALO_N3DS
     if(native_object_sample) {
         char message[220];double scale=1000./n3ds_engine_tick_frequency();
-        snprintf(message,sizeof(message),"OBJECT TICK SAMPLE: frame=%u type_ms=%.3f damage_ms=%.3f nodes_ms=%.3f functions_lights_ms=%.3f",native_object_frames,
-            native_object_stage_ticks[0]*scale,native_object_stage_ticks[1]*scale,native_object_stage_ticks[2]*scale,(native_object_stage_ticks[4]+native_object_stage_ticks[5])*scale);
+        snprintf(message,sizeof(message),"OBJECT TICK SAMPLE: frame=%u type_ms=%.3f damage_ms=%.3f nodes_ms=%.3f postprocess_ms=%.3f functions_lights_ms=%.3f",native_object_frames,
+            native_object_stage_ticks[0]*scale,native_object_stage_ticks[1]*scale,native_object_stage_ticks[2]*scale,native_object_stage_ticks[3]*scale,(native_object_stage_ticks[4]+native_object_stage_ticks[5])*scale);
         n3ds_log(message);native_object_sample=0;
 #ifdef HALO_N3DS_CROWD_PROFILE
         snprintf(message,sizeof(message),"CHARACTER STAGES: setup=%.3f turn=%.3f move=%.3f post=%.3f animation=%.3f unit_setup=%.3f aim=%.3f unit_post=%.3f",
@@ -4702,6 +4716,7 @@ void objects_update(
 #endif
 
         snprintf(message,sizeof(message),"OBJECT EXTRA: frame=%u functions_ms=%.3f lights_ms=%.3f",native_object_frames,native_object_stage_ticks[4]*scale,native_object_stage_ticks[5]*scale);n3ds_log(message);
+        {extern void n3ds_projectile_stages(double scale,char *text,int size);n3ds_projectile_stages(scale/30.0,message,sizeof(message));n3ds_log(message);}
         snprintf(message,sizeof(message),"OBJECT TYPE SAMPLE: biped=%u/%.3f dead=%u/%.3f vehicle=%u/%.3f weapon=%u/%.3f projectile=%u/%.3f (count/ms)",
             native_object_type_counts[0],native_object_type_ticks[0]*scale,
             native_object_type_counts[12],native_object_type_ticks[12]*scale,

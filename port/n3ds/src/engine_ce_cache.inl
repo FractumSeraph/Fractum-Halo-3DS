@@ -58,9 +58,52 @@ static int native_is_ce;
    ce_map_checks.c, which spares it a 23 MB image of its own) */
 static int ce_space_relocation_ready;
 
+/* port: the space lent, while an Xbox map is loaded, to hold that map's
+   texture archive (engine_texture_archive.inl): no allocation of its own,
+   which freed later left the heap in pieces, and a Halo PC map loaded after
+   could not have its model data (extinction's). Taken back (the archive
+   closed) before a Halo PC map is checked or loaded */
+static int ce_space_lent;
+
+unsigned char *n3ds_engine_ce_space_borrow(unsigned long bytes)
+{
+	if (!platform_ce_tag_cache_ready || native_is_ce || ce_space_lent || bytes > N3DS_CE_SPACE_SIZE)
+		return NULL;
+	if (!n3ds_ce_space_native)
+	{
+		n3ds_ce_space_native = memalign(4096, N3DS_CE_SPACE_SIZE);
+		if (!n3ds_ce_space_native)
+			return NULL;
+		n3ds_ce_space_size = N3DS_CE_SPACE_SIZE;
+		platform_ce_conversion_room = N3DS_CE_CONVERSION_ROOM;
+	}
+	ce_space_lent = 1;
+	return n3ds_ce_space_native;
+}
+
+void n3ds_engine_ce_space_return(void)
+{
+	ce_space_lent = 0;
+}
+
+/* (the archive closed, the space given back: the texture cache's flush) */
+static void ce_space_take_back(void)
+{
+	extern void texture_cache_flush(void);
+
+	if (ce_space_lent)
+	{
+		n3ds_log("CE MAP: the space taken back from the texture archive");
+		texture_cache_flush();
+	}
+}
+
 int n3ds_ce_space_checker_image(void)
 {
-	return n3ds_ce_space_native && !native_is_ce;
+	/* (lent: the checker has an image of its own, the archive left as it is:
+	   a check can come in a game, map sharing's, where the texture cache is
+	   not to be flushed) */
+	return n3ds_ce_space_native && !native_is_ce && !ce_space_lent;
 }
 
 static int ce_space_prepare(void)
@@ -298,6 +341,7 @@ static long ce_tags_load(const char *name)
 
 	if (!ce_map_path(name, path, sizeof(path), file, sizeof(file)) || !ce_header_read(path, &header))
 		return NONE;
+	ce_space_take_back();
 	if (!ce_space_prepare())
 		return NONE;
 	/* (the fork's checks of every offset, count and size in it the

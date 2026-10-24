@@ -665,6 +665,35 @@ void projectile_accelerate(
 	return;
 }
 
+#ifdef HALO_N3DS
+/* port: (the 3DS) where a projectile's update spends its time, summed over a
+second's ticks and logged by objects_update's sample (n3ds_projectile_stages) */
+extern long long n3ds_engine_ticks(void);
+static long long projectile_stage_ticks[4];
+static unsigned long projectile_stage_counts[2];
+void n3ds_projectile_stages(double scale, char *text, int size)
+{
+	snprintf(text, (size_t)size, "PROJECTILE STAGES: updates=%lu steps=%lu test_line_ms=%.3f translate_ms=%.3f other_ms=%.3f",
+		projectile_stage_counts[0], projectile_stage_counts[1], projectile_stage_ticks[0] * scale,
+		projectile_stage_ticks[1] * scale, projectile_stage_ticks[2] * scale);
+	memset(projectile_stage_ticks, 0, sizeof(projectile_stage_ticks));
+	memset(projectile_stage_counts, 0, sizeof(projectile_stage_counts));
+}
+static long long projectile_stamp;
+static void projectile_stage(int stage)
+{
+	long long now = n3ds_engine_ticks();
+
+	projectile_stage_ticks[stage] += now - projectile_stamp;
+	projectile_stamp = now;
+}
+#define PROJECTILE_STAMP() (projectile_stamp = n3ds_engine_ticks())
+#define PROJECTILE_STAGE(i) projectile_stage(i)
+#else
+#define PROJECTILE_STAMP() ((void)0)
+#define PROJECTILE_STAGE(i) ((void)0)
+#endif
+
 boolean projectile_update(
 	long projectile_index)
 {
@@ -682,6 +711,10 @@ boolean projectile_update(
 	flyby_sound_played = FALSE;
 
 	profile_enter(projectile_update_section);
+#ifdef HALO_N3DS
+	PROJECTILE_STAMP();
+	++projectile_stage_counts[0];
+#endif
 
 	if (!TEST_FLAG(projectile->projectile.flags, _projectile_tracer_bit) &&
 		projectile->projectile.tracer_attachment_index != NONE)
@@ -918,10 +951,18 @@ boolean projectile_update(
 		global_current_collision_users[global_current_collision_user_depth++] =
 			_collision_user_projectiles;
 
+#ifdef HALO_N3DS
+		PROJECTILE_STAGE(2);
+		++projectile_stage_counts[1];
+#endif
 		if (collision_count != MAXIMUM_PROJECTILE_COLLISIONS_PER_UPDATE &&
 			projectile->projectile.action != _projectile_action_disappear &&
 			(moved = TRUE) &&
-			projectile_collision_test_line(projectile_index, &new_position, &collision))
+			(projectile_collision_test_line(projectile_index, &new_position, &collision)
+#ifdef HALO_N3DS
+			? (PROJECTILE_STAGE(0), TRUE) : (PROJECTILE_STAGE(0), FALSE)
+#endif
+			))
 		{
 			time_remaining = 1.0f - collision.t;
 			new_velocity.k += gravity_acceleration * time_remaining;
@@ -1059,7 +1100,13 @@ boolean projectile_update(
 				normalize3d(&projectile->object.up);
 			}
 
+#ifdef HALO_N3DS
+			PROJECTILE_STAGE(2);
+#endif
 			object_translate(projectile_index, &new_position, &collision.location);
+#ifdef HALO_N3DS
+			PROJECTILE_STAGE(1);
+#endif
 			projectile->object.translational_velocity = new_velocity;
 
 			if (time_remaining != 0.0f &&

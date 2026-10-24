@@ -15,6 +15,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <errno.h>
+#include <string.h>
 #include <netinet/in.h>
 
 int n3ds_soc_serial;
@@ -22,8 +23,11 @@ static RecursiveLock serial_lock;
 static int serial_ready;
 void n3ds_log(const char *message);
 
+static u32 soc_game_thread,soc_main_thread;
 void n3ds_soc_serial_start(void)
 {
+    /* (the main thread's, which is the game's: the counts' split, soc_count) */
+    svcGetThreadId(&soc_main_thread,CUR_THREAD_HANDLE);
     FILE *flag=fopen("sdmc:/halo-source/soc-serial.txt","r");
     if(!flag) return;
     fclose(flag);
@@ -37,8 +41,48 @@ static u64 serial_enter(void)
     RecursiveLock_Lock(&serial_lock);
     return svcGetSystemTick();
 }
+/* port: the socket calls made, by function, the game thread's apart, logged
+ * every 10 s: each is a call to the system's socket service, which takes much
+ * longer on the console than in the emulator (the "input" stage's cost, which
+ * holds the network game's receives, was 7-17 ms a frame on a New 3DS) */
+enum { SOC_COUNTED = 24 };
+static const char *soc_count_names[SOC_COUNTED];
+static unsigned int soc_counts[SOC_COUNTED][2];
+static u64 soc_counts_since;
+static void *soc_callers[8];
+static unsigned int soc_caller_counts[8],soc_caller_failed[8];
+void n3ds_soc_caller(void *caller,int failed)
+{
+    int i;
+    for(i=0;i<8 && soc_callers[i] && soc_callers[i]!=caller;++i) {}
+    if(i<8) {soc_callers[i]=caller;++soc_caller_counts[i];if(failed) ++soc_caller_failed[i];}
+}
+static void soc_count(const char *what)
+{
+    u32 thread=0;
+    svcGetThreadId(&thread,CUR_THREAD_HANDLE);
+    if(!soc_game_thread) soc_game_thread=soc_main_thread?soc_main_thread:thread;
+    int i;
+    for(i=0;i<SOC_COUNTED && soc_count_names[i] && soc_count_names[i]!=what;++i) {}
+    if(i<SOC_COUNTED) {soc_count_names[i]=what;++soc_counts[i][thread==soc_game_thread?0:1];}
+    u64 now=svcGetSystemTick();
+    if(!soc_counts_since) soc_counts_since=now;
+    if(now-soc_counts_since>=10ULL*SYSCLOCK_ARM11 && thread==soc_game_thread) {
+        char text[512];int used=snprintf(text,sizeof(text),"SOC CALLS (10 s, game thread/others):");
+        for(i=0;i<SOC_COUNTED && soc_count_names[i] && used<(int)sizeof(text)-32;++i)
+            used+=snprintf(text+used,sizeof(text)-used," %s=%u/%u",soc_count_names[i],soc_counts[i][0],soc_counts[i][1]);
+        n3ds_log(text);
+        used=snprintf(text,sizeof(text),"SOC RECEIVERS (game thread, calls/would-block):");
+        for(i=0;i<8 && soc_callers[i] && used<(int)sizeof(text)-40;++i)
+            used+=snprintf(text+used,sizeof(text)-used," %p=%u/%u",soc_callers[i],soc_caller_counts[i],soc_caller_failed[i]);
+        n3ds_log(text);
+        memset(soc_callers,0,sizeof(soc_callers));memset(soc_caller_counts,0,sizeof(soc_caller_counts));memset(soc_caller_failed,0,sizeof(soc_caller_failed));
+        memset(soc_counts,0,sizeof(soc_counts));soc_counts_since=now;
+    }
+}
 static void serial_leave(u64 start,const char *what)
 {
+    soc_count(what);
     if(!n3ds_soc_serial) return;
     u64 held=svcGetSystemTick()-start;
     RecursiveLock_Unlock(&serial_lock);
@@ -194,8 +238,22 @@ int __wrap_close(int fd)
     return r;
 }
 WRAP(int,listen,(int s,int b),(s,b))
-WRAP(ssize_t,recv,(int s,void *b,size_t n,int f),(s,b,n,f))
-WRAP(ssize_t,recvfrom,(int s,void *b,size_t n,int f,struct sockaddr *a,socklen_t *l),(s,b,n,f,a,l))
+ssize_t __real_recv(int s,void *b,size_t n,int f);
+ssize_t __wrap_recv(int s,void *b,size_t n,int f)
+{
+    if(!soc_enter()) return -1;
+    u64 serial_start_=serial_enter(); ssize_t r=__real_recv(s,b,n,f); serial_leave(serial_start_,"recv"); soc_leave();
+    {u32 thread=0;svcGetThreadId(&thread,CUR_THREAD_HANDLE);if(thread==soc_game_thread) n3ds_soc_caller(__builtin_return_address(0),r<0);}
+    return r;
+}
+ssize_t __real_recvfrom(int s,void *b,size_t n,int f,struct sockaddr *a,socklen_t *l);
+ssize_t __wrap_recvfrom(int s,void *b,size_t n,int f,struct sockaddr *a,socklen_t *l)
+{
+    if(!soc_enter()) return -1;
+    u64 serial_start_=serial_enter(); ssize_t r=__real_recvfrom(s,b,n,f,a,l); serial_leave(serial_start_,"recvfrom"); soc_leave();
+    {u32 thread=0;svcGetThreadId(&thread,CUR_THREAD_HANDLE);if(thread==soc_game_thread) n3ds_soc_caller(__builtin_return_address(0),r<0);}
+    return r;
+}
 WRAP(ssize_t,send,(int s,const void *b,size_t n,int f),(s,b,n,f))
 WRAP(int,poll,(struct pollfd *f,nfds_t n,int t),(f,n,t))
 WRAP(int,select,(int n,fd_set *r,fd_set *w,fd_set *e,struct timeval *t),(n,r,w,e,t))

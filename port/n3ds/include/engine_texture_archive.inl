@@ -8,6 +8,19 @@ static FILE *texture_archive;
 static struct texture_archive_entry *texture_archive_index;
 static unsigned int texture_archive_count,texture_archive_generation,texture_archive_attempted;
 static unsigned int texture_archive_hits,texture_archive_misses;
+/* port: the whole archive in memory once read (engine_prefetch_platform.c's
+ * n3ds_slurp_*), when the heap has the room: no SD card read a texture */
+extern void *n3ds_slurp_begin(const char *path,unsigned int size,void *into);
+extern unsigned char *n3ds_engine_ce_space_borrow(unsigned long bytes);
+extern void n3ds_engine_ce_space_return(void);
+static int texture_archive_in_space;
+extern int n3ds_slurp_state(void);
+extern unsigned int n3ds_slurp_milliseconds(void);
+extern void n3ds_slurp_end(void);
+extern unsigned long n3ds_cache_heap_headroom(void);
+static const byte *texture_archive_memory;
+static unsigned int texture_archive_memory_hits,texture_archive_memory_logged;
+#define TEXTURE_ARCHIVE_MEMORY_MARGIN (20u*1024u*1024u)
 static unsigned int texture_hash(const void *data,unsigned int bytes)
 {
     const byte *p=data;unsigned int hash=2166136261U;
@@ -16,12 +29,14 @@ static unsigned int texture_hash(const void *data,unsigned int bytes)
 }
 static void texture_archive_close(void)
 {
+    if(texture_archive_memory) {n3ds_slurp_end();texture_archive_memory=NULL;}
+    if(texture_archive_in_space) {n3ds_engine_ce_space_return();texture_archive_in_space=0;}
     if(texture_archive) {n3ds_files_lock();fclose(texture_archive);n3ds_files_unlock();texture_archive=NULL;}
     free(texture_archive_index);texture_archive_index=NULL;texture_archive_count=texture_archive_attempted=0;
     if(texture_archive_hits || texture_archive_misses) {
-        char message[128];snprintf(message,sizeof(message),"TEXTURE ARCHIVE: hits=%u fallback=%u",texture_archive_hits,texture_archive_misses);n3ds_log(message);
+        char message[128];snprintf(message,sizeof(message),"TEXTURE ARCHIVE: hits=%u (from memory %u) fallback=%u",texture_archive_hits,texture_archive_memory_hits,texture_archive_misses);n3ds_log(message);
     }
-    texture_archive_hits=texture_archive_misses=0;
+    texture_archive_hits=texture_archive_misses=texture_archive_memory_hits=texture_archive_memory_logged=0;
 }
 static void texture_archive_open(void)
 {
@@ -57,6 +72,24 @@ static void texture_archive_open(void)
     }
     texture_archive=f;texture_archive_index=index;texture_archive_count=h[3];
     {char message[128];snprintf(message,sizeof(message),"TEXTURE ARCHIVE: ready entries=%u index_bytes=%u",h[3],h[3]*32);n3ds_log(message);}
+    /* (read whole in the background: into the Custom Edition maps' space,
+     * free while an Xbox map is loaded, else a buffer of its own where the
+     * heap keeps a margin besides; not the menus', ui, which draw little) */
+    if(strcmp(v->header.name,"ui")) {
+        unsigned long headroom=n3ds_cache_heap_headroom();
+        unsigned char *space=n3ds_engine_ce_space_borrow(h[5]);
+        char message[160];
+        if(space) {
+            texture_archive_memory=n3ds_slurp_begin(path,h[5],space);
+            texture_archive_in_space=1;
+            if(!texture_archive_memory) {n3ds_engine_ce_space_return();texture_archive_in_space=0;}
+        } else if(headroom>h[5] && headroom-h[5]>TEXTURE_ARCHIVE_MEMORY_MARGIN)
+            texture_archive_memory=n3ds_slurp_begin(path,h[5],NULL);
+        snprintf(message,sizeof(message),"TEXTURE ARCHIVE: %s (%u KB, heap headroom %lu KB)",
+            texture_archive_memory?(texture_archive_in_space?"being read into the Halo PC maps' space":"being read into memory"):
+            "read from the SD card as drawn",h[5]/1024,headroom/1024);
+        n3ds_log(message);
+    }
     goto done;
 fail:
     fclose(f);n3ds_log("TEXTURE ARCHIVE: rejected; using map textures");
@@ -76,8 +109,22 @@ static int texture_archive_read(const struct bitmap_data *bitmap,unsigned int re
     const struct texture_archive_entry *r=texture_archive_index+lo;
     if(r->bitmap_offset!=key || r->resolution!=resolution || r->source_offset!=source_offset ||
        r->source_bytes!=source_bytes || r->dimensions!=(width|(height<<16))) {++texture_archive_misses;return 0;}
-    n3ds_files_lock();int ok=!fseek(texture_archive,r->offset,SEEK_SET) && fread(out,1,r->bytes,texture_archive)==r->bytes;
-    n3ds_files_unlock();
+    int ok;
+    int memory_state=texture_archive_memory?n3ds_slurp_state():0;
+    if(memory_state==2) {
+        memcpy(out,texture_archive_memory+r->offset,r->bytes);ok=1;++texture_archive_memory_hits;
+        if(!texture_archive_memory_logged) {
+            char message[96];snprintf(message,sizeof(message),"TEXTURE ARCHIVE: in memory, read in %u ms",n3ds_slurp_milliseconds());n3ds_log(message);
+            texture_archive_memory_logged=1;
+        }
+    } else {
+        if(memory_state<0) {
+            n3ds_slurp_end();texture_archive_memory=NULL;
+            if(texture_archive_in_space) {n3ds_engine_ce_space_return();texture_archive_in_space=0;}
+        }
+        n3ds_files_lock();ok=!fseek(texture_archive,r->offset,SEEK_SET) && fread(out,1,r->bytes,texture_archive)==r->bytes;
+        n3ds_files_unlock();
+    }
     if(ok && texture_hash(out,r->bytes)==r->hash) {++texture_archive_hits;return 1;}
     texture_archive_close();texture_archive_attempted=1;texture_archive_generation=n3ds_engine_tag_generation();
     n3ds_log("TEXTURE ARCHIVE: payload rejected; using map textures");return 0;

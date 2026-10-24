@@ -79,3 +79,61 @@ int n3ds_prefetch_tests(void)
     extern void n3ds_log(const char *);
     n3ds_log("PASS: scenery prefetch: four exact cross-chunk reads, guards, cancel/restart and invalid ranges");return 1;
 }
+
+/* port: a whole file read into memory by a thread of its own, below the game
+ * thread: a map's texture archive (.ntx, engine_texture_archive.inl), so that
+ * the textures a match first draws come from memory and not the SD card (a
+ * large card's reads were the render's hitches, 50-600 ms, on the console).
+ * The buffer is the caller's to read once the state is 2; until then it falls
+ * back to the file. One at a time; n3ds_slurp_end cancels, joins and frees */
+static Thread slurp_thread;
+static Handle slurp_handle,slurp_file;
+static unsigned char *slurp_buffer;
+static u32 slurp_size;
+static volatile int slurp_state,slurp_cancel,slurp_exit_registered,slurp_owned;
+static u64 slurp_started,slurp_ticks;
+void n3ds_slurp_end(void);
+static void slurp_worker(void *unused)
+{
+    (void)unused;
+    u32 done=0;
+    while(done<slurp_size && !__atomic_load_n(&slurp_cancel,__ATOMIC_ACQUIRE)) {
+        u32 bytes=slurp_size-done,got=0;if(bytes>262144) bytes=262144;
+        if(R_FAILED(FSFILE_Read(slurp_file,&got,(u64)done,slurp_buffer+done,bytes)) || !got || got>bytes) break;
+        done+=got;
+    }
+    slurp_ticks=svcGetSystemTick()-slurp_started;
+    __atomic_store_n(&slurp_state,done==slurp_size?2:-1,__ATOMIC_RELEASE);
+}
+void *n3ds_slurp_begin(const char *path,unsigned int size,void *into)
+{
+    if(slurp_thread || !path || strncmp(path,"sdmc:/",6) || !size) return NULL;
+    if(R_FAILED(FSUSER_OpenFileDirectly(&slurp_file,ARCHIVE_SDMC,fsMakePath(PATH_EMPTY,NULL),fsMakePath(PATH_ASCII,path+5),FS_OPEN_READ,0))) return NULL;
+    u64 file_size=0;
+    /* (into a buffer of the caller's when given: the Custom Edition maps'
+     * space, kept for the run, so no allocation of its own fragments the heap) */
+    slurp_owned=!into;
+    if(R_FAILED(FSFILE_GetSize(slurp_file,&file_size)) || file_size!=size || !(slurp_buffer=into?into:malloc(size))) {
+        FSFILE_Close(slurp_file);slurp_file=0;return NULL;
+    }
+    slurp_size=size;slurp_cancel=0;slurp_state=1;slurp_started=svcGetSystemTick();
+    s32 priority=0x30;svcGetThreadPriority(&priority,CUR_THREAD_HANDLE);
+    slurp_thread=threadCreate(slurp_worker,NULL,16384,priority<0x3d?priority+2:priority,-2,false);
+    if(!slurp_thread) {if(slurp_owned) free(slurp_buffer);slurp_buffer=NULL;FSFILE_Close(slurp_file);slurp_file=0;slurp_state=0;return NULL;}
+    slurp_handle=threadGetHandle(slurp_thread);
+    if(!slurp_exit_registered) {atexit(n3ds_slurp_end);slurp_exit_registered=1;}
+    return slurp_buffer;
+}
+/* 0 none, 1 reading, 2 all in memory, -1 failed (the file to be read instead) */
+int n3ds_slurp_state(void) { return __atomic_load_n(&slurp_state,__ATOMIC_ACQUIRE); }
+unsigned int n3ds_slurp_milliseconds(void) { return (unsigned int)(slurp_ticks/(SYSCLOCK_ARM11/1000)); }
+void n3ds_slurp_end(void)
+{
+    if(!slurp_thread) return;
+    __atomic_store_n(&slurp_cancel,1,__ATOMIC_RELEASE);
+    if(svcWaitSynchronization(slurp_handle,U64_MAX)!=0) svcBreak(USERBREAK_PANIC);
+    threadFree(slurp_thread);slurp_thread=NULL;slurp_handle=0;
+    FSFILE_Close(slurp_file);slurp_file=0;
+    if(slurp_owned) free(slurp_buffer);
+    slurp_buffer=NULL;slurp_size=0;slurp_state=0;slurp_owned=0;
+}

@@ -408,6 +408,14 @@ void map_torrents_unapproved_text(char *text, int size, const char *file_name, c
 	snprintf(text, (size_t)size, "%s is not on the approved map list, so it was not downloaded.\r\n\r\n"
 		"Hash: %s\r\n\r\nTo get it approved, contact " MAP_APPROVAL_CONTACT " with the file name and hash.",
 		file, digits);
+#ifdef HALO_N3DS
+	/* port: (the 3DS) no list at all on the SD card: said so, the file to
+	copy named (the release's halo-source/map_torrents.txt) */
+	index_load();
+	if (!torrent_maps_index.count)
+		snprintf(text, (size_t)size, "%s was not downloaded: the approved map list is missing from the SD card.\r\n\r\n"
+			"Copy map_torrents.txt from the release into halo-source.", file);
+#endif
 	platform_log("map approval: %s (%s) is not in the maps' torrent index: not downloaded", file, digits);
 }
 
