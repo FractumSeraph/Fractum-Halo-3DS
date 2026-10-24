@@ -53,10 +53,15 @@ def main():
     parser.add_argument('--test-frames', type=int, default=0, help='0 produces the playable release; positive values stop after that many frames')
     parser.add_argument('--diagnostics', action='store_true', help='Enable renderer checks; requires --test-frames')
     parser.add_argument('--original-memory', action='store_true', help='Constrain heap sizes for original-model emulator tests')
+    # (Fractum Halo's version, port/n3ds/VERSION, and whether this is a release's
+    # build: only a release's looks for a newer one, engine_update.c)
+    parser.add_argument('--release', action='store_true', help='A release build: checks GitHub for newer releases')
+    parser.add_argument('--version', default=None, help='Override port/n3ds/VERSION (an updater test: an older number)')
     args = parser.parse_args()
     if args.test_frames<0 or (args.diagnostics and not args.test_frames):
         parser.error('diagnostics require a positive frame limit')
     out = args.output.resolve(); out.mkdir(parents=True, exist_ok=True)
+    version = args.version or (PORT/'VERSION').read_text().strip()
     for name in defaults:
         setattr(args, name, getattr(args, name).resolve())
     ext = '.exe' if os.name=='nt' else ''
@@ -127,7 +132,11 @@ def main():
             command+=['-Wno-error=incompatible-pointer-types','-Wno-error=incompatible-function-pointer-types']
         # (a unit's own include folders: a third-party library's, port/n3ds/sources.json)
         for folder in entry.get('include_dirs',[]): command+=['-I',str(ROOT/folder)]
-        command+=['-D'+d for d in entry.get('defines',[])]+['-MMD','-MF',str(obj.with_suffix('.d')),'-c',str(source),'-o',str(obj)]
+        command+=['-D'+d for d in entry.get('defines',[])]
+        if entry['source']=='port/n3ds/src/engine_update.c':
+            # (bare, made a string in the unit: the commands go through a shell)
+            command+=['-DHALO_N3DS_VERSION_NUMBER=%s'%version]+(['-DHALO_N3DS_RELEASE=1'] if args.release else [])
+        command+=['-MMD','-MF',str(obj.with_suffix('.d')),'-c',str(source),'-o',str(obj)]
         stamp=hashlib.sha256((digest.hexdigest()+json.dumps(command)).encode()).hexdigest()
         old=cache.get(entry['source'],{})
         if old.get('stamp')!=stamp or not obj.exists() or old.get('sha256')!=sha(obj):

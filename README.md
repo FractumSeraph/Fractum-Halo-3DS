@@ -98,7 +98,18 @@ certificates; for others, put a certificate bundle at
 
 ## Updating
 
-In the setup tool, select your SD card and choose **Update the launcher only**.
+**Fractum Halo updates itself** (from the release after 1.1.0). When it
+starts and the console is online, it asks GitHub for the latest release. If
+there is a newer one, the system keyboard opens with the news and three
+buttons: **Update**, **Not now**, or **Never** (no more checks;
+`update.auto = true` in `halo-source/config.toml` turns them back on).
+Update downloads the new `Halo3DS.3dsx` and `map_torrents.txt`, checks each
+file's SHA-256 against the one GitHub lists for the release, and only then
+replaces the old files. The bottom screen shows the progress, then "restart
+Fractum Halo": the new version runs from the next start. A download that
+fails its check leaves the installed game as it was.
+
+Without the updater, in the setup tool, select your SD card and choose **Update the launcher only**.
 You can select a newer `Halo3DS.3dsx` under **Additional options** if you want
 to keep using an older setup tool.
 

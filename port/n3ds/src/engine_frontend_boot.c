@@ -277,6 +277,16 @@ int halo_engine_boot(void)
         n3ds_frontend_trace("input");
         /* (the system's keyboard, asked for an invite: between two frames) */
         {extern void n3ds_invite_keyboard_poll(void);n3ds_invite_keyboard_poll();}
+        /* port: Fractum Halo's self-updater (engine_update.c): its check
+         * started once the settings are read, its question asked between
+         * frames, in the menus only */
+        {
+            extern void n3ds_update_start(void);
+            extern void n3ds_update_poll(int in_menus);
+            static int update_started;
+            if(!update_started) {update_started=1;n3ds_update_start();}
+            n3ds_update_poll(main_menu_is_active()); /* (the menus run as a game of the ui map: game_in_progress there too) */
+        }
         n3ds_input_platform_poll(&sample);
         n3ds_input_gameplay_controls(game_in_progress() && !main_menu_is_active() &&
             !ui_widgets_active() && player_input_enabled() && !cinematic_in_progress());

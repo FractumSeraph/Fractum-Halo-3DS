@@ -550,6 +550,27 @@ The first runs on a New 3DS (124 MB for the game; `CE MAPS: playable`):
   - *Next:* the console's counts from a full game (these lines in its
     log) decide between batching the receives behind one poll a frame and
     trimming the object update (projectile collision, lights, weapons).
+- **Self-updater (2026-10-24, `port/n3ds/src/engine_update.c`).** A
+  release's build (`build-docker.sh --release`; its version is
+  `port/n3ds/VERSION`, `--version` overrides it) asks GitHub's API for the
+  latest release of FractumSeraph/Fractum-Halo-3DS on a thread of its own
+  once the console has an address. When the tag (`fractum-vX.Y.Z`) is newer,
+  the main menu asks with the keyboard applet between frames (Update / Not
+  now / Never, which writes `update.auto` false). Update downloads
+  `Halo3DS.3dsx` (to the path in argv[0]) and `map_torrents.txt` as
+  `<name>.new`, checks size and SHA-256 against the API's per-file `digest`
+  (GitHub's own, computed on upload), then swaps each in (`.old` kept until
+  the rename succeeds). No signing key: SHA-256 over HTTPS, as the user
+  chose. GitHub's API is under Sectigo's E46 root (cross-signed by
+  USERTrust ECC); its roots and USERTrust RSA/Sectigo R46 are added to
+  `engine_tls_roots.h` (release files are Let's Encrypt's, already there).
+  `debug.update_answer` answers for tests (`yes`, `no`, `never`,
+  `yes-bad-hash`). Tested in Azahar with a release build numbered 1.0.9:
+  it found 1.1.0, downloaded and installed it (the SD card's files then
+  hash as the release's), and a wrong expected hash was refused leaving
+  the installed files untouched; the prompt opened and Update worked.
+  *Releasing:* bump `port/n3ds/VERSION`, build with `--release`, publish
+  the tag `fractum-vX.Y.Z` with `Halo3DS.3dsx` and `map_torrents.txt`.
 - **A test of the socket service as the console has it.** With
   `halo-source/soc-serial.txt` present, every socket call is made under one
   lock (`engine_soc_serial.c`, wrapped at link time: `port/n3ds/build.py`).

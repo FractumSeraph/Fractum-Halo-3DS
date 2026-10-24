@@ -16,6 +16,7 @@ boolean browser_screen_active(void);
 enum { HELP_LINES = 6, HELP_WIDTH = 41 };
 
 static char help[HELP_LINES][HELP_WIDTH];
+int n3ds_update_help_line(char *line, int size); /* (engine_update.c) */
 
 int n3ds_menu_network_help(const char **lines, int maximum)
 {
@@ -24,6 +25,9 @@ int n3ds_menu_network_help(const char **lines, int maximum)
 
 	if (maximum > HELP_LINES)
 		maximum = HELP_LINES;
+	/* port: the self-updater's progress or result first (engine_update.c) */
+	if (n3ds_update_help_line(help[count], HELP_WIDTH))
+		count++;
 	if (p2p_hosting_invite(invite, sizeof(invite)) > 0 && invite[0])
 	{
 		size_t length = strlen(invite);

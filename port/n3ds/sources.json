@@ -3518,6 +3518,20 @@
       "defines": [
         "HALO_LINUX_PLATFORM_LAYER=1"
       ]
+    },
+    {
+      "source": "port/n3ds/src/engine_update.c",
+      "compiler": "gcc",
+      "defines": [
+        "MBEDTLS_THREADING_C",
+        "MBEDTLS_THREADING_PTHREAD",
+        "MBEDTLS_NO_PLATFORM_ENTROPY",
+        "MBEDTLS_ENTROPY_HARDWARE_ALT",
+        "MBEDTLS_PLATFORM_MS_TIME_ALT"
+      ],
+      "include_dirs": [
+        "port/third_party/mbedtls/include"
+      ]
     }
   ],
   "runtime": [
