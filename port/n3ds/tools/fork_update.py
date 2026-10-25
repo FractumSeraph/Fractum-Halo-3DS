@@ -1,6 +1,6 @@
 """port/n3ds/tools/fork_update.py <fork repo> <base> <theirs> <ours tree>:
 following the FractumSeraph/OpenCE fork (docs/MULTIPLAYER-PLAN.md): the last
-fork commit taken is 8ab6b1324. ... the fork's changes
+fork commit taken is recorded in docs/MULTIPLAYER-PLAN.md. ... the fork's changes
 from base to theirs (source/, port/linux/{include,game,src}, port/third_party/
 {zlib,tomlc17}) merged three-way into ours, file by file (git merge-file):
 modified files merged (conflicts marked and listed), added ones copied (or
@@ -19,7 +19,19 @@ def git(*a):
 
 def show(rev, path):
     r = subprocess.run(['git', '-C', repo, 'show', f'{rev}:{path}'], capture_output=True)
-    return r.stdout if r.returncode == 0 else None
+    return lf(r.stdout) if r.returncode == 0 else None
+
+
+# (the three sides with LF endings: the fork keeps CRLF in some files, this
+# checkout LF, and a difference in every line conflicted whole files)
+def lf(data):
+    return data.replace(bytes([13, 10]), bytes([10])) if data is not None else None
+
+
+def read_lf(path):
+    data = lf(open(path, 'rb').read())
+    open(path, 'wb').write(data)
+    return data
 
 
 changes = git('diff', '--name-status', '--no-renames', base, theirs, '--', *scopes).decode().splitlines()
@@ -31,7 +43,7 @@ for line in changes:
     if status == 'A':
         data = show(theirs, path)
         if os.path.exists(target):
-            mine = open(target, 'rb').read()
+            mine = read_lf(target)
             if mine == data:
                 continue
             open(os.path.join(tmp, 'b'), 'wb').write(b'')
@@ -46,7 +58,7 @@ for line in changes:
     elif status == 'D':
         if not os.path.exists(target):
             continue
-        if open(target, 'rb').read() == show(base, path):
+        if read_lf(target) == show(base, path):
             os.remove(target)
             report['deleted'].append(path)
         else:
@@ -55,6 +67,7 @@ for line in changes:
         if not os.path.exists(target):
             report['missing'].append(path)
             continue
+        read_lf(target)
         open(os.path.join(tmp, 'b'), 'wb').write(show(base, path))
         open(os.path.join(tmp, 't'), 'wb').write(show(theirs, path))
         r = subprocess.run(['git', 'merge-file', '-L', 'ours', '-L', 'base', '-L', 'fork', target,
@@ -65,4 +78,4 @@ for k, v in report.items():
 for k in ('conflict', 'kept', 'missing'):
     for p in report[k]:
         print(' ', k, p)
-open(os.path.join(ours, 'build', 'fork-update-conflicts.txt'), 'w').write('\n'.join(report['conflict']) + '\n')
+open(os.path.join(ours, 'build', 'fork-update-conflicts.txt'), 'w', newline=chr(10)).write(chr(10).join(report['conflict']) + chr(10))

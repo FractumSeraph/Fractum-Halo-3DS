@@ -571,6 +571,21 @@ The first runs on a New 3DS (124 MB for the game; `CE MAPS: playable`):
   the installed files untouched; the prompt opened and Update worked.
   *Releasing:* bump `port/n3ds/VERSION`, build with `--release`, publish
   the tag `fractum-vX.Y.Z` with `Halo3DS.3dsx` and `map_torrents.txt`.
+- **Fork 552a61ae7 (2026-10-25).** The last fork commit taken is now
+  552a61ae7 (fork main): ChupathingyCE 0.8.0h (Delta wire `chupa-38a`, the
+  legacy table's layouts, OpenCE 37/38 its way), a client keeping its
+  inventory until the unit and weapons it names have come, the approved-map
+  refusal in the error dialog's room, and the fork's performance changes
+  (dynamic light limits, the sound mixer and game thread no longer waiting
+  on each other, a host's stream read 32 KB at a time, release builds
+  skipping the LRU caches' walk). `fork_update.py` now merges with LF line
+  endings on all three sides: 28 files merged, one conflict
+  (`map_torrents.c`, the 3DS's missing-list message kept beside the fork's
+  new refusal). `HALO_CONSOLE_LIGHT_LIMITS` is on for the 3DS
+  (`halo_console_features.h`), as on the fork's consoles: the 8 largest
+  dynamic lights light the level, the 2 largest add their specular. Tested
+  in Azahar: joined the fork's server built from 552a61ae7 ("ChupathingyCE
+  0.8.0h-dev ... network version 38"), Chaos Gulch, 15 bots.
 - **A test of the socket service as the console has it.** With
   `halo-source/soc-serial.txt` present, every socket call is made under one
   lock (`engine_soc_serial.c`, wrapped at link time: `port/n3ds/build.py`).
