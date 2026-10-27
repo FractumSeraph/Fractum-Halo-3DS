@@ -113,7 +113,7 @@ System link works in Azahar, both ways, with the fork's Windows game
   overshield effect, the passenger camera, structure culling, model
   detail). The model part cache takes its `display.model_detail` rules.
   To follow the fork again: `port/n3ds/tools/fork_update.py`'s three-way merge from the
-  last fork commit taken (now 8ab6b1324) to the new one.
+  last fork commit taken (now 4a752e42f) to the new one.
 - **Internet play.** The fork's p2p layer and Delta are built (9a3b288):
   STUN, the MQTT brokers (its built-in list: halovps.fractumseraph.net
   first), the tunnel with kcp, Monocypher's signatures; no WebRTC (the
@@ -586,6 +586,36 @@ The first runs on a New 3DS (124 MB for the game; `CE MAPS: playable`):
   dynamic lights light the level, the 2 largest add their specular. Tested
   in Azahar: joined the fork's server built from 552a61ae7 ("ChupathingyCE
   0.8.0h-dev ... network version 38"), Chaos Gulch, 15 bots.
+- **Fork 4a752e42f, network version 39 (2026-10-26).** The last fork commit
+  taken is now 4a752e42f; fork main is at cfa6c9790, whose two commits
+  after it touch only its README and a CI workflow. The merge brings
+  network version 39 (joining 11 to 40), OpenCE's own dedicated server
+  (`halo --server`: `server_mode.c`, `server_director.c` and the rest) and
+  the server browser's master servers (`master_list.c`, which asks
+  `https://master.opencommunityedition.com/v1/servers` every 30 s while
+  Online Games is open and checks the list's Ed25519 signature).
+  `fork_update.py`: 55 files merged, 4 conflicts resolved keeping both
+  sides, 28 added; `port/third_party/jsmn` (the JSON parser) is now in its
+  scopes. The 3DS is never a server: `server_mode.h` sets
+  `HALO_SERVER_BUILD` 0 and `main.c`'s `main_server_mode()` is 0, so the
+  server units compile to the fork's own stand-ins; no server code is
+  changed. Three 3DS additions:
+  - `update_https_request` (`posix_browser.c`, `HALO_N3DS`), the request
+    `master_list.c` makes, on the browser's own TLS connections (body cut to
+    256 KB).
+  - *The clock.* The 3DS keeps the local time its owner set and no time
+    zone, so `time()` is hours from UTC, and the master's list (dated within
+    5 minutes) was refused in Azahar ("dated 17989 seconds ahead"), as the
+    brokers' signed listings (within an hour) would be on a console set to
+    a time zone an hour or more from UTC. Each HTTPS answer's `Date` header now sets the clock's offset
+    from UTC (`posix_browser_utc_time`). `p2p_lobby.c` and `master_list.c`
+    use it on the 3DS for their listings' times.
+  - Stand-ins for `menu_advertised_game_from_peer` (only `halo --probe`
+    asks) and `posix_server_private_file`. The 3DS sends no mod list.
+  Tested in Azahar: Online Games lists the master's 18 servers beside the
+  community list, OpenCE's dedicated servers among them ("OpenCE (legacy,
+  network 39)"). The first ask, made before the console's network was up,
+  failed to connect; the next round 30 s later answered.
 - **A test of the socket service as the console has it.** With
   `halo-source/soc-serial.txt` present, every socket call is made under one
   lock (`engine_soc_serial.c`, wrapped at link time: `port/n3ds/build.py`).

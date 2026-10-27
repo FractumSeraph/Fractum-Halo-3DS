@@ -49,4 +49,10 @@ void posix_browser_unlock(void);
 int posix_browser_private_key(const char *path, unsigned char *key, int size);
 int posix_browser_replace_key(const char *path, const unsigned char *key, int size);
 
+#ifdef HALO_N3DS
+/* port: the time (seconds since 1970, UTC): the 3DS's clock, which keeps the
+local time, set by the latest HTTPS answer's Date header */
+unsigned long posix_browser_utc_time(void);
+#endif
+
 #endif

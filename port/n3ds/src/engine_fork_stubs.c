@@ -579,3 +579,19 @@ unsigned char render_interpolation_drawing(void) { return 0; }
 float *render_interpolation_object_function_values(long object_index) { (void)object_index; return NULL; }
 float render_interpolation_ticks_since(long now, long then) { return (float)(now - then); }
 float render_interpolation_game_time_sec(long ticks) { return (float)ticks * (1.0f / N3DS_TICKS_PER_SECOND); }
+
+/* port: fork 4a752e42f's callers of units the 3DS does not build. The
+probe (halo --probe, network_test.c) has no command line to start it on the
+3DS, so no game is a peer's to it; and a dedicated server's private files
+(port_config.c: config_server_mode, never set here) need nothing */
+boolean menu_advertised_game_from_peer(long index)
+{
+	(void)index;
+	return 0;
+}
+
+int posix_server_private_file(const char *path)
+{
+	(void)path;
+	return 1;
+}

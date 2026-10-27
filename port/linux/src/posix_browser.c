@@ -524,6 +524,61 @@ void posix_browser_unlock(void)
 #endif
 }
 
+#ifdef HALO_N3DS
+/* port: the 3DS's clock is the local time its owner set, with no time zone
+kept: time() is hours from UTC, and the signed listings' times (p2p_lobby.c's,
+master_list.c's) would be refused. Each HTTPS answer's Date header (from the
+host the certificate names) gives the clock's offset from UTC */
+static volatile long clock_offset;
+static volatile int clock_known;
+
+static long days_from_civil(long year, long month, long day)
+{
+	long era, year_of_era, day_of_year, day_of_era;
+
+	year -= month <= 2;
+	era = (year >= 0 ? year : year - 399) / 400;
+	year_of_era = year - era * 400;
+	day_of_year = (153 * (month + (month > 2 ? -3 : 9)) + 2) / 5 + day - 1;
+	day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+	return era * 146097 + day_of_era - 719468;
+}
+
+/* the head's Date (RFC 9110's "Sun, 06 Nov 1994 08:49:37 GMT") */
+static void learn_clock(const char *head)
+{
+	static const char months[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
+	const char *line = head;
+	const char *end = strstr(head, "\r\n\r\n");
+
+	while ((line = strstr(line, "\r\n")) != NULL && (!end || line < end))
+	{
+		char month[4];
+		int day, year, hour, minute, second;
+		const char *found;
+
+		line += 2;
+		if (strncasecmp(line, "Date:", 5))
+			continue;
+		if (sscanf(line + 5, " %*3s, %d %3s %d %d:%d:%d", &day, month, &year, &hour, &minute, &second) == 6 &&
+			(found = strstr(months, month)) != NULL && (found - months) % 3 == 0 && year >= 2024)
+		{
+			long utc = days_from_civil(year, (found - months) / 3 + 1, day) * 86400L + hour * 3600L + minute * 60L +
+				second;
+
+			clock_offset = utc - (long)time(NULL);
+			clock_known = 1;
+		}
+		return;
+	}
+}
+
+unsigned long posix_browser_utc_time(void)
+{
+	return (unsigned long)((long)time(NULL) + (clock_known ? clock_offset : 0));
+}
+#endif
+
 static int locked_request(const char *url, const char *body_data, size_t body_length, const char *content_type,
 	const char *user_agent, const char *headers, char *response, int response_size, char *error, int error_size)
 {
@@ -653,6 +708,11 @@ static int request_as(const char *url, const char *body_data, size_t body_length
 				status = 0;
 				set_error(error, error_size, "not an HTTP response", 0);
 			}
+#ifdef HALO_N3DS
+			else if (secure && (learn_clock(buffer), 0))
+			{
+			}
+#endif
 			else if ((body = strstr(buffer, "\r\n\r\n")) != NULL && response_size > 0)
 			{
 				snprintf(response, (size_t)response_size, "%s", body + 4);
@@ -783,6 +843,10 @@ static int download_request(const char *url, const char *user_agent, char *locat
 		return 0;
 	}
 	end[2] = 0;
+#ifdef HALO_N3DS
+	if (secure)
+		learn_clock((char *)download.head);
+#endif
 	if (header_value((char *)download.head, "Content-Length:", value, sizeof(value)))
 		*length = strtoll(value, NULL, 10);
 	if (status >= 300 && status < 400 && !header_value((char *)download.head, "Location:", location, location_size))
@@ -1062,5 +1126,136 @@ int posix_browser_replace_key(const char *path, const unsigned char *key, int si
 }
 
 #endif /* _WIN32 */
+
+#ifdef HALO_N3DS
+#include "update.h"
+
+/* port: the 3DS has no posix_update.c (its own updater is
+port/n3ds/src/engine_update.c): update_https_request (update.h) for the
+server browser's master servers (master_list.c), on this file's
+connections, under the same lock as its other requests */
+int update_https_request(const char *method, const char *url, const char *headers, const void *body,
+	unsigned long body_size, unsigned long maximum, struct update_response *response, char *error, int error_size)
+{
+	char host[256], port[16], path[1024];
+	char *request, *buffer, *end;
+	size_t request_size, capacity, used = 0;
+	struct connection connection;
+	int secure, length, count, answered = 0;
+
+	memset(response, 0, sizeof(*response));
+	error[0] = 0;
+	if (!parse_url(url, &secure, host, sizeof(host), port, sizeof(port), path, sizeof(path)))
+	{
+		set_error(error, error_size, "not an http:// or https:// address", 0);
+		return 0;
+	}
+	request_size = 2048 + strlen(path) + (headers ? strlen(headers) : 0) + body_size;
+	/* (the head's room beside the body's: at most 16 KB of headers; and
+	256 KB of body at most, the 3DS's memory being short: a master's list
+	of its servers is far less) */
+	if (maximum > 262144)
+		maximum = 262144;
+	capacity = (size_t)maximum + 16384;
+	request = malloc(request_size);
+	buffer = request ? malloc(capacity + 1) : NULL;
+	if (!buffer)
+	{
+		free(request);
+		set_error(error, error_size, "out of memory", 0);
+		return 0;
+	}
+	length = snprintf(request, request_size,
+		"%s %s HTTP/1.0\r\nHost: %s\r\nUser-Agent: %s\r\nAccept: */*\r\nContent-Length: %lu\r\n%s\r\n", method, path,
+		host, BROWSER_USER_AGENT, body_size, headers ? headers : "");
+	if (length <= 0 || (size_t)length + body_size >= request_size)
+	{
+		free(request);
+		free(buffer);
+		set_error(error, error_size, "the request is too long", 0);
+		return 0;
+	}
+	if (body_size)
+		memcpy(request + length, body, body_size);
+	posix_browser_lock();
+	if (secure)
+		set_up();
+	if (secure && (!crypto_ready || !certificates_loaded))
+	{
+		set_error(error, error_size, "no certificate authorities", 0);
+		posix_browser_unlock();
+		free(request);
+		free(buffer);
+		return 0;
+	}
+	memset(&connection, 0, sizeof(connection));
+	connection.secure = secure;
+	mbedtls_net_init(&connection.net);
+	mbedtls_ssl_init(&connection.ssl);
+	mbedtls_ssl_config_init(&connection.config);
+	if (connection_open(&connection, host, port, error, error_size))
+	{
+		if (!connection_write(&connection, request, (size_t)length + body_size))
+			set_error(error, error_size, "could not send the request", 0);
+		else
+		{
+			while (used < capacity && (count = connection_read(&connection, (unsigned char *)buffer + used,
+				capacity - used)) > 0)
+			{
+				used += (size_t)count;
+			}
+			buffer[used] = 0;
+			if (sscanf(buffer, "HTTP/%*d.%*d %d", &response->status) != 1 ||
+				(end = strstr(buffer, "\r\n\r\n")) == NULL)
+			{
+				response->status = 0;
+				set_error(error, error_size, "not an HTTP response", 0);
+			}
+			else
+			{
+				char *line = strstr(buffer, "\r\n");
+				size_t headers_used = 0;
+
+				if (secure)
+					learn_clock(buffer);
+				size_t body_used = used - (size_t)(end + 4 - buffer);
+
+				/* the headers as "Name: value\n" lines */
+				while (line && line < end)
+				{
+					char *next = strstr(line + 2, "\r\n");
+					size_t size = next ? (size_t)(next - (line + 2)) : 0;
+
+					if (size && headers_used + size + 2 < sizeof(response->headers))
+					{
+						memcpy(response->headers + headers_used, line + 2, size);
+						headers_used += size;
+						response->headers[headers_used++] = '\n';
+					}
+					line = next;
+				}
+				response->headers[headers_used] = 0;
+				if (body_used > maximum)
+					body_used = maximum;
+				response->body = malloc(body_used + 1);
+				if (!response->body)
+					set_error(error, error_size, "out of memory", 0);
+				else
+				{
+					memcpy(response->body, end + 4, body_used);
+					response->body[body_used] = 0;
+					response->body_size = (unsigned long)body_used;
+					answered = 1;
+				}
+			}
+		}
+	}
+	connection_free(&connection);
+	posix_browser_unlock();
+	free(request);
+	free(buffer);
+	return answered;
+}
+#endif
 
 #endif

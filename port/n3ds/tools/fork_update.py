@@ -2,7 +2,7 @@
 following the FractumSeraph/OpenCE fork (docs/MULTIPLAYER-PLAN.md): the last
 fork commit taken is recorded in docs/MULTIPLAYER-PLAN.md. ... the fork's changes
 from base to theirs (source/, port/linux/{include,game,src}, port/third_party/
-{zlib,tomlc17}) merged three-way into ours, file by file (git merge-file):
+{zlib,tomlc17,jsmn}) merged three-way into ours, file by file (git merge-file):
 modified files merged (conflicts marked and listed), added ones copied (or
 merged against an empty base if ours has one), deleted ones removed when ours
 is the base's (else listed). Reports to stdout; conflicts in conflicts.txt."""
@@ -10,7 +10,8 @@ import os, subprocess, sys, tempfile
 
 repo, base, theirs, ours = sys.argv[1:5]
 scopes = ['source', 'port/linux/include', 'port/linux/game', 'port/linux/src',
-          'port/third_party/zlib', 'port/third_party/tomlc17']
+          'port/third_party/zlib', 'port/third_party/tomlc17',
+          'port/third_party/jsmn']
 
 
 def git(*a):

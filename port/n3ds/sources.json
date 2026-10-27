@@ -3532,6 +3532,53 @@
       "include_dirs": [
         "port/third_party/mbedtls/include"
       ]
+    },
+    {
+      "source": "port/linux/src/master_list.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
+    },
+    {
+      "source": "port/linux/src/server_json.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
+    },
+    {
+      "source": "port/linux/src/server_mode.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
+    },
+    {
+      "source": "port/linux/game/server_director.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/game/server_commands.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/src/server_console.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
+    },
+    {
+      "source": "port/linux/game/server_status.c",
+      "compiler": "clang"
+    },
+    {
+      "source": "port/linux/src/server_master.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
     }
   ],
   "runtime": [
