@@ -328,6 +328,27 @@ int network_rules_host_settings_size(unsigned announce, unsigned delta_version, 
 	return waiting ? 0 : network_rules_settings_size(announce);
 }
 
+int network_rules_host_hello_matters(unsigned announce, unsigned oldest)
+{
+	struct network_rules_layout announced;
+	unsigned version;
+
+	if (announce < NETWORK_RULES_EXTENDED_OPTIONS_VERSION)
+		return 0;
+	network_rules_layout(announce, &announced);
+	for (version = oldest ? oldest : 1; version < announce; version++)
+	{
+		struct network_rules_layout layout;
+
+		if (version == NETWORK_RULES_VERSION_UNKNOWN)
+			continue;
+		network_rules_layout(version, &layout);
+		if (layout.settings_size != announced.settings_size || layout.options_size != announced.options_size)
+			return 1;
+	}
+	return 0;
+}
+
 int network_rules_host_settings_options(unsigned announce, unsigned delta_version)
 {
 	struct network_rules_layout layout;
@@ -470,6 +491,25 @@ void network_rules_layout_built_in(unsigned version, struct network_rules_layout
 	}
 	if (rules >= NETWORK_RULES_SHIELD_EFFECTS_VERSION)
 		layout_drop(layout, NETWORK_RULES_SHIELD_EFFECTS_KIND);
+	if (rules >= NETWORK_RULES_JOIN_REQUEST_VERSION)
+		layout->join_request_extra = NETWORK_RULES_JOIN_REQUEST_EXTRA;
+	if (rules >= NETWORK_RULES_VOTES_VERSION)
+	{
+		layout_drop(layout, NETWORK_RULES_VOTE_REQUEST_KIND);
+		layout_drop(layout, NETWORK_RULES_VOTE_STATUS_KIND);
+		layout_drop(layout, NETWORK_RULES_MAP_VOTE_STATUS_KIND);
+		layout_drop(layout, NETWORK_RULES_MAP_VOTE_CHOICE_KIND);
+	}
+}
+
+int network_rules_join_request_extra(unsigned version)
+{
+	struct network_rules_layout layout;
+
+	if (version == NETWORK_RULES_VERSION_UNKNOWN)
+		return 0;
+	network_rules_layout(version, &layout);
+	return layout.join_request_extra;
 }
 
 void network_rules_layout_apply(struct network_rules_layout *layout, struct delta_layout_fact const *facts,
@@ -520,6 +560,19 @@ void network_rules_layout_apply(struct network_rules_layout *layout, struct delt
 				fact->shield_effects_maximum <= NETWORK_RULES_SHIELD_EFFECTS_LIMIT)
 			{
 				layout->shield_effects_maximum = fact->shield_effects_maximum;
+				layout->learned++;
+			}
+			else
+				layout->refused++;
+		}
+		if (fact->join_request_said)
+		{
+			/* (the join request's length past 0x70, longer or shorter, of
+			zeros: another fill, or past the limit, is not taken) */
+			if (fact->join_request_fill == DELTA_LAYOUT_FILL_ZEROS &&
+				fact->join_request_extra <= NETWORK_RULES_JOIN_REQUEST_EXTRA_LIMIT)
+			{
+				layout->join_request_extra = fact->join_request_extra;
 				layout->learned++;
 			}
 			else

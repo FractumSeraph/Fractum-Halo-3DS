@@ -595,3 +595,82 @@ int posix_server_private_file(const char *path)
 	(void)path;
 	return 1;
 }
+
+/* port: the fork's stencil modes (rasterizer_xbox.c), for light volumes on
+the viewmodel: the 3DS's rasterizer has none, and draws those volumes in one
+pass (light_volumes.c) */
+short rasterizer_get_stencil_mode(void) { return 0; }
+void rasterizer_set_stencil_mode(long stencil_mode) { (void)stencil_mode; }
+
+/* port: fork 7da18311c's controller remapping (controller_remap_game.c,
+controller_remap_input.c: SDL's pads) and the desktop's debug camera keys
+(xinput_sdl.c): the 3DS reads its own buttons (Halo3DS's input), remapped by
+nothing, and has no mouse or keyboard */
+int controller_remap_playing(short port) { (void)port; return 0; }
+void controller_remap_reset(void) {}
+int halo_linux_debug_camera_input(int *middle, int *up, int *down, float *wheel)
+{
+	*middle = 0;
+	*up = 0;
+	*down = 0;
+	*wheel = 0.0f;
+	return 0;
+}
+/* (render_interpolation.c's: the 3DS draws one frame a tick, so a point
+stays where the tick put it) */
+void render_interpolation_object_point(long object_index, real_point3d *point) { (void)object_index; (void)point; }
+int controller_remap_camera(short local_player, int available, int controlling,
+	unsigned int *held, unsigned int *pressed)
+{
+	(void)local_player;
+	(void)available;
+	(void)controlling;
+	*held = 0;
+	*pressed = 0;
+	return 0;
+}
+/* (network_chat.c's speaker: the 3DS's one player plays its one pad) */
+short local_player_get_next(short local_player_index);
+short controller_remap_local_player(short port)
+{
+	return port == 0 ? local_player_get_next(-1) : -1;
+}
+void controller_remap_movement(short port, float *forward, float *strafe) { (void)port; (void)forward; (void)strafe; }
+struct game_input_preferences;
+void controller_remap_prompt(short port, struct game_input_preferences *preferences) { (void)port; (void)preferences; }
+/* (xinput_sdl.c's: the 3DS's player always plays its buttons, so the vote
+prompts name the D-pad) */
+int halo_gamepad_last_used(void) { return 1; }
+/* (d3d8_gl.c's: 1, so the HUD's overlays stay point sampled for one player,
+as they were on the 3DS before fork 7da18311c: hud_draw.c) */
+float halo_screen_scale(void) { return 1.0f; }
+/* (hud_hires_tags.c's, display.high_res_hud: not on the 3DS) */
+struct bitmap_data;
+struct bitmap_data const *hud_hires_crosshair_bitmap(struct bitmap_data const *bitmap, short sequence_index,
+	short frame_index)
+{
+	(void)sequence_index;
+	(void)frame_index;
+	return bitmap;
+}
+/* (d3d8_gl.c's: the 3DS's screen is the Xbox's 640 columns, halo_screen_width
+above, so no margins) */
+long halo_screen_ui_offset_current(void) { return 0; }
+/* (menu_functions.c's, the desktops' menus: the 3DS plays one controller, so
+no screen reads or routes another's) */
+struct widget_instance;
+unsigned char pc_menu_screen_reads_every_controller(struct widget_instance const *widget) { (void)widget; return 0; }
+unsigned char pc_menu_screen_routes_by_controller(struct widget_instance const *widget) { (void)widget; return 0; }
+/* (ui_point.c's, which the 3DS does not build: which part of a prompt a
+point is on, NONE for none) */
+struct ui_point_prompt { short top, bottom, left, right, split; };
+int ui_point_prompt_part(struct ui_point_prompt const *prompt, short margin, short x, short y)
+{
+	if (prompt->right <= prompt->left ||
+		y < prompt->top - margin || y >= prompt->bottom + margin ||
+		x < prompt->left - margin || x >= prompt->right + margin)
+	{
+		return -1;
+	}
+	return x < prompt->split || prompt->split >= prompt->right ? 0 : 1;
+}

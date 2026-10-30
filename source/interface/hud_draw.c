@@ -498,6 +498,28 @@ real hud_bitmap_group_scale(
 	}
 	return scale;
 }
+
+/* port: the weapon's zoom mask (interface.c) and its group's high
+resolution scale. The screen effect draws a mask at its bitmap's size
+(rasterizer_xbox_screen_effect.c), so a Custom Edition map's high resolution
+mask is drawn at that scale, as Halo PC with Chimera draws it
+(fix/hud_bitmap_scale.cpp); any other mask (a cinematic's) at its size */
+static struct bitmap_data const *hud_screen_effect_mask;
+static real hud_screen_effect_mask_bitmap_scale = 1.0f;
+
+void hud_set_screen_effect_mask(
+	struct bitmap_data const *mask,
+	long bitmap_group_index)
+{
+	hud_screen_effect_mask = mask;
+	hud_screen_effect_mask_bitmap_scale = mask ? hud_bitmap_group_scale(bitmap_group_index) : 1.0f;
+}
+
+real hud_screen_effect_mask_scale(
+	struct bitmap_data const *mask)
+{
+	return mask && mask == hud_screen_effect_mask ? hud_screen_effect_mask_bitmap_scale : 1.0f;
+}
 #endif
 
 void hud_retrieve_bitmap_and_bounding_rect(
@@ -655,6 +677,22 @@ static short hud_multitexture_overlay_blend_function(
 	return blend_function;
 }
 
+/* port: the Xbox point sampled the HUD's multitexture overlays and meters
+for one player, whose HUD it drew texel for pixel at 640x480, and filtered
+them for split screen, whose HUD it scaled. Drawn at any other size they are
+scaled too, and point sampling gives them blocky, uneven edges (the most on a
+Custom Edition map's HUD, whose high resolution bitmaps are drawn at half
+their size): filtered then, as split screen's were.
+display.resolution_scaling = "original" draws at 640x480, texel for pixel. */
+static boolean hud_point_sampled(
+	real_vector2d const *xy_scale)
+{
+	return local_player_count() == 1 &&
+		halo_screen_scale() == 1.0f &&
+		xy_scale->i == 1.0f &&
+		xy_scale->j == 1.0f;
+}
+
 static void hud_draw_multitexture_overlay(
 	struct multitexture_overlay_hud_element_definition const *overlay,
 	short local_player_index,
@@ -733,7 +771,7 @@ static void hud_draw_multitexture_overlay(
 	parameters.map_scale[0].j = 1.0f;
 	parameters.map_scale[0].i = 1.0f;
 	parameters.meter_parameters = NULL;
-	parameters.point_sampled = local_player_count() == 1;
+	parameters.point_sampled = hud_point_sampled(xy_scale);
 	parameters.map[0] = bitmap_group_get_bitmap_from_sequence(
 		overlay->map[0].index,
 		0,
@@ -854,14 +892,11 @@ static void hud_draw_multitexture_overlay(
 		{
 		case _hud_multitexture_overlay_effector_source_player_pitch:
 			{
-				long unit_index = local_player_get_player_index(local_player_index) == NONE ?
-					NONE :
-					player_get(local_player_get_player_index(local_player_index))->unit_index;
-				real_vector3d direction;
+				/* port: the scope's ticks follow the view. The unit's aim
+				changes once a tick, so the ticks stepped across the picture. */
 				real_euler_angles2d angles;
 
-				unit_get_aiming_vector(unit_index, &direction);
-				euler_angles2d_from_vector3d(&angles, &direction);
+				euler_angles2d_from_vector3d(&angles, &render.camera.forward);
 				source_value = angles.pitch;
 			}
 			break;
@@ -1693,7 +1728,7 @@ static void hud_draw_bitmap_internal(
 	parameters.map_scale[0].j = 1.0f;
 	parameters.map_scale[0].i = 1.0f;
 	parameters.meter_parameters = meter_parameters;
-	parameters.point_sampled = meter_parameters && local_player_count()==1;
+	parameters.point_sampled = meter_parameters && hud_point_sampled(xy_scale);
 	parameters.framebuffer_blend_function =
 		_shader_framebuffer_blend_function_alpha_multiply_add;
 	parameters.map[0] = (struct bitmap_data *)bitmap;

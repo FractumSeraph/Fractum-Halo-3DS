@@ -617,6 +617,7 @@ boolean game_stats_line_full(long player_index, boolean host);
 boolean cache_file_tags_are_ce(void);
 #endif
 #include "latency_meter.h" /* port: port/linux/game/latency_meter.c */
+#include "touch_postgame.h" /* port: port/linux/game/touch_postgame.c */
 
 /* network_game_globals.c's */
 boolean network_game_distributed_client(void);
@@ -2119,11 +2120,12 @@ static void scoreboard_menu_items(
 		labels[item][0] = 0;
 	}
 	offered[_scoreboard_item_vote] = TRUE;
-	if (network_votekick_get_status(&status) &&
+	if (network_votekick_get_status(&status) && status.kind == _network_vote_kick &&
 		status.player_index == DATUM_INDEX_TO_ABSOLUTE_INDEX(scoreboard_menu.player_index))
 	{
 		usprintf(labels[_scoreboard_item_vote], status.voted ? L"Voted to kick (%d of %d)" :
-			L"Vote to kick (%d of %d)", status.votes, status.needed);
+			status.voted_no ? L"Voted not to kick (%d of %d)" : L"Vote to kick (%d of %d)", status.votes,
+			status.needed);
 	}
 	else
 	{
@@ -2704,10 +2706,12 @@ static void game_engine_rasterize_scoreboard(
 		struct data_iterator iterator;
 		struct player_datum *target;
 		wchar_t const *name = L"?";
-		wchar_t const *note = vote.voted ? L" (you voted)" : vote.may_vote ? L"" : L" (too new to vote)";
+		wchar_t const *note = vote.voted ? L" (you voted yes)" : vote.voted_no ? L" (you voted no)" :
+			vote.may_vote ? L"  F1 yes, F2 no" : L" (too new to vote)";
 
 		data_iterator_new(&iterator, player_data);
-		while ((target = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+		while (vote.kind == _network_vote_kick &&
+			(target = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
 		{
 			if (DATUM_INDEX_TO_ABSOLUTE_INDEX(iterator.datum_index) == vote.player_index)
 			{
@@ -2720,8 +2724,16 @@ static void game_engine_rasterize_scoreboard(
 		color.red = 1.0f;
 		color.green = 0.75f;
 		color.blue = 0.3f;
-		usprintf(row_string, L"Vote to kick %s: %d of %d, %d s left%s", name, vote.votes, vote.needed,
-			vote.seconds_left, note);
+		if (vote.kind == _network_vote_end_game)
+		{
+			usprintf(row_string, L"Vote to end the game: %d yes, %d no, %d needed, %d s left%s", vote.votes,
+				vote.no_votes, vote.needed, vote.seconds_left, note);
+		}
+		else
+		{
+			usprintf(row_string, L"Vote to kick %s: %d yes, %d no, %d needed, %d s left%s", name, vote.votes,
+				vote.no_votes, vote.needed, vote.seconds_left, note);
+		}
 		scoreboard_draw_row(row_string, FALSE, &color, next_row++, top, left, FALSE);
 	}
 	if (network && pointer_state >= 0)
@@ -2944,6 +2956,116 @@ enum
 	POSTGAME_PROMPT_RIGHT = 610
 };
 
+/* port: the carnage report's prompt as last drawn, for a click or a tap
+on it (ui_widgets_process_mouse, #467). It is text, not widgets, so the
+menus' pointer has no target on it, and the postgame reads the gamepads'
+buttons (game_engine_update_non_deterministic), not the menus' events: a
+tap on PICK GAME or QUIT did nothing. Its parts are the text before and
+from its second button, each with that button's gamepad button. */
+enum
+{
+	POSTGAME_PROMPT_LINE_HEIGHT = 18
+};
+
+static struct
+{
+	boolean drawn;
+	short top, bottom;
+	short left, right;
+	short split;
+	short part_buttons[2];
+	/* a part's button the pointer pressed, for the next update */
+	short pressed_button;
+} postgame_prompt = { FALSE, 0, 0, 0, 0, 0, { NONE, NONE }, NONE };
+
+/* the gamepad button of a prompt's button token ("%a-button": 0, A), or
+NONE */
+static short postgame_prompt_token_button(
+	wchar_t const *token)
+{
+	if (!token)
+		return NONE;
+	return token[1] == L'a' ? 0 : token[1] == L'b' ? 1 : NONE;
+}
+
+/* where the first length characters of a prompt end, drawn unseen from
+bounds' left */
+static short postgame_prompt_measure(
+	rectangle2d const *bounds,
+	wchar_t const *prompt,
+	long length)
+{
+	wchar_t part[256];
+	rectangle2d drawn = *bounds;
+
+	length = MIN(length, (long)NUMBEROF(part) - 1);
+	csmemcpy(part, prompt, length * sizeof(wchar_t));
+	part[length] = 0;
+	draw_string_and_hack_in_icons(&drawn, NULL, NULL, 0, part, FALSE);
+
+	return draw_string_and_hack_in_icons_end_x;
+}
+
+/* notes the prompt's parts as drawn at bounds (the color is unseen) */
+static void postgame_prompt_note(
+	rectangle2d const *bounds,
+	wchar_t const *prompt,
+	short right)
+{
+	wchar_t const *a_token = wcsstr(prompt, L"%a");
+	wchar_t const *b_token = wcsstr(prompt, L"%b");
+	wchar_t const *first = a_token && (!b_token || a_token < b_token) ? a_token : b_token;
+	wchar_t const *second = first == a_token ? b_token : a_token;
+
+	postgame_prompt.drawn = first != NULL;
+	postgame_prompt.top = bounds->y0;
+	postgame_prompt.bottom = (short)(bounds->y0 + POSTGAME_PROMPT_LINE_HEIGHT);
+	postgame_prompt.left = bounds->x0;
+	postgame_prompt.right = right;
+	postgame_prompt.split = right;
+	postgame_prompt.part_buttons[0] = postgame_prompt_token_button(first);
+	postgame_prompt.part_buttons[1] = postgame_prompt_token_button(second);
+	if (second)
+	{
+		long length = (long)(second - prompt);
+		long trimmed = length;
+		short first_end;
+		short second_start;
+
+		/* halfway across the space between the parts */
+		while (trimmed > 0 && prompt[trimmed - 1] == L' ')
+			trimmed--;
+		first_end = postgame_prompt_measure(bounds, prompt, trimmed);
+		second_start = postgame_prompt_measure(bounds, prompt, length);
+		postgame_prompt.split = (short)((first_end + second_start) / 2);
+	}
+}
+
+boolean game_engine_postgame_prompt(
+	short *top,
+	short *bottom,
+	short *left,
+	short *right,
+	short *split)
+{
+	if (!game_engine_showing_postgame() || !postgame_prompt.drawn)
+		return FALSE;
+	*top = postgame_prompt.top;
+	*bottom = postgame_prompt.bottom;
+	*left = postgame_prompt.left;
+	*right = postgame_prompt.right;
+	*split = postgame_prompt.split;
+
+	return TRUE;
+}
+
+void game_engine_postgame_prompt_press(
+	short part)
+{
+	if (part >= 0 && part < (short)NUMBEROF(postgame_prompt.part_buttons) && game_engine_showing_postgame())
+		postgame_prompt.pressed_button = postgame_prompt.part_buttons[part];
+}
+
 static void postgame_draw_prompt(
 	rectangle2d const *bounds,
 	wchar_t const *prompt,
@@ -2958,6 +3080,7 @@ static void postgame_draw_prompt(
 	drawn = *bounds;
 	if (draw_string_and_hack_in_icons_end_x > POSTGAME_PROMPT_RIGHT)
 		drawn.x0 = (short)MAX(0, drawn.x0 - (draw_string_and_hack_in_icons_end_x - POSTGAME_PROMPT_RIGHT));
+	postgame_prompt_note(&drawn, prompt, (short)MIN(draw_string_and_hack_in_icons_end_x, POSTGAME_PROMPT_RIGHT));
 	draw_string_set_color(color);
 	draw_string_and_hack_in_icons(&drawn, NULL, NULL, 0, prompt, FALSE);
 }
@@ -3221,6 +3344,10 @@ void game_engine_post_rasterize_post_game(
 		draw_string_set_color(&prompt_color);
 
 		server = global_network_game_server_get();
+		/* port: on the touchscreen, buttons for the prompt's A and B
+		(port/linux/game/touch_postgame.c) */
+		if (touch_postgame_draw(font_index, server != NULL, &prompt_color))
+			return;
 		if (server)
 		{
 			bounds.x0 = 380;
@@ -3796,6 +3923,50 @@ static real game_engine_get_friendly_bonus(
 	return rating * 3.0f + 1.0f;
 }
 
+/* port: Teamplay Options' FORCE TEAM SPAWNS (game_variant_options): a team
+game other than CTF spawns a red or blue player as CTF does, only at the
+map's CTF starting locations, and only at his own team's. Not on a map with
+no CTF starting location for one of the teams, where his team would have
+nowhere to spawn */
+static long game_engine_get_type(
+	void);
+
+static boolean game_engine_force_team_spawns(
+	long player_index)
+{
+	struct player_datum *player = player_get(player_index);
+	boolean team_has_spawn[2] = { FALSE, FALSE };
+	short starting_location_count;
+	short starting_location_index;
+
+	if (!game_engine_running() ||
+		!game_engine_has_teams() ||
+		game_engine_get_type() == game_engine_ctf ||
+		!game_variant_options_get()->force_team_spawns ||
+		(player->team_index != _team_red && player->team_index != _team_blue))
+	{
+		return FALSE;
+	}
+
+	starting_location_count = player_get_starting_location_count();
+	for (starting_location_index = 0;
+		starting_location_index < starting_location_count;
+		starting_location_index++)
+	{
+		struct player_starting_location const *starting_location =
+			player_get_starting_location(starting_location_index);
+
+		if ((starting_location->team_index == _team_red ||
+				starting_location->team_index == _team_blue) &&
+			match_game_type(game_engine_ctf, 4, starting_location->game_types))
+		{
+			team_has_spawn[starting_location->team_index] = TRUE;
+		}
+	}
+
+	return team_has_spawn[_team_red] && team_has_spawn[_team_blue];
+}
+
 static real default_starting_location_rate_function(
 	long player_index,
 	struct player_starting_location const *starting_location)
@@ -3804,7 +3975,7 @@ static real default_starting_location_rate_function(
 	real rating = 1.0f;
 
 	if (game_engine_running() &&
-		game_engine_test_flag(0) &&
+		(game_engine_test_flag(0) || game_engine_force_team_spawns(player_index)) &&
 		player->team_index != starting_location->team_index)
 	{
 		rating = 0.0f;
@@ -4971,8 +5142,14 @@ netcode). Vehicles otherwise stay where they are left (the Xbox game's). */
 enum
 {
 	/* (a map places up to 80 vehicles, a Halo PC map more: those past this
-	never came back; 48 bytes each, outside the game state) */
+	never came back; 52 bytes each, outside the game state. A console that
+	plays only the Xbox's maps keeps 256: the most a retail or Halo CE+ map
+	places is b40's 74) */
+#ifdef HALO_CONSOLE_XBOX_MAP_SIZES
+	MAXIMUM_VEHICLE_HOMES = 256
+#else
 	MAXIMUM_VEHICLE_HOMES = 1024
+#endif
 };
 
 static struct
@@ -5643,6 +5820,9 @@ void game_engine_update_non_deterministic(
 		{
 		case game_engine_mode_postgame_rasterize_delay:
 			rumble_clear_all_now();
+			/* port: nothing of the last game's prompt (postgame_prompt) */
+			postgame_prompt.drawn = FALSE;
+			postgame_prompt.pressed_button = NONE;
 			game_engine_globals.postgame_timer -= delta_seconds;
 			if (game_engine_globals.postgame_timer <= 0.0f)
 				game_engine_globals.postgame_state = game_engine_mode_postgame_rasterize;
@@ -5654,16 +5834,24 @@ void game_engine_update_non_deterministic(
 			if (game_engine_globals.postgame_progress > 1.0f)
 				game_engine_globals.postgame_progress = 1.0f;
 
-			if (test_any_gamepad_button(0) || test_any_gamepad_button(12))
+			/* port: or a click or tap on the prompt's part
+			(postgame_prompt), or the touchscreen's buttons for A and B
+			(port/linux/game/touch_postgame.c) */
+			if (test_any_gamepad_button(0) || test_any_gamepad_button(12) ||
+				postgame_prompt.pressed_button == 0 ||
+				touch_postgame_pressed(_gamepad_analog_button_a))
 			{
 				if (global_network_game_server_get())
 				network_game_server_reset_to_pregame(
 					global_network_game_server_get());
 			}
-			else if (test_any_gamepad_button(1) || test_any_gamepad_button(13))
+			else if (test_any_gamepad_button(1) || test_any_gamepad_button(13) ||
+				postgame_prompt.pressed_button == 1 ||
+				touch_postgame_pressed(_gamepad_analog_button_b))
 			{
 				network_game_abort();
 			}
+			postgame_prompt.pressed_button = NONE;
 			break;
 		}
 	}
@@ -8138,6 +8326,13 @@ void game_engine_variant_cleanup(
 	struct game_variant original = *variant;
 
 	variant->human_readable_game_description[NUMBEROF(variant->human_readable_game_description) - 1] = 0;
+	/* port: the CTF/Slayer game type of an earlier build (10) is capture the
+	flag with Kills Score on (game_engine_ctf.c) */
+	if (variant->game_engine_index == 10)
+	{
+		variant->game_engine_index = game_engine_ctf;
+		variant->game_engine_variant.ctf.kills_score = TRUE;
+	}
 #ifdef HALO_GAME_BROWSER
 	/* port: and Bomb (game_engine_bomb.c), which only the builds with Delta
 	Peer have */
@@ -8167,12 +8362,25 @@ void game_engine_variant_cleanup(
 		variant->universal_variant.teams = TRUE;
 		variant->game_engine_variant.ctf.flag_at_home_to_score = !!variant->game_engine_variant.ctf.flag_at_home_to_score;
 		variant->game_engine_variant.ctf.single_flag_time = FLOOR(variant->game_engine_variant.ctf.single_flag_time, 0);
+		/* port: Kills Score, and a capture's points (25 where none are kept:
+		a gametype of a build without them) */
+		variant->game_engine_variant.ctf.kills_score = !!variant->game_engine_variant.ctf.kills_score;
+		if (variant->game_engine_variant.ctf.points_per_capture <= 0)
+			variant->game_engine_variant.ctf.points_per_capture = 25;
+		variant->game_engine_variant.ctf.points_per_capture =
+			PIN(variant->game_engine_variant.ctf.points_per_capture, 1, 100);
 		break;
 
 	case game_engine_slayer:
 		variant->game_engine_variant.slayer.no_death_bonus = !!variant->game_engine_variant.slayer.no_death_bonus;
 		variant->game_engine_variant.slayer.no_kill_penalty = !!variant->game_engine_variant.slayer.no_kill_penalty;
 		variant->game_engine_variant.slayer.kill_in_order = !!variant->game_engine_variant.slayer.kill_in_order;
+		break;
+
+	case game_engine_king:
+		/* port: Multi-Hill's hills at once: 2 to 5, else none */
+		if (variant->game_engine_variant.king.multi_hill < 2 || variant->game_engine_variant.king.multi_hill > 5)
+			variant->game_engine_variant.king.multi_hill = 0;
 		break;
 
 	case game_engine_oddball:
@@ -8474,8 +8682,14 @@ real game_engine_get_starting_location_rating(
 	long player_index,
 	struct player_starting_location const *starting_location)
 {
-	if (!match_game_type(game_engine_get_type(), 4, starting_location->game_types))
+	/* port: (or CTF's: game_engine_force_team_spawns) */
+	if (!match_game_type(
+		game_engine_force_team_spawns(player_index) ? game_engine_ctf : game_engine_get_type(),
+		4,
+		starting_location->game_types))
+	{
 		return 0.0f;
+	}
 
 	if (nearby_vehicle(player_index, starting_location))
 		return 0.0f;
@@ -9355,6 +9569,17 @@ static void internal_rasterize_target_name(
 		}
 	}
 
+	/* port: the name stays on screen for a few ticks after the player
+	under the crosshair is gone, and in that time they can leave the game:
+	their index then names no player, and reading their name crashed (crash
+	reports from 0.8.0b to 0.8.0h, all platforms). The name is dropped. */
+	if (player->player_display_index != NONE &&
+		!player_try_and_get(player->player_display_index))
+	{
+		player->player_display_index = NONE;
+		player->player_display_count = 0;
+	}
+
 	if (player->player_display_index != NONE)
 	{
 		struct player_datum *target_player = player_get(player->player_display_index);
@@ -10139,6 +10364,19 @@ void game_engine_postspawn_player_update(
 		long starting_fragmentation_grenade_count =
 			fragmentation_grenade_count;
 		long starting_plasma_grenade_count = 0;
+
+#ifdef HALO_CUSTOM_EDITION
+		/* port: Halo PC spawns a player with each grenade's multiplayer
+		spawn default from the globals (mp_spawn_default: 2 fragmentation
+		and 0 plasma grenades in its maps), at most the counts above, where
+		the Xbox gives every fragmentation grenade a player can carry. A
+		Custom Edition map plays as Halo PC's */
+		if (cache_file_tags_are_ce())
+		{
+			starting_fragmentation_grenade_count = fragmentation_grenade->mp_spawn_default;
+			starting_plasma_grenade_count = plasma_grenade->mp_spawn_default;
+		}
+#endif
 
 		/* port: a custom loadout's weapons (game_variant_options) */
 		if (game_variant_options_get()->loadout == _loadout_custom)

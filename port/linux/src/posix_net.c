@@ -32,6 +32,7 @@ with the host ABI.
 #include <sys/ioctl.h>
 #endif
 #ifdef __APPLE__
+#include <CoreGraphics/CGEventSource.h>
 #include <crt_externs.h>
 #include <uuid/uuid.h>
 #include <stdlib.h>
@@ -189,7 +190,14 @@ static int fail(void)
 	return -1;
 }
 
-#ifdef __APPLE__
+/* A host whose struct sockaddr starts with sa_len (the BSDs'), not with the
+family as Winsock's does and Linux's: the game's addresses are converted at the
+boundary (to_host_address, from_host_address). port/unix says it for its hosts. */
+#if defined(__APPLE__) && !defined(HALO_SOCKADDR_LEN)
+#define HALO_SOCKADDR_LEN 1
+#endif
+
+#ifdef HALO_SOCKADDR_LEN
 static int to_host_address(const void *address, int address_length,
 	struct sockaddr_storage *host_address, socklen_t *host_length)
 {
@@ -396,7 +404,7 @@ int posix_socket_bind(int socket, const void *address, int address_length)
 #ifdef HALO_BROWSER
 	return succeed(web_net_bind(socket, address, address_length));
 #else
-#ifdef __APPLE__
+#ifdef HALO_SOCKADDR_LEN
 	struct sockaddr_storage host_address;
 	socklen_t host_length = 0;
 
@@ -441,7 +449,7 @@ int posix_socket_connect(int socket, const void *address, int address_length)
 	return succeed(web_net_connect(socket, address, address_length));
 #else
 	int result;
-#ifdef __APPLE__
+#ifdef HALO_SOCKADDR_LEN
 	struct sockaddr_storage host_address;
 	socklen_t host_length = 0;
 
@@ -494,7 +502,7 @@ int posix_socket_accept(int socket, void *address, int *address_length)
 
 	if (address_length)
 		*address_length = (int)length;
-#ifdef __APPLE__
+#ifdef HALO_SOCKADDR_LEN
 	if (result >= 0 && address && address_length)
 		from_host_address(address, address_length);
 #endif
@@ -502,13 +510,37 @@ int posix_socket_accept(int socket, void *address, int *address_length)
 #endif
 }
 
+/* the bytes this process has sent and received on its sockets, for the
+server's health reports (game_events.c): every thread's, so added atomically */
+static struct
+{
+	/* (8-byte aligned: a 32-bit x86 build otherwise aligns them to 4 and calls
+	libatomic, which isn't linked, instead of using cmpxchg8b) */
+	unsigned long long sent __attribute__((aligned(8)));
+	unsigned long long received __attribute__((aligned(8)));
+} traffic;
+
+static int traffic_sent(int result)
+{
+	if (result > 0)
+		__atomic_fetch_add(&traffic.sent, (unsigned long long)result, __ATOMIC_RELAXED);
+	return result;
+}
+
+static int traffic_received(int result)
+{
+	if (result > 0)
+		__atomic_fetch_add(&traffic.received, (unsigned long long)result, __ATOMIC_RELAXED);
+	return result;
+}
+
 int posix_socket_send(int socket, const void *buffer, int length, int flags)
 {
 	N3DS_CALL("send", NULL);
 #ifdef HALO_BROWSER
-	return succeed(web_net_send(socket, buffer, length, flags));
+	return traffic_sent(succeed(web_net_send(socket, buffer, length, flags)));
 #else
-	return succeed((int)send(socket, buffer, (size_t)length, flags | MSG_NOSIGNAL));
+	return traffic_sent(succeed((int)send(socket, buffer, (size_t)length, flags | MSG_NOSIGNAL)));
 #endif
 }
 
@@ -520,7 +552,7 @@ int posix_socket_sendto(int socket, const void *buffer, int length, int flags,
 	return succeed(web_net_sendto(socket, buffer, length, flags, address, address_length));
 #else
 	int result;
-#ifdef __APPLE__
+#ifdef HALO_SOCKADDR_LEN
 	struct sockaddr_storage host_address;
 	socklen_t host_length = 0;
 
@@ -532,7 +564,7 @@ int posix_socket_sendto(int socket, const void *buffer, int length, int flags,
 		{
 			result = (int)send(socket, buffer, (size_t)length, flags | MSG_NOSIGNAL);
 		}
-		return succeed(result);
+		return traffic_sent(succeed(result));
 	}
 #endif
 	result = (int)sendto(socket, buffer, (size_t)length, flags | MSG_NOSIGNAL,
@@ -541,7 +573,7 @@ int posix_socket_sendto(int socket, const void *buffer, int length, int flags,
 	{
 		result = (int)send(socket, buffer, (size_t)length, flags | MSG_NOSIGNAL);
 	}
-	return succeed(result);
+	return traffic_sent(succeed(result));
 #endif
 }
 
@@ -549,9 +581,9 @@ int posix_socket_recv(int socket, void *buffer, int length, int flags)
 {
 	N3DS_CALL("recv", NULL);
 #ifdef HALO_BROWSER
-	return succeed(web_net_recv(socket, buffer, length, flags));
+	return traffic_received(succeed(web_net_recv(socket, buffer, length, flags)));
 #else
-	return succeed((int)recv(socket, buffer, (size_t)length, flags));
+	return traffic_received(succeed((int)recv(socket, buffer, (size_t)length, flags)));
 #endif
 }
 
@@ -593,11 +625,11 @@ int posix_socket_recvfrom(int socket, void *buffer, int length, int flags,
 		last_error = WSAEMSGSIZE;
 		return -1;
 	}
-#ifdef __APPLE__
+#ifdef HALO_SOCKADDR_LEN
 	if (result >= 0 && address && address_length)
 		from_host_address(address, address_length);
 #endif
-	return succeed(result);
+	return traffic_received(succeed(result));
 #endif
 }
 
@@ -790,7 +822,7 @@ int posix_socket_getsockname(int socket, void *address, int *address_length)
 
 	if (address_length)
 		*address_length = (int)length;
-#ifdef __APPLE__
+#ifdef HALO_SOCKADDR_LEN
 	if (result >= 0 && address && address_length)
 		from_host_address(address, address_length);
 #endif
@@ -808,7 +840,7 @@ int posix_socket_getpeername(int socket, void *address, int *address_length)
 
 	if (address_length)
 		*address_length = (int)length;
-#ifdef __APPLE__
+#ifdef HALO_SOCKADDR_LEN
 	if (result >= 0 && address && address_length)
 		from_host_address(address, address_length);
 #endif
@@ -1284,6 +1316,9 @@ int posix_command_line_argument(int index, char *buffer, posix_ulong size)
 	(void)buffer;
 	(void)size;
 	return 0;
+#elif defined(HALO_UNIX_PLATFORM_NAME)
+	/* (the other Unix hosts': port/unix/src/unix_host.c) */
+	return halo_unix_command_line_argument(index, buffer, size);
 #else
 	char command_line[4096];
 	ssize_t length;
@@ -1306,6 +1341,15 @@ int posix_command_line_argument(int index, char *buffer, posix_ulong size)
 	}
 	snprintf(buffer, size, "%s", command_line + offset);
 	return 1;
+#endif
+}
+
+int posix_shift_key_held(void)
+{
+#ifdef __APPLE__
+	return (CGEventSourceFlagsState(kCGEventSourceStateCombinedSessionState) & kCGEventFlagMaskShift) ? 1 : 0;
+#else
+	return -1;
 #endif
 }
 
@@ -1671,3 +1715,9 @@ int posix_hardware_id_source(char *text, int size)
 	return text[0] != 0;
 }
 #endif
+
+void posix_socket_traffic(unsigned long long *sent, unsigned long long *received)
+{
+	*sent = __atomic_load_n(&traffic.sent, __ATOMIC_RELAXED);
+	*received = __atomic_load_n(&traffic.received, __ATOMIC_RELAXED);
+}

@@ -48,6 +48,9 @@ HALO_BUILD_FLAVOR.
 #define BUILD_IDENTITY_PLATFORM "Windows"
 #elif defined(__APPLE__)
 #define BUILD_IDENTITY_PLATFORM "macOS"
+#elif defined(HALO_UNIX_PLATFORM_NAME)
+/* (the other Unix hosts': tools/unix64_build.py) */
+#define BUILD_IDENTITY_PLATFORM HALO_UNIX_PLATFORM_NAME
 #else
 #define BUILD_IDENTITY_PLATFORM "Linux"
 #endif
@@ -56,6 +59,9 @@ HALO_BUILD_FLAVOR.
 #if defined(__wasm__)
 #define BUILD_IDENTITY_ARCHITECTURE "wasm32"
 #elif defined(HALO_3DS) || defined(HALO_N3DS)
+#define BUILD_IDENTITY_ARCHITECTURE "arm"
+#elif defined(__arm__)
+/* (the native 32-bit Android build's, for a 32-bit-only Android) */
 #define BUILD_IDENTITY_ARCHITECTURE "arm"
 #elif defined(__aarch64__) || defined(__arm64__) || defined(HALO_ANDROID)
 #define BUILD_IDENTITY_ARCHITECTURE "arm64"

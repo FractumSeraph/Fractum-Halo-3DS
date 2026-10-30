@@ -459,6 +459,7 @@ symbols in this file:
 #include "interface/ui_widget.h"
 #include "main/main.h"
 #include "math/real_math.h"
+#include "memory/data.h"
 #include "networking/network_client_manager.h"
 #include "networking/network_connection.h"
 #include "networking/network_game_globals.h"
@@ -469,10 +470,12 @@ symbols in this file:
 #include "networking/network_server_manager.h"
 #include "networking/network_server_manager_internal.h"
 #include "networking/network_server_message_handler.h"
+#include "network_link.h" /* port: port/linux/game/network_link.c */
 #include "saved games/player_profile.h"
 #include "text/unicode.h"
 
 #include "cache/cache_files.h"
+#include "halo_map_families.h" /* port: map_family_parse */
 #ifdef HALO_GAME_BROWSER
 #include "../../port/linux/src/browser.h"
 #endif
@@ -482,6 +485,8 @@ symbols in this file:
 #include "server_director.h" /* port: port/linux/game/server_director.c */
 #include "bots.h" /* port: port/linux/game/bots.c */
 #include "game_modes.h" /* port: port/linux/game/game_modes.c */
+
+#include <time.h>
 
 /* port: the map the hosted game is on, seeded for players joining it
 (port/linux/src/map_torrents.c) */
@@ -496,8 +501,9 @@ void p2p_set_game_listing(const char *name, const char *map, const char *gametyp
 protocol, which it leaves as it is: the hosted game's machines and players
 told to it each idle, and the game gone */
 static void network_game_server_delta_frame(struct network_game_server *server);
-static void network_game_server_bomb_refusals(struct network_game_server *server);
-static boolean network_game_server_bomb_ready(struct network_game_server *server);
+static boolean network_game_server_delta_only(struct network_game_server *server);
+static void network_game_server_delta_refusals(struct network_game_server *server);
+static boolean network_game_server_delta_ready(struct network_game_server *server);
 int delta_peer_game_machine_pending(int machine_index);
 void delta_peer_game_stop(int host);
 #endif
@@ -850,15 +856,19 @@ static boolean network_game_server_countdown_slowed[MAXIMUM_NETWORK_MACHINE_COUN
 /* port/linux/game/network_distributed.c's (the host's bans: bans.txt; a
 ban's end, 0 for ever; an internet play peer's real address for its
 stand-in) */
-boolean network_distributed_banned(unsigned long address, char const *hardware_id);
+boolean network_distributed_banned(unsigned long address, char const *hardware_id, char const *discord_id);
 unsigned long network_distributed_ban(long machine_index, unsigned long address, char const *names);
+void network_distributed_ban_until(long machine_index, unsigned long address, char const *names, char const *reason,
+	unsigned long until);
 void network_distributed_kick(char const *names);
 unsigned long distributed_real_address(unsigned long address);
 /* port/linux/game/network_votekick.c's (the players' votes to kick) */
 void network_votekick_machine_joined(long machine_index);
+void network_afk_machine_joined(long machine_index);
 boolean network_votekick_kept_out(unsigned long address, char const *hardware_id);
 /* port/linux/game/network_voice.c's (voice chat: each machine's key) */
 void network_voice_machine_joined(long machine_index);
+void network_distributed_kick_reason(char const *names, char const *reason);
 /* port/linux/src/p2p.c's */
 enum
 {
@@ -1049,6 +1059,32 @@ short network_game_server_matching_player_names(
 	return count;
 }
 
+/* port: the names of every player of a machine, "A, B" (the host's ban and
+kick warnings and bans.txt's players=) */
+static void network_game_server_machine_player_names(
+	struct network_game_server *server,
+	long machine_index,
+	char *names,
+	long names_size)
+{
+	long index;
+
+	names[0] = 0;
+	for (index = 0; index < MAXIMUM_NETWORK_PLAYER_COUNT; index++)
+	{
+		struct network_player const *player = &server->game.players[index];
+		char name[NETWORK_GAME_SERVER_NAME_TEXT_SIZE];
+
+		if (!network_player_is_valid(player) || player->machine_index != machine_index)
+			continue;
+		network_game_server_player_name_text(player, name, sizeof(name));
+		if (names[0] && csstrlen(names) + 2 < names_size)
+			csstrcat(names, ", ");
+		if (csstrlen(names) + csstrlen(name) < names_size)
+			csstrcat(names, name);
+	}
+}
+
 /* port: the host's ban and kick commands' player: the other machine of the
 player of the name (in either case; else the one player whose name begins
 with it), and the names of that machine's players (each command's warnings
@@ -1127,20 +1163,7 @@ static boolean network_game_server_named_machine(
 		console_warning("%s: not a player of the host's own machine, nor one not joined", command);
 		return FALSE;
 	}
-	/* (every player of that machine, named) */
-	for (index = 0; index < MAXIMUM_NETWORK_PLAYER_COUNT; index++)
-	{
-		struct network_player const *player = &server->game.players[index];
-		char name[NETWORK_GAME_SERVER_NAME_TEXT_SIZE];
-
-		if (!network_player_is_valid(player) || player->machine_index != *machine_index)
-			continue;
-		network_game_server_player_name_text(player, name, sizeof(name));
-		if (names[0] && csstrlen(names) + 2 < names_size)
-			csstrcat(names, ", ");
-		if (csstrlen(names) + csstrlen(name) < names_size)
-			csstrcat(names, name);
-	}
+	network_game_server_machine_player_names(server, *machine_index, names, names_size);
 	return TRUE;
 }
 
@@ -1255,6 +1278,73 @@ boolean network_game_server_kick_machine_of_player(
 	return TRUE;
 }
 
+/* port: whether a machine is one the host may kick or ban: another
+machine's, joined to the game (never the host's own) */
+static boolean network_game_server_host_may_drop(
+	struct network_game_server *server,
+	long machine_index)
+{
+	return server && VALID_INDEX(machine_index, MAXIMUM_NETWORK_MACHINE_COUNT) &&
+		network_game_server_client_machine_is_joined_to_game(server, &server->client_machines[machine_index]) &&
+		!network_game_server_client_machine_is_local(server, &server->client_machines[machine_index]);
+}
+
+/* port: the host's kick from its Moderation screen (moderation_screen.c):
+as the kick command, of a machine rather than a name, with a reason (NULL
+or empty: none) */
+boolean network_game_server_host_kick_machine(
+	long machine_index,
+	char const *reason)
+{
+	struct network_game_server *server = global_network_game_server_get();
+	char names[96];
+
+	if (!network_game_server_host_may_drop(server, machine_index))
+		return FALSE;
+	network_game_server_machine_player_names(server, machine_index, names, sizeof(names));
+	network_distributed_kick_reason(names, reason);
+	network_game_server_kick_pending[machine_index] = _kick_rejoinable;
+	network_game_server_kick_rejection_codes[machine_index] = _rejection_code_blacklisted_machine;
+	return TRUE;
+}
+
+/* port: the host's ban from its Moderation screen: as the ban command, of a
+machine, for so many minutes (0: for ever, as the command's), with a reason
+(NULL or empty: none); bans.txt's line as the dedicated server's sv_ban
+writes it, "banned by the host[ for <time>][: <reason>]" */
+boolean network_game_server_host_ban_machine(
+	long machine_index,
+	long minutes,
+	char const *reason)
+{
+	struct network_game_server *server = global_network_game_server_get();
+	char names[96];
+	char text[128];
+	char duration[32] = "";
+	unsigned long until = 0;
+
+	if (!network_game_server_host_may_drop(server, machine_index))
+		return FALSE;
+	network_game_server_machine_player_names(server, machine_index, names, sizeof(names));
+	if (minutes > 0)
+	{
+		if (minutes % (24 * 60) == 0)
+			snprintf(duration, sizeof(duration), " for %ldd", minutes / (24 * 60));
+		else if (minutes % 60 == 0)
+			snprintf(duration, sizeof(duration), " for %ldh", minutes / 60);
+		else
+			snprintf(duration, sizeof(duration), " for %ldm", minutes);
+		until = (unsigned long)time(NULL) + (unsigned long)minutes * 60UL;
+	}
+	snprintf(text, sizeof(text), "banned by the host%s%s%s", duration, reason && reason[0] ? ": " : "",
+		reason && reason[0] ? reason : "");
+	network_distributed_ban_until(machine_index, network_game_server_client_machine_addresses[machine_index], names,
+		text, until);
+	network_game_server_kick_pending[machine_index] = minutes > 0 ? _kick_rejoinable : _kick_kept_out;
+	network_game_server_kick_rejection_codes[machine_index] = _rejection_code_blacklisted_machine;
+	return TRUE;
+}
+
 /* port: a client machine's hardware id as it told it joining (its join
 request: network_server_message_handler.c), kept as hex only */
 void network_game_server_set_machine_hardware_id(
@@ -1266,6 +1356,18 @@ void network_game_server_set_machine_hardware_id(
 		p2p_hardware_id_sanitize(network_game_server_hardware_ids[machine->machine_index],
 			P2P_HARDWARE_ID_SIZE, hardware_id);
 	}
+}
+
+/* port: the Discord pass and proof a joining machine showed (its join
+request), for its door (network_link.c) */
+void network_game_server_set_machine_link(
+	struct network_game_server_client_machine *machine,
+	void const *pass,
+	void const *proof,
+	char const *name)
+{
+	if (machine && VALID_INDEX(machine->machine_index, MAXIMUM_NETWORK_MACHINE_COUNT))
+		network_link_set_machine_pass(machine->machine_index, pass, proof, name);
 }
 
 /* port: ... and as the distributed netcode logs it (empty if none told) */
@@ -1477,6 +1579,9 @@ void network_game_server_dispose(
 	network_game_server_cooperative_next_map[0] = 0;
 	/* port: its map no longer seeded as the host's */
 	map_torrents_playing(NULL, 0, 1);
+	/* port: hosting ends, and with it the hold on the number announced (a
+newer one the legacy table proves is taken: port/linux/src/delta.c) */
+	delta_legacy_hold(FALSE);
 
 	switch (server->state)
 	{
@@ -2420,6 +2525,8 @@ address, real address or hardware id) */
 		unsigned long real_address;
 		char const *hardware_id = VALID_INDEX(machine_index, MAXIMUM_NETWORK_MACHINE_COUNT) ?
 			network_game_server_hardware_ids[machine_index] : "";
+		/* (port: a verified Discord account's id, network_link.c) */
+		char discord_id[32] = "";
 		long index;
 
 		network_connection_get_address(machine->connection, &address, FALSE);
@@ -2438,14 +2545,22 @@ address, real address or hardware id) */
 				return FALSE;
 			}
 		}
-		/* (and not one the host banned: its address or hardware id in
-		bans.txt) */
+		/* (the Discord account it shows checked, which its bans may name:
+		network_link.c) */
+		if (!network_game_server_client_machine_is_local(server, machine) &&
+			address.address.long_words[0] != IPV4_LOOPBACK_ADDRESS)
+		{
+			network_link_check_pass(machine_index, address.address.long_words[0]);
+			network_link_machine_verified(machine_index, discord_id, sizeof(discord_id), NULL, 0);
+		}
+		/* (and not one the host banned: its address, hardware id or verified
+		Discord account in bans.txt) */
 		/* (the host's own client, which connects from 127.0.0.1, never) */
 		if (!network_game_server_client_machine_is_local(server, machine) &&
 			address.address.long_words[0] != IPV4_LOOPBACK_ADDRESS &&
 			network_distributed_banned(address.address.long_words[0],
 				VALID_INDEX(machine_index, MAXIMUM_NETWORK_MACHINE_COUNT) ?
-					network_game_server_hardware_ids[machine_index] : ""))
+					network_game_server_hardware_ids[machine_index] : "", discord_id))
 		{
 			network_event("refusing a machine @ %s: banned (bans.txt, or a shared ban list: shared_bans.txt)", transport_address_to_string(&address));
 			network_game_server_refusal_code = _rejection_code_blacklisted_machine;
@@ -2460,6 +2575,27 @@ address, real address or hardware id) */
 			network_event("refusing a machine @ %s: kicked by a vote", transport_address_to_string(&address));
 			network_game_server_refusal_code = _rejection_code_blacklisted_machine;
 			return FALSE;
+		}
+		/* (nor, on a dedicated server, one from a VPN's address without a
+		Discord account that lets it in: network_link.c) */
+		{
+			short refusal = network_link_door(network_game_server_get_game(server), machine_index, real_address,
+				network_game_server_client_machine_is_local(server, machine) ||
+					address.address.long_words[0] == IPV4_LOOPBACK_ADDRESS);
+
+			if (refusal == NONE)
+			{
+				/* (nor one past the server's limit of machines from one
+				address) */
+				refusal = network_link_address_limit(network_game_server_get_game(server), machine_index,
+					real_address, network_game_server_client_machine_is_local(server, machine) ||
+						address.address.long_words[0] == IPV4_LOOPBACK_ADDRESS);
+			}
+			if (refusal != NONE)
+			{
+				network_game_server_refusal_code = refusal;
+				return FALSE;
+			}
 		}
 	}
 	/* (a kick asked for the slot's machine before is not this one's) */
@@ -2528,6 +2664,7 @@ address, real address or hardware id) */
 				network_game_server_client_machine_join_times[machine_index] = system_milliseconds();
 				/* (its time played for votes starts over) */
 				network_votekick_machine_joined(machine_index);
+				network_afk_machine_joined(machine_index);
 				/* (and its voice chat key) */
 				network_voice_machine_joined(machine_index);
 			}
@@ -2919,11 +3056,12 @@ void network_game_server_update_ticks(
 			}
 
 #ifdef HALO_GAME_BROWSER
-			/* port: a Bomb game type adds no player of a machine still in its
-			Delta handshake's window: it loads nothing of the game until it
-			is known to have the bomb capability (else it is dropped,
-			network_game_server_bomb_refusals) */
-			if (server->game.variant.game_engine_index == game_engine_bomb)
+			/* port: a Bomb game type, or a pack's map of an unlisted build,
+			adds no player of a machine still in its Delta handshake's
+			window: it loads nothing of the game until it is known to have
+			what the game needs (else it is dropped,
+			network_game_server_delta_refusals) */
+			if (network_game_server_delta_only(server))
 			{
 				long machine_index = server->queued_player_valid ? server->queued_player.machine_index :
 					server->waiting_player_count > 0 ? server->waiting_players[0].machine_index : NONE;
@@ -3138,6 +3276,77 @@ static boolean network_game_server_player_among(
 			return TRUE;
 	}
 	return FALSE;
+}
+
+/* whether a valid one of the players is of the player's machine and
+controller (a client finds the player to remove by those alone) */
+static boolean network_game_server_player_seat_among(
+	struct network_player const *player,
+	struct network_player *players,
+	long count)
+{
+	long index;
+
+	for (index = 0; index < count; index++)
+	{
+		if (network_player_is_valid(&players[index]) &&
+			players[index].machine_index == player->machine_index &&
+			players[index].controller_index == player->controller_index)
+		{
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+/* port: a machine joining the game in progress after a player quit it: the
+quitter's datum stays until the game ends (on the scoreboard, his kills and
+deaths), but he was not in the settings the machine was started with, and
+it lets go of the statistics of a player it does not have. So it is told of
+him as a machine there at his quit was: added at his slot, and quit at once
+(a later player in that slot takes it, network_game_spawn_player). Not one
+whose machine and controller a player of the game or the joining machine
+has now, whom the quit would name */
+static void network_game_server_tell_late_joiner_of_quitters(
+	struct network_game_server *server,
+	struct network_game_server_client_machine *machine,
+	struct network_player *started,
+	long count)
+{
+	struct data_iterator iterator;
+	struct player_datum *player;
+
+	if (!player_data || !player_data->valid)
+		return;
+	data_iterator_new(&iterator, player_data);
+	while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+	{
+		long slot = DATUM_INDEX_TO_ABSOLUTE_INDEX(iterator.datum_index);
+		struct network_player quitter = player->network_player_data;
+		struct message_server_remove_player_ingame remove_player;
+		void *message;
+
+		if (slot >= count || player->quit_out_of_game_time == NONE ||
+			network_player_is_valid(&server->game.players[slot]) ||
+			!network_player_is_valid(&quitter) || quitter.machine_index == machine->machine_index ||
+			network_game_server_player_seat_among(&quitter, server->game.players, count) ||
+			network_game_server_player_seat_among(&quitter, started, count))
+		{
+			continue;
+		}
+		quitter.player_list_index = (char)slot;
+		message = create_network_game_message(_message_server_add_player_ingame, &quitter, sizeof(quitter));
+		if (!message || !network_game_server_send_message_to_client_machine(server, machine, message))
+			continue;
+		remove_player.player = quitter;
+		remove_player.reason = player->quit_out_of_game_time;
+		message = create_network_game_message(_message_server_remove_player_ingame, &remove_player,
+			sizeof(remove_player));
+		if (message)
+			network_game_server_send_message_to_client_machine(server, machine, message);
+		network_event("told machine #%d of a player who quit before it joined (slot %ld, machine #%d / controller #%d)",
+			machine->machine_index, slot, quitter.machine_index, quitter.controller_index);
+	}
 }
 
 /* port: machines joining the game in progress whose start waits for their
@@ -3444,6 +3653,8 @@ void network_game_server_late_joiner_loaded(
 		long count = (long)NUMBEROF(server->game.players);
 		long index;
 
+		/* the players who quit before it was started */
+		network_game_server_tell_late_joiner_of_quitters(server, machine, started, count);
 		/* the players gone while it loaded (first: a player's machine index
 		may be a new machine's, which a player added is told apart from by
 		that only) */
@@ -3825,8 +4036,9 @@ boolean server_ok_to_countdown(
 	the map say, holds no countdown; it joins through the late-join queue.
 	Whether each has one is still logged) */
 #ifdef HALO_GAME_BROWSER
-	/* port: a Bomb game type waits for its machines' Delta handshakes */
-	boolean bomb_ready = network_game_server_bomb_ready(server);
+	/* port: a Bomb game type, or a pack's map of an unlisted build, waits
+	for its machines' Delta handshakes */
+	boolean bomb_ready = network_game_server_delta_ready(server);
 #else
 	boolean bomb_ready = TRUE;
 #endif
@@ -4622,10 +4834,13 @@ void network_game_server_update_countdown(
 				}
 				else
 				{
-					if (network_game_should_accept_remote_connections() == FALSE ||
+					/* port: a dedicated server's countdown is its director's to
+					start (server.lobby_seconds, port/linux/game/server_director.c) */
+					if (!halo_server_mode() &&
+						(network_game_should_accept_remote_connections() == FALSE ||
 						network_game_solo_game() ||
 						network_game_server_get_client_machine_count(server) > 1 ||
-						server_players_on_one_machine(server))
+						server_players_on_one_machine(server)))
 					{
 						unsigned long countdown;
 
@@ -4680,6 +4895,18 @@ boolean network_game_server_client_machine_may_slow_countdown(
 	}
 	network_game_server_countdown_slowed[machine->machine_index] = TRUE;
 	return TRUE;
+}
+
+/* port: a machine's faster (the lobby's START NOW): the host's own starts the
+game at once, a client machine's takes five seconds off the countdown (the
+Xbox game took five seconds off for any machine) */
+short network_game_server_client_machine_faster_event(
+	struct network_game_server *server,
+	struct network_game_server_client_machine *machine)
+{
+	if (network_game_server_client_machine_is_local(server, machine))
+		return _network_game_server_countdown_event_start_immediately;
+	return _network_game_server_countdown_event_player_joined;
 }
 
 /* ---------- private code */
@@ -4979,6 +5206,16 @@ void network_game_server_port_set_cooperative_player_collisions(
 	SET_FLAG(server->game.cooperative_flags, _network_game_cooperative_no_player_collisions_bit, !player_collisions);
 	if (server->state == _network_game_server_state_pregame && !network_game_server_send_game_data_pregame(server))
 		network_event("network_game_server_port_set_cooperative_player_collisions() failed to send updated game settings to clients");
+}
+
+void network_game_server_port_set_cooperative_dedicated(
+	boolean dedicated)
+{
+	struct network_game_server *server = global_network_game_server_get();
+
+	if (!server)
+		return;
+	SET_FLAG(server->game.cooperative_flags, _network_game_cooperative_dedicated_bit, dedicated);
 }
 
 void network_game_server_port_set_cooperative_ally_friendly_fire(
@@ -6074,18 +6311,34 @@ static void network_game_server_delta_frame(
 (none for any other game) */
 	game_engine_bomb_host_traits(&server->game.variant);
 	delta_peer_game_host_frame(machines, count, player_machines);
-	network_game_server_bomb_refusals(server);
+	network_game_server_delta_refusals(server);
 }
 
 void network_distributed_host_notice(char const *text);
 
+/* whether the game is played only between Delta machines: a Bomb game type,
+or a pack's map of a build the cache files do not list (cache_files.c,
+cache_files_map_needs_delta) */
+static boolean network_game_server_delta_only(
+	struct network_game_server *server)
+{
+	return server->game.variant.game_engine_index == game_engine_bomb ||
+		cache_files_map_needs_delta(server->game.map.name);
+}
+
 /* Bomb game types (docs/bomb.md) are played only between machines that agree
 to Delta Peer's bomb capability: an OpenCE machine (or an older build of
-ours) would read the game as Race and refuse its state. Such a machine is
-dropped once its handshake's window is over, in the lobby or a game in
-progress (it may join again: the next game may be another), with a notice;
-the host plays on. Nothing happens in any other game */
-static void network_game_server_bomb_refusals(
+ours) would read the game as Race and refuse its state. A pack's map of a
+build the cache files do not list (NHE's, say) is played only between Delta
+machines: each checks that its file is the host's (the game record's
+fingerprint, Delta Peer's MAP), where an OpenCE machine cannot say which
+file it has, and one of other tags would desync (the object and damage
+messages name definitions by tag index). Every Delta build offers the
+platform capability, consoles' too. Such a machine is dropped once its
+handshake's window is over, in the lobby or a game in progress (it may join
+again: the next game may be another), with a notice; the host plays on.
+Nothing happens in any other game */
+static void network_game_server_delta_refusals(
 	struct network_game_server *server)
 {
 	static unsigned long refused_addresses[MAXIMUM_NETWORK_MACHINE_COUNT];
@@ -6095,8 +6348,10 @@ static void network_game_server_bomb_refusals(
 	{
 		struct network_game_server_client_machine *machine = &server->client_machines[index];
 		unsigned long address;
+		boolean bomb = server->game.variant.game_engine_index == game_engine_bomb;
+		boolean pack_map = !bomb && cache_files_map_needs_delta(server->game.map.name);
 
-		if (server->game.variant.game_engine_index != game_engine_bomb ||
+		if ((!bomb && !pack_map) ||
 			!network_game_server_client_machine_is_joined_to_game(server, machine) ||
 			network_game_server_client_machine_is_local(server, machine) ||
 			machine->machine_index < 0 || machine->machine_index >= MAXIMUM_NETWORK_MACHINE_COUNT)
@@ -6105,11 +6360,13 @@ static void network_game_server_bomb_refusals(
 			continue;
 		}
 		/* (bomb_traits: a Grifball test build 2 or 3 says TRAITS as 18) */
-		if (!delta_peer_game_machine_lacks(machine->machine_index, _delta_capability_bomb) &&
+		if (bomb && !delta_peer_game_machine_lacks(machine->machine_index, _delta_capability_bomb) &&
 			!delta_peer_game_machine_lacks(machine->machine_index, _delta_capability_bomb_traits))
 		{
 			continue;
 		}
+		if (pack_map && !delta_peer_game_machine_lacks(machine->machine_index, _delta_capability_platform))
+			continue;
 		address = (unsigned long)network_game_server_machine_ipv4_address(server, machine->machine_index);
 		/* (once: the drop takes effect when the server next looks at its
 		machines) */
@@ -6144,7 +6401,18 @@ static void network_game_server_bomb_refusals(
 				}
 				names[length] = 0;
 			}
+			if (pack_map)
+			{
+				char file[64];
+
+				map_family_parse(server->game.map.name, file, sizeof(file));
+				snprintf(notice, sizeof(notice), "%s cannot play %s: this map plays only with Chupathingy players",
+					names[0] ? names : "A player", file);
+				network_event("map: client machine #%ld is not a Delta machine, and %s is a pack's map of an "
+					"unlisted build: dropped", (long)machine->machine_index, server->game.map.name);
+			}
 			/* (the game type's own name, in ASCII: Bomb, Grifball) */
+			else
 			{
 				char gametype[16];
 				short character;
@@ -6159,22 +6427,23 @@ static void network_game_server_bomb_refusals(
 				gametype[character] = 0;
 				snprintf(notice, sizeof(notice), "%s cannot play %s: it is played only between Chupathingy builds with Bomb",
 					names[0] ? names : "A player", gametype[0] ? gametype : "Bomb");
+				network_event("bomb: client machine #%ld has no bomb capability (OpenCE, or an older build): dropped",
+					(long)machine->machine_index);
 			}
-			network_event("bomb: client machine #%ld has no bomb capability (OpenCE, or an older build): dropped",
-				(long)machine->machine_index);
 			network_distributed_host_notice(notice);
 		}
 	}
 }
 
-/* whether a Bomb game type's lobby may count down: no machine still in its
+/* whether a lobby played only between Delta machines (a Bomb game type, a
+pack's map of an unlisted build) may count down: no machine still in its
 Delta handshake's window (it may yet be one to drop) */
-static boolean network_game_server_bomb_ready(
+static boolean network_game_server_delta_ready(
 	struct network_game_server *server)
 {
 	long index;
 
-	if (server->game.variant.game_engine_index != game_engine_bomb)
+	if (!network_game_server_delta_only(server))
 		return TRUE;
 	for (index = 0; index < MAXIMUM_NETWORK_MACHINE_COUNT; index++)
 	{

@@ -34,6 +34,23 @@ server_director.c) looks and installs by the same path, without a window
 and without starting the new build (updater_server_*): the same release
 list, signatures and SHA-256 are checked, with the fork's own key.
 
+Run as an AppImage (Linux: update_appimage_path), the game is that one file,
+mounted read-only: Yes downloads the AppImage the release's signed list
+names for this platform and configuration (kind "appimage") beside it (into
+update.partial/), checks its size and SHA-256 against the list's, and puts
+it in place of the AppImage file, by that file's own name (the old one
+becomes <name>.old, deleted at the next start), executable as it was, and
+starts it. Nothing is unpacked: a release without a list, or whose list has
+no AppImage, is not installed over an AppImage (its zip would only fill the
+AppImage's folder with a second copy of the game), and the player is told to
+download the new AppImage.
+
+A packaged install (packaged_install.h: the AUR's chupathingy-bin, marked
+by the build, HALO_PACKAGED or a file named "packaged" beside the
+executable) is its package manager's to update: nothing is downloaded or
+asked, and a newer release only puts "update Chupathingy with your package
+manager" on the main menu's version line and in the log.
+
 The system side (the HTTPS download, the files, starting the new game) is
 update.h's: posix_update.c on Linux, win32_update.c on Windows.
 
@@ -107,6 +124,11 @@ looks for a new version and offers its download page) */
 #elif defined(__APPLE__)
 #define UPDATE_PLATFORM "macos"
 #define PATH_SEPARATOR "/"
+#elif defined(__FreeBSD__) && defined(HALO_64BIT)
+/* (the FreeBSD build's own download, ninja freebsd64: tools/unix64_build.py;
+never the Linux one) */
+#define UPDATE_PLATFORM "freebsd64"
+#define PATH_SEPARATOR "/"
 #elif defined(HALO_64BIT)
 /* (the 64-bit Linux build's own download, ninja linux64: tools/ci_build.py) */
 #define UPDATE_PLATFORM "linux64"
@@ -116,6 +138,8 @@ looks for a new version and offers its download page) */
 #define PATH_SEPARATOR "/"
 #endif
 #define UPDATE_ASSET "chupathingyce-" UPDATE_PLATFORM "-" HALO_BUILD_FLAVOR ".zip"
+/* (an AppImage's update: the release's list names it, kind "appimage") */
+#define UPDATE_APPIMAGE_ASSET "chupathingyce-" UPDATE_PLATFORM "-" HALO_BUILD_FLAVOR ".AppImage"
 /* the release's list of its update files (update_manifest.h) */
 #define UPDATE_MANIFEST "updates.json"
 #define UPDATE_DIRECTORY "update.partial"
@@ -140,8 +164,16 @@ enum
 
 static SDL_AtomicInt updater_state;
 static char updater_latest_version[32];
+/* the network version its release's notes give ("Network version: <n>",
+which CI writes since it plays one other than the build before it can), 0
+when they give none */
+static long updater_latest_network_version;
+static long updater_release_network_version;
 static char updater_directory[1024];
 static char updater_executable[1024];
+/* whether this runs from an AppImage, updater_executable then being the
+AppImage file (update_appimage_path) */
+static int updater_appimage;
 /* what is downloaded: from the release's list, or the zip's name as before
 (listed: 0, and its own signature is checked) */
 static struct
@@ -425,7 +457,15 @@ static int zip_extract(SDL_IOStream *zip, char names[][256], int *executable, in
 			if (name_length && name[name_length - 1] != '/')
 				platform_log("update: left out %s (not one of a release's names)", name);
 		}
-		else if (*name_count < MAXIMUM_UPDATE_FILES)
+		/* port: a release with more files than this build can install is refused, not installed in part (the
+		files past the limit were left out, and the update still counted as done) */
+		else if (*name_count >= MAXIMUM_UPDATE_FILES)
+		{
+			snprintf(error, error_size, "the download has more files than this build can install (%d)",
+				MAXIMUM_UPDATE_FILES);
+			goto done;
+		}
+		else
 		{
 			int method = (int)zip_word(header + 10);
 
@@ -547,6 +587,12 @@ static int updater_latest_release(char *version, size_t size)
 			}
 		}
 	}
+	/* (and the network version its notes give, "Network version: <n>") */
+	{
+		const char *network = strstr(text, "Network version: ");
+
+		updater_release_network_version = network ? strtol(network + 17, NULL, 10) : 0;
+	}
 	SDL_free(text);
 	return found;
 }
@@ -560,6 +606,7 @@ static int SDLCALL updater_check_thread(void *context)
 	{
 		platform_log("update: version %s is available (this is %s)", latest, HALO_VERSION);
 		snprintf(updater_latest_version, sizeof(updater_latest_version), "%s", latest);
+		updater_latest_network_version = updater_release_network_version;
 		SDL_SetAtomicInt(&updater_state, _updater_available);
 	}
 	else
@@ -639,7 +686,7 @@ static int updater_download_zip(const char *zip_path, char *error, size_t error_
 		snprintf(error, error_size, "could not start the download");
 		return 0;
 	}
-	window = SDL_CreateWindow("Chupathingy", 640, 150, 0);
+	window = SDL_CreateWindow("Fractum Halo", 640, 150, 0);
 	if (window)
 		renderer = SDL_CreateRenderer(window, SDL_SOFTWARE_RENDERER);
 	while (!finished)
@@ -792,6 +839,13 @@ static int updater_find_file(char *error, size_t error_size)
 	updater_url(url, sizeof(url), 0, path);
 	if (!update_download(url, manifest_path, MAXIMUM_CHECK_SIZE, NULL, NULL, reason, sizeof(reason)))
 	{
+		/* (an AppImage updates only from the list: the zip is not one) */
+		if (updater_appimage)
+		{
+			snprintf(error, error_size, "this release has no list of update files (%s), and an AppImage updates "
+				"only from one: download the new AppImage from the release's page", reason);
+			return 0;
+		}
 		/* (its zip's own signature is checked instead) */
 		platform_log("update: no list of update files (%s): downloading " UPDATE_ASSET, reason);
 		return 1;
@@ -826,7 +880,7 @@ static int updater_find_file(char *error, size_t error_size)
 		platform_log("update: this build has no release key: the list's signature is not checked");
 	}
 	result = update_manifest_find(manifest, manifest_size, updater_latest_version, UPDATE_PLATFORM, HALO_BUILD_FLAVOR,
-		"zip", updater_file.tag, sizeof(updater_file.tag), updater_file.name, sizeof(updater_file.name),
+		updater_appimage ? "appimage" : "zip", updater_file.tag, sizeof(updater_file.tag), updater_file.name, sizeof(updater_file.name),
 		&updater_file.size, updater_file.sha256, sizeof(updater_file.sha256), updater_file.main_name,
 		sizeof(updater_file.main_name), reason, sizeof(reason));
 	if (result == _update_manifest_found && (!updater_file.size || updater_file.size > MAXIMUM_UPDATE_SIZE))
@@ -840,6 +894,11 @@ static int updater_find_file(char *error, size_t error_size)
 		platform_log("update: the release's list names %s (%s, %llu bytes%s%s)", updater_file.name, updater_file.tag,
 			updater_file.size, updater_file.main_name[0] ? ", main " : "", updater_file.main_name);
 		succeeded = 1;
+	}
+	else if (result == _update_manifest_missing && updater_appimage)
+	{
+		snprintf(error, error_size, "this release has no AppImage update (%s): download the new AppImage from the "
+			"release's page", reason);
 	}
 	else if (result == _update_manifest_missing)
 	{
@@ -855,6 +914,56 @@ static int updater_find_file(char *error, size_t error_size)
 done:
 	SDL_free(signature);
 	SDL_free(manifest);
+	return succeeded;
+}
+
+/* the downloaded AppImage, checked against the release's list (its size and
+SHA-256), written again from the copy that was checked, and put in place of
+the AppImage file this runs from (which becomes <name>.old), executable as
+it was; 1 when it is there */
+static int updater_install_appimage(const char *download_path, char *error, size_t error_size)
+{
+	char old_path[1300], digest[UPDATE_SHA256_TEXT_SIZE];
+	size_t size = 0;
+	unsigned char *data = SDL_LoadFile(download_path, &size);
+	int succeeded = 0;
+
+	update_delete_file(download_path);
+	if (!data || size > MAXIMUM_UPDATE_SIZE)
+	{
+		snprintf(error, error_size, "could not read the download");
+		goto done;
+	}
+	/* (always from the list, whose signature checked: updater_find_file) */
+	if (!updater_file.listed || size != updater_file.size)
+	{
+		snprintf(error, error_size, "the download was not installed: it is %llu bytes, not the list's %llu",
+			(unsigned long long)size, updater_file.size);
+		goto done;
+	}
+	update_sha256(data, size, digest);
+	if (strcmp(digest, updater_file.sha256))
+	{
+		snprintf(error, error_size, "the download was not installed: its SHA-256 is not the list's");
+		goto done;
+	}
+	platform_log("update: the download's SHA-256 is the release list's");
+	if (!SDL_SaveFile(download_path, data, size))
+	{
+		snprintf(error, error_size, "could not write the new AppImage beside the old one");
+		goto done;
+	}
+	snprintf(old_path, sizeof(old_path), "%s.old", updater_executable);
+	if (!update_replace_file(updater_executable, download_path, old_path))
+	{
+		update_delete_file(download_path);
+		snprintf(error, error_size, "could not replace %s", updater_executable);
+		goto done;
+	}
+	succeeded = 1;
+
+done:
+	SDL_free(data);
 	return succeeded;
 }
 
@@ -971,11 +1080,31 @@ static int updater_install(int windowed, char *start, size_t start_size, char *e
 	int name_count = 0;
 
 	updater_path(partial, sizeof(partial), UPDATE_DIRECTORY);
-	updater_partial_path(zip_path, sizeof(zip_path), UPDATE_ASSET);
+	updater_partial_path(zip_path, sizeof(zip_path), updater_appimage ? UPDATE_APPIMAGE_ASSET : UPDATE_ASSET);
 	platform_log("update: downloading version %s", updater_latest_version);
 	if (!update_make_directory(partial))
 	{
-		snprintf(error, error_size, "could not make %s (is the game's folder read-only?)", partial);
+		snprintf(error, error_size, "could not make %s (is the %s folder read-only?)", partial,
+			updater_appimage ? "AppImage's" : "game's");
+	}
+	else if (updater_appimage)
+	{
+		/* (the AppImage, whole: started by the name it had) */
+		if (updater_find_file(error, error_size) && updater_download_zip(zip_path, error, error_size) &&
+			updater_install_appimage(zip_path, error, error_size))
+		{
+			update_delete_file(partial);
+			platform_log("update: starting version %s (%s)", updater_latest_version,
+				strrchr(updater_executable, PATH_SEPARATOR[0]) ? strrchr(updater_executable, PATH_SEPARATOR[0]) + 1 :
+				updater_executable);
+			if (update_launch(updater_executable))
+				exit(EXIT_SUCCESS);
+			snprintf(error, error_size, "the new version is in place, but could not be started: start it again");
+		}
+		else
+		{
+			update_delete_file(partial);
+		}
 	}
 	else if (updater_find_file(error, error_size) &&
 		(windowed ? updater_download_zip(zip_path, error, error_size) :
@@ -1010,7 +1139,7 @@ static void updater_update(void)
 		char message[800];
 
 		snprintf(message, sizeof(message), "The update failed:\n\n%s", error);
-		SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Chupathingy", message, NULL);
+		SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Fractum Halo", message, NULL);
 	}
 }
 
@@ -1024,13 +1153,25 @@ static void updater_clean_up(void)
 		"SDL3-LICENSE.txt.old", "extract-xiso-LICENSE.txt.old", "mbedtls-LICENSE.txt.old", "LICENSE.txt.old",
 		"extract-xiso-LICENSE.txt",
 	};
-	char path[1200];
+	char path[1300];
 	size_t index;
 
-	for (index = 0; index < sizeof(names) / sizeof(*names); index++)
+	/* (an AppImage's folder is the player's, not the game's: only the
+	AppImage's own old file) */
+	if (updater_appimage)
 	{
-		updater_path(path, sizeof(path), names[index]);
+		snprintf(path, sizeof(path), "%s.old", updater_executable);
 		update_delete_file(path);
+		updater_partial_path(path, sizeof(path), UPDATE_APPIMAGE_ASSET);
+		update_delete_file(path);
+	}
+	else
+	{
+		for (index = 0; index < sizeof(names) / sizeof(*names); index++)
+		{
+			updater_path(path, sizeof(path), names[index]);
+			update_delete_file(path);
+		}
 	}
 	updater_partial_path(path, sizeof(path), UPDATE_ASSET);
 	update_delete_file(path);
@@ -1050,18 +1191,23 @@ static void updater_clean_up(void)
 void updater_start(void)
 {
 	char *slash;
+	int packaged = platform_packaged();
 
-	/* (the macOS application only offers the download page: no files of its
-	own to find or clean up) */
-	if (UPDATER_DOWNLOAD_PAGE_ONLY)
+	/* (the macOS application only offers the download page, and a packaged
+	install the package manager: no files of their own to find or clean up) */
+	if (UPDATER_DOWNLOAD_PAGE_ONLY || packaged)
 	{
 		/* (the check's answer is kept in the save root while it is read) */
 		snprintf(updater_directory, sizeof(updater_directory), "%s", platform_save_root());
 	}
 	else
 	{
-		if (!update_executable_path(updater_executable, sizeof(updater_executable)))
+		/* (an AppImage: its file is the one replaced) */
+		updater_appimage = update_appimage_path(updater_executable, sizeof(updater_executable));
+		if (!updater_appimage && !update_executable_path(updater_executable, sizeof(updater_executable)))
 			return;
+		if (updater_appimage)
+			platform_log("update: running as an AppImage (%s)", updater_executable);
 		snprintf(updater_directory, sizeof(updater_directory), "%s", updater_executable);
 		slash = strrchr(updater_directory, PATH_SEPARATOR[0]);
 		if (!slash)
@@ -1070,16 +1216,19 @@ void updater_start(void)
 		updater_clean_up();
 	}
 	/* (not for builds other than a release's, the player's no, or runs nobody
-	is watching, but for a test with its answer; the log says which) */
+	is watching, but for a test with its answer; the log says which. A
+	packaged install's update.auto is off, and its no is the one the file or
+	the environment gave: config_packaged_update_check) */
 	if (!(HALO_RELEASE_BUILD || UPDATER_TEST))
 	{
 		platform_log("update: not looked for: only a release's builds update themselves (this one is not "
 			"built from a release's tag)");
 		return;
 	}
-	if (!config_boolean("update.auto"))
+	if (!(packaged ? config_packaged_update_check() : config_boolean("update.auto")))
 	{
-		platform_log("update: not looked for: update.auto is false");
+		platform_log(packaged ? "update: not looked for: a packaged install, and its check is off" :
+			"update: not looked for: update.auto is false");
 		return;
 	}
 	if (!config_string("debug.update_answer")[0] && (config_boolean("debug.hidden_window") ||
@@ -1155,6 +1304,13 @@ long updater_server_available(void)
 	fork = strstr(updater_latest_version, "-fs.");
 	number = fork ? strtol(fork + 4, NULL, 10) : 0;
 	return number > 0 ? number : 1;
+}
+
+/* ... the network version of the newer build the last look found (its
+release's notes'), 0 if not known (an older release's notes give none) */
+long updater_server_available_network_version(void)
+{
+	return updater_latest_network_version;
 }
 
 /* the newer build put in place of this one's files, not started (the server
@@ -1273,6 +1429,15 @@ void updater_poll(SDL_Window *window)
 	if (SDL_GetAtomicInt(&updater_state) != _updater_available)
 		return;
 	SDL_SetAtomicInt(&updater_state, _updater_handled);
+	/* (a packaged install: nothing asked or downloaded, whatever a test
+	answers) */
+	if (platform_packaged())
+	{
+		platform_log("update: %s is out (this is %s); a packaged install: update Chupathingy with your "
+			"package manager", updater_latest_version, HALO_VERSION);
+		build_identity_watermark_update(updater_latest_version, "Fractum Halo with your package manager");
+		return;
+	}
 	/* (an automated test's answer: debug.update_answer) */
 	if (test_answer[0])
 	{
@@ -1302,19 +1467,19 @@ void updater_poll(SDL_Window *window)
 	if (UPDATER_DOWNLOAD_PAGE_ONLY)
 	{
 		snprintf(message, sizeof(message),
-			"Chupathingy %s is out. You have %s.\n\n"
+			"Fractum Halo %s is out. You have %s.\n\n"
 			"Open the download page?",
 			updater_latest_version, HALO_VERSION);
 	}
 	else
 	{
 		snprintf(message, sizeof(message),
-			"Chupathingy %s is out. You have %s.\n\n"
+			"Fractum Halo %s is out. You have %s.\n\n"
 			"Update now? The game will restart.",
 			updater_latest_version, HALO_VERSION);
 	}
 	{
-		SDL_MessageBoxData question = { SDL_MESSAGEBOX_INFORMATION, window, "Chupathingy: new version", message,
+		SDL_MessageBoxData question = { SDL_MESSAGEBOX_INFORMATION, window, "Fractum Halo: new version", message,
 			3, question_buttons, NULL };
 
 		if (!SDL_ShowMessageBox(&question, &answer))
@@ -1322,7 +1487,7 @@ void updater_poll(SDL_Window *window)
 	}
 	if (answer == 2)
 	{
-		SDL_MessageBoxData confirm = { SDL_MESSAGEBOX_WARNING, window, "Chupathingy: new version",
+		SDL_MessageBoxData confirm = { SDL_MESSAGEBOX_WARNING, window, "Fractum Halo: new version",
 			"Stop asking about new versions?\n\n"
 			"Turn Check for Updates back on in Settings to ask again.",
 			2, confirm_buttons, NULL };
@@ -1362,6 +1527,11 @@ int updater_server_check(void)
 }
 
 long updater_server_available(void)
+{
+	return 0;
+}
+
+long updater_server_available_network_version(void)
 {
 	return 0;
 }

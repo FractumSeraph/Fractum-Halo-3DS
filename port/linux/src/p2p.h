@@ -45,6 +45,18 @@ void p2p_joining_host(const unsigned char *identifier);
 #endif
 #endif
 
+/* why the last invite joined has not reached its host, for a failed
+join's message: 0 it has (or none was joined); P2P_JOIN_NO_ANSWER the host
+never answered (it stopped hosting, or quit); P2P_JOIN_NO_CONNECTION it
+answered, but the tunnel could not get through (both networks' NATs too
+strict) */
+enum
+{
+	P2P_JOIN_NO_ANSWER = 1,
+	P2P_JOIN_NO_CONNECTION = 2,
+};
+int p2p_join_failure(void);
+
 /* this machine's identifier, which its XNADDR carries (6 bytes) */
 const unsigned char *p2p_identifier(void);
 /* port (this fork): whether internet play's own machinery runs (its UDP
@@ -105,6 +117,15 @@ void p2p_port_taken(int stream, unsigned short port);
 a stream's) */
 void p2p_socket_closed(int socket, unsigned short datagram_port);
 
+/* the host's reachability, in one or two short sentences for the menus
+(Server Setup, the lobby): whether the router forwards the tunnel's port
+(UPnP), whether this network's NAT lets most players in (the two STUN
+servers saw the same port), and what to forward if not. 0 (text empty)
+when internet play is off. check_network starts the STUN servers' look,
+which hosting does anyway, so the status is known before the game starts */
+int p2p_hosting_status(char *text, int size);
+void p2p_check_network(void);
+
 /* text for the clipboard (a new invite link), once; NULL if none. Called
 from the main thread, which copies it only with network.copy_to_clipboard */
 const char *p2p_take_clipboard_text(void);
@@ -140,10 +161,18 @@ player hosts (a dedicated server's follows network.text_chat) */
 int p2p_hosting_listed(void);
 /* the password of the game hosted for the internet (Server Setup's
 PASSWORD; NULL or empty: none): its listing lets only those who know it
-join from the server browser (its invite link still joins it). Setting or
-changing it makes a new invite, if the old one was listed. It takes a few
-milliseconds (the password's key) */
+join from the server browser, and its invite link is a locked one, which
+joins only with the password (p2p_locked_invite_unlock). Setting or
+changing it makes a new invite at once (the old link joins no more). It
+takes a few milliseconds (the password's keys) */
 void p2p_set_hosting_password(const char *password);
+/* a locked invite (a game with a password's link, from anywhere: the
+clipboard, a link opened, Discord) waits for its password: the menus ask
+for it (invite_prompt.c). Unlock joins the game if the password is the
+game's, else returns 0 (it takes a few milliseconds); cancel forgets it */
+int p2p_locked_invite_waiting(void);
+int p2p_locked_invite_unlock(const char *password);
+void p2p_locked_invite_cancel(void);
 /* whether a dedicated server hosts: its listing says so, for browsers that
 list dedicated servers apart (the next p2p_set_game_listing publishes it) */
 void p2p_set_hosting_dedicated(int dedicated);
@@ -172,6 +201,10 @@ enum
 	/* a master server's word on a listed server (master_list.c) */
 	P2P_LISTING_PUBLISHER_SIZE = 32,
 	P2P_LISTING_REGION_SIZE = 16,
+	/* the masters that list it, by their key ids (a Discord link's pass is
+	shown from one of them: player_link.c) */
+	P2P_LISTING_MAXIMUM_MASTERS = 4,
+	P2P_LISTING_MASTER_KEY_ID_SIZE = 8,
 };
 
 struct p2p_listing
@@ -217,6 +250,15 @@ struct p2p_listing
 	char region[P2P_LISTING_REGION_SIZE + 1];
 	/* the network version its host plays (another's cannot be joined) */
 	unsigned short network_version;
+	/* an OpenCE dedicated server's game, by its flags (OpenCE's 32 without
+	ChupathingyCE's 128: delta_compat_opence_server_listing): only a label in
+	the lists */
+	unsigned char opence_server;
+	/* the key ids of the masters that listed it this time the browser was
+	open (master_list.c): the masters its server publishes to, of those this
+	machine asks */
+	unsigned char master_key_ids[P2P_LISTING_MAXIMUM_MASTERS][P2P_LISTING_MASTER_KEY_ID_SIZE];
+	unsigned char master_key_id_count;
 };
 /* joins a public game the server browser found (p2p_join_invite with its
 invite), remembering its host: nonzero if it held an invite */
@@ -231,6 +273,10 @@ server's that a master server lists: an approved operator's, whose chat
 follows its network.text_chat (a listing's own dedicated flag, which any
 host may set, is not enough) */
 int p2p_joined_listed_dedicated(void);
+/* the key ids of the masters that listed the game being joined, if it was
+joined from the server browser (master_key_ids): how many, 0 if not known (an
+invite's, a LAN's) */
+int p2p_joined_listing_masters(unsigned char (*key_ids)[P2P_LISTING_MASTER_KEY_ID_SIZE], int maximum);
 /* a copy of the public games found, each once (p2p_listing_older_copy), in
 the order shown (the most players first; then those not failed, the open
 ones, by name); returns their count */
@@ -255,7 +301,7 @@ int p2p_lobby_host_listing(unsigned char *bytes, int size);
 is unset or cannot be looked up (an IPv6 one, which the tunnel does not use) */
 int p2p_public_address(char *text, int size);
 int p2p_lobby_take_master_listing(const unsigned char *payload, int size, const char *publisher, const char *region,
-	int network_version_shown, int dedicated);
+	int network_version_shown, int dedicated, const unsigned char *master_key_id);
 void p2p_lobby_masters_heard(void);
 /* how many hosts list a game of a newer network version, which is not
 shown (an old build sees none of the games) */
@@ -413,6 +459,11 @@ enum
 /* the identifier (6 bytes) and key hash of the internet play peer of this
 virtual address (network byte order): 0 if it is no peer's */
 int p2p_peer_key_hash(unsigned long virtual_address, unsigned char *identifier, unsigned char *key_hash);
+/* the binding of the internet play tunnel's session with the peer of this
+virtual address (network byte order), for a Discord link's pass
+(player_link_binding of the session's secret, which both ends share and
+nobody else has); 0 if it is no peer's */
+int p2p_peer_binding(unsigned long virtual_address, unsigned char *binding);
 /* whether this machine, a player of an internet game (not its host),
 answers the game's other players: holders of the invite it joined with */
 void p2p_set_answering_players(int on);

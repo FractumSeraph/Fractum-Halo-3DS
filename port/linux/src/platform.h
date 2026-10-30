@@ -36,6 +36,11 @@ the SDK headers are read, exactly as game code sees them. */
 /* prints PLATFORM_LOG_PREFIX <message> to stderr (build_identity.h) */
 void platform_log(const char *format, ...) __attribute__((format(printf, 1, 2)));
 
+/* opens the url in the system's browser (a Discord link's page: player_link.c);
+in the web build, the page offers it to be opened (a page may open a tab only
+when it is clicked) */
+void platform_open_url(const char *url);
+
 /* reports an SDK entry point the Linux port does not implement, once per
 name; the caller then behaves as a failing or empty call */
 void platform_unimplemented(const char *name);
@@ -123,9 +128,11 @@ against what exists on disk, as the Xbox file system is case-insensitive. */
 void platform_translate_path(const char *xbox_path, char *host_path, unsigned long host_path_size);
 const char *platform_data_root(void);
 /* on the desktop, when the data root has no maps folder: offers to copy it
-out of an Xbox disc image into destination (sdl_platform.c), and quits if
-the player declines; nonzero once destination has one */
-BOOL platform_offer_game_data(const char *destination);
+out of an Xbox disc image into destination (sdl_platform.c; the launcher's
+Welcome, launcher.c), and quits if the player declines; nonzero once
+destination has one. The player may point at a maps folder elsewhere:
+destination (size bytes) is then that folder's */
+BOOL platform_offer_game_data(char *destination, unsigned long size);
 /* what the data root's maps folder holds, which should be the Xbox maps
 (sdl_platform.c tells the player when it is not, rather than the game
 failing on Halo PC's ui.map) */
@@ -168,8 +175,10 @@ int platform_old_map_folders_move(void);
 /* the macOS application's folder for its data and settings, when the game
 runs as an application (ChupathingyCE.app): ~/Library/Application
 Support/ChupathingyCE, made if need be, into path; on Linux, when the game
-runs as an AppImage, the save root's usual place (HALO_SAVE_ROOT, else
-$XDG_DATA_HOME/chupathingyce or ~/.local/share/chupathingyce); 0 otherwise
+runs as an AppImage or a packaged install (or from a folder it cannot write
+that has no maps/ or config.toml of its own), the save root's usual place
+(HALO_SAVE_ROOT, else $XDG_DATA_HOME/chupathingyce or
+~/.local/share/chupathingyce); 0 otherwise
 (and on other systems). An application's own files are not written: it is
 signed, and may be where its player cannot write, and an AppImage is
 mounted read-only (port_config.c) */
@@ -179,6 +188,10 @@ the window opens, or between frames), with `count` buttons (3 at most: Android's
 `default_index` Enter's and Escape's: the index of the one chosen, or -1
 when it cannot ask */
 int platform_ask(const char *title, const char *text, const char *const *labels, int count, int default_index);
+/* whether the game is a packaged install, which a package manager updates:
+built as one, HALO_PACKAGED in the environment, or a file named "packaged"
+beside the executable (packaged_install.h); 0 on Android and the consoles */
+int platform_packaged(void);
 const char *platform_save_root(void);
 /* the folder of Custom Edition maps paths.custom_edition names, which the
 Xbox drive h:\ is (map_families.c looks in it after maps_ce and the older

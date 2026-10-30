@@ -13,7 +13,7 @@ false details:
 
 	"HL", format 1, the lobby version (2: HALO_PORT_NETWORK_VERSION; browsers
 	hide others), flags (open, under way, teams, closed, password,
-	dedicated), sequence (4: newest wins), Unix time (4), the Ed25519 key
+	dedicated as OpenCE's 39 says it, dedicated), sequence (4: newest wins), Unix time (4), the Ed25519 key
 	(32), the invite's token (16; a password's game's sealed with the
 	password's key, 56: p2p_seal_token; a tombstone's zero), players, most
 	players, the gametype's engine (1 each), the game's name,
@@ -54,7 +54,11 @@ going private does.
 
 Checking signatures takes work, and anyone can send listings: at most
 VERIFY_BUDGET milliseconds of it each pass of the p2p thread, from a queue
-of MAXIMUM_QUEUED; the rest is dropped (hosts publish again).
+of MAXIMUM_QUEUED; the rest is dropped (hosts publish again). A listing that
+could not be shown (another network version's, or one outside its time
+window) is dropped before it takes a place there (listing_wanted): on
+subscribing, a broker sends every slot it keeps, and on a public one most
+are games long gone, which filled the queue and crowded out live games.
 
 Each game's host is probed for its ping (p2p_probe_start: the tunnel to it
 timed, p2p.c), a few at once, again each PROBE_REFRESH and on Refresh. A
@@ -69,6 +73,7 @@ game with a password is not: its token is sealed.
 #include "server_mode.h"
 #include "server_master.h"
 #include "master_list.h"
+#include "delta_compat.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -115,7 +120,7 @@ enum
 	MAXIMUM_GAMES = 256,
 	MAXIMUM_TOMBSTONES = 256,
 #endif
-	MAXIMUM_QUEUED = 64,
+	MAXIMUM_QUEUED = 128,
 
 	/* milliseconds */
 	REPUBLISH_INTERVAL = 30000,
@@ -130,6 +135,10 @@ enum
 	/* (wide: a host whose clock is off is still listed) */
 	LIVE_WINDOW = 3600,
 };
+
+/* (delta_compat.h tells OpenCE's dedicated servers apart by these bits) */
+typedef char listing_dedicated_bits_match[_listing_dedicated == DELTA_COMPAT_LISTING_DEDICATED_OPENCE &&
+	_listing_chupa_dedicated == DELTA_COMPAT_LISTING_DEDICATED ? 1 : -1];
 
 static const char signature_label[] = "hceu-lobby-1";
 
@@ -181,7 +190,9 @@ struct game
 	int payload_size;
 	struct p2p_listing listing;
 	/* its invite's token (none: a password's game); its host's ping
-	(-1: not known), whether it is being probed, and when it last was */
+	(-1: not known), whether it is being probed, and when it last was (0:
+	due; else odd, and never ahead of the clock, which elapsed reads as
+	long past) */
 	int has_token;
 	unsigned char token[P2P_TOKEN_SIZE];
 	int ping;
@@ -240,6 +251,9 @@ static struct
 	unsigned long sequence;
 	unsigned char listing[MAXIMUM_LISTING_SIZE];
 	int listing_size;
+	/* (the network version it carries: a newer one the legacy table proves
+	publishes it again at once, delta.c's auto-announce) */
+	int listing_version;
 	unsigned long published_time;
 	/* a publish wanted (the game changed, a query, the slot needs mending),
 	not before this */
@@ -339,6 +353,7 @@ static int listing_make_token(unsigned char *bytes, int flags, const unsigned ch
 	unsigned char *signed_part = bytes;
 	unsigned char data[sizeof(signature_label) - 1 + MAXIMUM_LISTING_SIZE];
 	int size = 0;
+	int version = delta_legacy_announce();
 
 	if (lobby.has_password && !(flags & _listing_closed))
 		flags |= _listing_password;
@@ -348,8 +363,10 @@ static int listing_make_token(unsigned char *bytes, int flags, const unsigned ch
 	bytes[size++] = 'H';
 	bytes[size++] = 'L';
 	bytes[size++] = LISTING_FORMAT;
-	bytes[size++] = (unsigned char)(delta_legacy_announce() >> 8);
-	bytes[size++] = (unsigned char)delta_legacy_announce();
+	bytes[size++] = (unsigned char)(version >> 8);
+	bytes[size++] = (unsigned char)version;
+	if (!(flags & _listing_closed))
+		lobby.listing_version = version;
 	bytes[size++] = (unsigned char)flags;
 	put_long(bytes + size, ++lobby.sequence);
 	size += 4;
@@ -458,6 +475,19 @@ static int listing_read(const unsigned char *bytes, int size, struct listing *li
 	return 1;
 }
 
+/* whether a listing is of about now: a slot's retained copy within
+RETAINED_WINDOW (a host that died left it, and nothing cleared it), a live
+one within LIVE_WINDOW (not one long gone, published again by someone who
+kept it) */
+static int listing_current(const struct listing *listing, int retained)
+{
+	/* port: (LISTING_NOW: the 3DS's clock is local time) */
+	long difference = (long)(listing->time - (unsigned long)LISTING_NOW());
+	long window = retained ? RETAINED_WINDOW : LIVE_WINDOW;
+
+	return difference <= window && difference >= -window;
+}
+
 static int listing_signed(const unsigned char *bytes, const struct listing *listing)
 {
 	unsigned char data[sizeof(signature_label) - 1 + MAXIMUM_LISTING_SIZE];
@@ -544,7 +574,7 @@ static void update_hosting(const unsigned char *token, int player_count, int max
 		return;
 	}
 	if ((lobby.republish_wanted && (long)(p2p_now() - lobby.republish_time) >= 0) ||
-		elapsed(lobby.published_time, REPUBLISH_INTERVAL))
+		elapsed(lobby.published_time, REPUBLISH_INTERVAL) || delta_legacy_announce() != lobby.listing_version)
 	{
 		publish();
 	}
@@ -634,6 +664,8 @@ static int queued_joinable(const unsigned char *payload, int size)
 	return size >= MINIMUM_LISTING_SIZE && version_joinable(payload[3] << 8 | payload[4]);
 }
 
+static int listing_wanted(const unsigned char *payload, int size, int retained, const unsigned char *key_hash);
+
 void p2p_lobby_slot_heard(const char *hash_text, const unsigned char *payload, int size, int retained)
 {
 	unsigned char key_hash[P2P_KEY_HASH_SIZE];
@@ -667,6 +699,8 @@ void p2p_lobby_slot_heard(const char *hash_text, const unsigned char *payload, i
 		game->heard_time = p2p_now();
 		return;
 	}
+	if (!listing_wanted(payload, size, retained, key_hash))
+		return;
 	for (index = 0; index < lobby.queue_count; index++)
 	{
 		if (lobby.queue[index].size == size && !memcmp(lobby.queue[index].payload, payload, (size_t)size))
@@ -811,6 +845,7 @@ static void listing_take(const struct queued *queued, const struct listing *list
 	/* port (this fork): the listing's own word, either bit (the ChupathingyCE
 	menus' "(DEDICATED)"), and its version as the fork's code reads it */
 	shown->listed_dedicated = (listing->flags & (_listing_dedicated | _listing_chupa_dedicated)) != 0;
+	shown->opence_server = (unsigned char)delta_compat_opence_server_listing(listing->flags);
 	shown->version = (unsigned short)listing->version;
 	shown->ping = -1;
 	/* (a dedicated server's on a master's word alone: the listing's own
@@ -839,7 +874,7 @@ static void update_probes(void)
 		/* (set first: a probe that needs no tunnel ends at once,
 		p2p_lobby_probed) */
 		game->probing = 1;
-		game->probed_time = p2p_now() | 1;
+		game->probed_time = (p2p_now() - 1) | 1;
 		if (!p2p_probe_start(game->key_hash, game->token))
 		{
 			game->probing = 0;
@@ -871,6 +906,27 @@ static void newer_heard(const unsigned char *key_hash)
 	lobby.newer[free_index].used = 1;
 }
 
+/* whether a listing heard is worth a queue place: one of about now (not one
+outside its time window). Its header is not verified yet, so a forged one
+can only keep its own listing out; the queue's checks, the signature's
+included, still decide what is shown. Port (this fork): a game of any
+version is let in, for the browser to show or mark (version_joinable), the
+joinable ones dequeued first; a newer one's, past every version this build
+reads, has its host counted too (newer_heard), for the empty list's words */
+static int listing_wanted(const unsigned char *payload, int size, int retained, const unsigned char *key_hash)
+{
+	struct listing listing;
+
+	if (!listing_read(payload, size, &listing))
+		return 0;
+	if (listing.version > HALO_PORT_NETWORK_VERSION && listing.version > delta_legacy_maximum() &&
+		!(listing.flags & _listing_closed))
+	{
+		newer_heard(key_hash);
+	}
+	return listing_current(&listing, retained);
+}
+
 static void update_browsing(void)
 {
 	unsigned long start = p2p_now();
@@ -896,31 +952,15 @@ static void update_browsing(void)
 			first = 0;
 		queued = lobby.queue[first];
 		memmove(lobby.queue + first, lobby.queue + first + 1, sizeof(*lobby.queue) * (size_t)(--lobby.queue_count - first));
-		/* (a newer version's game, past every version this build reads, is
-		counted too, for the empty list's words: its host's key hash only,
-		unverified, so it is no more than a count; port (this fork)) */
-		if (lobby.browsing && listing_read(queued.payload, queued.size, &listing) &&
-			listing.version > HALO_PORT_NETWORK_VERSION && listing.version > delta_legacy_maximum() &&
-			!(listing.flags & _listing_closed))
-		{
-			newer_heard(queued.key_hash);
-		}
 		/* (a listing of a version this build cannot join is kept too, for the
-		browser to mark: checked as any) */
+		browser to mark: checked as any; listing_wanted let it in, and its
+		key and its time are checked again here, where its signature is: the
+		time it was queued at may have run out) */
 		if (!listing_read(queued.payload, queued.size, &listing) ||
-			!signing_key_hash(listing.key, key_hash) || memcmp(key_hash, queued.key_hash, P2P_KEY_HASH_SIZE))
+			!signing_key_hash(listing.key, key_hash) || memcmp(key_hash, queued.key_hash, P2P_KEY_HASH_SIZE) ||
+			!listing_current(&listing, queued.retained))
 		{
 			continue;
-		}
-		/* a slot's retained copy: only one of about now (a host that died
-		left it, and nothing cleared it); a live one: not one long gone,
-		published again by someone who kept it */
-		{
-			long difference = (long)(listing.time - (unsigned long)LISTING_NOW());
-			long window = queued.retained ? RETAINED_WINDOW : LIVE_WINDOW;
-
-			if (difference > window || difference < -window)
-				continue;
 		}
 		/* (the work, without the lock: the game's threads need not wait) */
 		pthread_mutex_unlock(&p2p_lock);
@@ -942,6 +982,7 @@ static void update_browsing(void)
 		{
 			lobby.games[index].master = 0;
 			lobby.games[index].listing.master = 0;
+			lobby.games[index].listing.master_key_id_count = 0;
 		}
 		if (lobby.newer[index].used && elapsed(lobby.newer[index].heard_time, GAME_EXPIRY))
 			lobby.newer[index].used = 0;
@@ -963,7 +1004,7 @@ void p2p_lobby_probed(const unsigned char *identifier, int ping)
 		if (game->used && !memcmp(game->listing.identifier, identifier, P2P_IDENTIFIER_SIZE))
 		{
 			game->probing = 0;
-			game->probed_time = p2p_now() | 1;
+			game->probed_time = (p2p_now() - 1) | 1;
 			/* (one not reached this time keeps the last it had) */
 			if (ping >= 0)
 				game->ping = ping;
@@ -992,7 +1033,7 @@ int p2p_lobby_host_listing(unsigned char *bytes, int size)
 }
 
 int p2p_lobby_take_master_listing(const unsigned char *payload, int size, const char *publisher, const char *region,
-	int network_version_shown, int dedicated)
+	int network_version_shown, int dedicated, const unsigned char *master_key_id)
 {
 	struct listing listing;
 	struct queued queued;
@@ -1037,6 +1078,22 @@ int p2p_lobby_take_master_listing(const unsigned char *payload, int size, const 
 			snprintf(game->listing.region, sizeof(game->listing.region), "%s", region ? region : "");
 			if (game->listing.master_count < 255)
 				game->listing.master_count++;
+			/* (the master among those that list it: a Discord link's pass
+			is shown from one of them, player_link.c) */
+			if (master_key_id)
+			{
+				int known;
+
+				for (known = 0; known < game->listing.master_key_id_count &&
+					memcmp(game->listing.master_key_ids[known], master_key_id, P2P_LISTING_MASTER_KEY_ID_SIZE); known++)
+				{
+				}
+				if (known == game->listing.master_key_id_count && known < P2P_LISTING_MAXIMUM_MASTERS)
+				{
+					memcpy(game->listing.master_key_ids[known], master_key_id, P2P_LISTING_MASTER_KEY_ID_SIZE);
+					game->listing.master_key_id_count++;
+				}
+			}
 			taken = 1;
 		}
 	}
@@ -1125,18 +1182,28 @@ int p2p_hosting_listed(void)
 void p2p_set_hosting_password(const char *password)
 {
 	unsigned char key[P2P_PASSWORD_KEY_SIZE];
+	unsigned char join_key[P2P_PASSWORD_KEY_SIZE];
 	int has_password = password && *password;
 
-	/* (the key takes a while: not under the lock) */
+	/* (the keys take a while: not under the lock. The listing's, salted with
+	the signing key as every browser opens it; the invite link's, salted with
+	the key's hash, which the link holds) */
 	if (has_password)
+	{
+		unsigned char hash[P2P_KEY_HASH_SIZE];
+
 		p2p_password_key(password, p2p_signing_key(), key);
+		p2p_key_hash(p2p_public_key(), hash);
+		p2p_join_password_key(password, hash, join_key);
+	}
 	pthread_mutex_lock(&p2p_lock);
 	if (has_password != lobby.has_password ||
 		(has_password && !p2p_equal(key, lobby.password_key, P2P_PASSWORD_KEY_SIZE)))
 	{
-		/* (a new invite, if one was listed: who saw it, with no password or
-		another, cannot join with it) */
-		p2p_new_invite_if_listed();
+		/* (a new invite, listed or not: whoever has the old one, which
+		joined without this password, cannot join with it; the new one is
+		locked, and only the password opens it) */
+		p2p_new_invite_for_password(has_password ? join_key : NULL);
 		lobby.has_password = has_password;
 		if (has_password)
 			memcpy(lobby.password_key, key, sizeof(key));
@@ -1147,6 +1214,7 @@ void p2p_set_hosting_password(const char *password)
 	}
 	pthread_mutex_unlock(&p2p_lock);
 	memset(key, 0, sizeof(key));
+	memset(join_key, 0, sizeof(join_key));
 }
 
 void p2p_set_game_listing(const char *name, const char *map, const char *gametype, int engine_type, int kind,

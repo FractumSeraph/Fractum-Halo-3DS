@@ -151,6 +151,14 @@ symbols in this file:
 #endif
 #include "models/models.h"
 #include "map_share.h" /* port: port/linux/game/map_share.c */
+#ifdef HALO_ANDROID
+/* port: geometry the map holds and does not write, drawn on Android from
+GL buffers of its own (port/linux/src/d3d8_gl.c) */
+void xgpu_static_buffers_add(const void *buffers, long count, unsigned long stride, int indices, const void *end);
+void xgpu_static_buffers_remove(const void *buffers, long count, unsigned long stride, int indices);
+void xgpu_static_range_add(const void *start, unsigned long size, int indices);
+void xgpu_static_range_remove(const void *start, int indices);
+#endif
 
 /* ---------- constants */
 
@@ -794,7 +802,15 @@ void scenario_tags_unload(
 	}
 	else
 #endif
-	tags_header_deregister_vertex_and_index_buffers(cache_file_globals.tag_header);
+	{
+#if defined(HALO_ANDROID) && defined(HALO_ARM64_GUEST) && !defined(HALO_BROWSER)
+		struct cache_file_tag_header *tags = cache_file_globals.tag_header;
+
+		xgpu_static_buffers_remove(xbox_pointer(tags->vertex_buffers), tags->vertex_buffer_count, CACHE_FILE_BUFFER_SIZE, 0);
+		xgpu_static_buffers_remove(xbox_pointer(tags->index_buffers), tags->index_buffer_count, CACHE_FILE_BUFFER_SIZE, 1);
+#endif
+		tags_header_deregister_vertex_and_index_buffers(cache_file_globals.tag_header);
+	}
 	cache_file_globals.tags_loaded = FALSE;
 	global_tag_instances = NULL;
 
@@ -1193,28 +1209,28 @@ char const *cache_files_multiplayer_region(
 	return cache_files_build_region(cache_file_globals.header.build);
 }
 
-/* whether the named map plays multiplayer with the others: FALSE only for
-a map whose header is of a build not listed above (a map whose header cannot
-be read is left to precaching, which tells of a missing map); build gets the
-map's build, empty if unread. The multiplayer menus check the loaded map's
-(ui.map's) build; this checks a multiplayer map's own, which may be of
-another build: the object and damage messages name definitions by tag
-index, which differs between builds */
-boolean cache_files_map_plays_multiplayer(
+/* the header of the named map's file, an Xbox-format map's (version 5), in
+header: FALSE when it has none to read, or it is not an Xbox-format map; build
+gets its build, empty if unread. *pack whether it is a pack's map
+(<file>@<pack>, in maps_<pack>) */
+static boolean cache_files_map_xbox_header(
 	char const *map_name,
-	char build[0x20])
+	struct cache_file_header *header,
+	char build[0x20],
+	boolean *pack)
 {
-	struct cache_file_header header;
 	char path[256];
 	HANDLE file;
-	boolean result = TRUE;
+	boolean result = FALSE;
 
 	build[0] = 0;
+	*pack = FALSE;
 	if (!map_name || !map_name[0])
-		return TRUE;
+		return FALSE;
+	*pack = map_family_parse(tag_name_strip_path(map_name), NULL, 0) == _map_family_pack;
 	/* port: (a pack's map, <file>@<pack>, in maps_<pack>) */
 	if (!map_family_xbox_path(tag_name_strip_path(map_name), path, sizeof(path)))
-		return TRUE;
+		return FALSE;
 #ifdef HALO_N3DS
 	/* port: (the 3DS) through the engine's files, Halo3DS's SD card backend */
 	(void)file;
@@ -1224,12 +1240,12 @@ boolean cache_files_map_plays_multiplayer(
 		if (file_reference_create_from_path(&reference, path, FALSE) &&
 			file_open(&reference, FLAG(_permission_read_bit)))
 		{
-			if (file_read(&reference, sizeof(header), &header) &&
-				cache_file_header_verify(&header, path, FALSE))
+			if (file_read(&reference, sizeof(*header), header) &&
+				cache_file_header_verify(header, path, FALSE))
 			{
-				csstrncpy(build, header.build, 0x20);
+				csstrncpy(build, header->build, 0x20);
 				build[0x1F] = 0;
-				result = cache_files_build_region(header.build) != NULL;
+				result = header->version == 5;
 			}
 			file_close(&reference);
 		}
@@ -1241,18 +1257,73 @@ boolean cache_files_map_plays_multiplayer(
 	{
 		unsigned long bytes_read;
 
-		if (ReadFile(file, &header, sizeof(header), &bytes_read, NULL) &&
-			bytes_read == sizeof(header) &&
-			cache_file_header_verify(&header, path, FALSE))
+		if (ReadFile(file, header, sizeof(*header), &bytes_read, NULL) &&
+			bytes_read == sizeof(*header) &&
+			cache_file_header_verify(header, path, FALSE))
 		{
-			csstrncpy(build, header.build, 0x20);
+			csstrncpy(build, header->build, 0x20);
 			build[0x1F] = 0;
-			result = cache_files_build_region(header.build) != NULL;
+			result = header->version == 5;
 		}
 		CloseHandle(file);
 	}
 
 	return result;
+}
+
+/* whether the named map plays multiplayer with the others: FALSE only for
+a map other than a pack's whose header is of a build not listed above (a map
+whose header cannot be read is left to precaching, which tells of a missing
+map); build gets the map's build, empty if unread. The multiplayer menus check the loaded map's
+(ui.map's) build; this checks a multiplayer map's own, which may be of
+another build: the object and damage messages name definitions by tag
+index, which differs between builds.
+
+A pack's map (<file>@<pack>) plays whatever its build, if it is an Xbox-format
+map: what makes the tag indexes agree is that every machine has the same
+file, and every machine of ours checks that before it plays one (the host's
+fingerprint of it, cache_files_map_pack_present, and Delta Peer's MAP). Its
+tags are played as they are, as an NTSC map's are (only a listed PAL build's
+are put back to the NTSC maps', pal_tags.c): the same on every machine,
+since each has the same file. A machine that cannot say which file it has
+(OpenCE's) is kept out of a game on one of an unlisted build
+(cache_files_map_needs_delta) */
+boolean cache_files_map_plays_multiplayer(
+	char const *map_name,
+	char build[0x20])
+{
+	struct cache_file_header header;
+	boolean pack;
+
+	if (!cache_files_map_xbox_header(map_name, &header, build, &pack))
+		return TRUE;
+
+	return cache_files_build_region(header.build) != NULL || pack;
+}
+
+/* whether the named map is a pack's Xbox-format map of a build not listed
+above, which a host plays only with machines that check they have its file
+(Delta's: network_server_manager.c, network_game_server_delta_refusals). Kept
+for the last map asked, by its name */
+boolean cache_files_map_needs_delta(
+	char const *map_name)
+{
+	static char last_name[64];
+	static boolean last_result;
+	struct cache_file_header header;
+	char build[0x20];
+	boolean pack;
+
+	if (!map_name || !map_name[0] || map_family_parse(tag_name_strip_path(map_name), NULL, 0) != _map_family_pack)
+		return FALSE;
+	if (last_name[0] && !csstrncmp(last_name, map_name, sizeof(last_name)))
+		return last_result;
+	last_result = cache_files_map_xbox_header(map_name, &header, build, &pack) && pack &&
+		!cache_files_build_region(header.build);
+	csstrncpy(last_name, map_name, sizeof(last_name));
+	last_name[sizeof(last_name) - 1] = 0;
+
+	return last_result;
 }
 
 /* tells the player that maps of a build (a cache file header's) do not play
@@ -1271,7 +1342,7 @@ void cache_files_show_multiplayer_unavailable(
 		snprintf(
 			message,
 			sizeof(message),
-			"The map %s (build %s) isn't supported for multiplayer yet.\n\nAsk in the Discord to get it added.",
+			"The map %s (build %s) isn't supported for multiplayer.\n\nUse the released version of it, or ask in the Chupathingy Discord to get this build added.",
 			tag_name_strip_path(map_name),
 			build);
 	}
@@ -1281,7 +1352,7 @@ void cache_files_show_multiplayer_unavailable(
 		snprintf(
 			message,
 			sizeof(message),
-			"Your maps (build %s) aren't supported for multiplayer yet.\n\nAsk in the Discord to get them added.",
+			"Your maps (build %s) aren't supported for multiplayer yet.\n\nAsk in the Chupathingy Discord to get them added.",
 			build);
 	}
 	platform_show_message("Halo: multiplayer unavailable", message);
@@ -1938,6 +2009,14 @@ long scenario_tags_load(
 
 				mods_tags_loaded(stripped_scenario_name);
 			}
+			/* port: the pause menu's rows, as a stock map's get them
+			(port/linux/game/menu_tags.c: Halo PC's CHANGE SETTINGS and GAME
+			OPTIONS give way to the menus' own) */
+			{
+				extern void menu_tags_loaded(char const *map_name);
+
+				menu_tags_loaded(cache_file_globals.header.name);
+			}
 			/* (and last, its tags' names copied out of its tags, where what is
 			written could take away their ends: port/linux/game/ce_resources.c) */
 			{
@@ -2034,6 +2113,17 @@ long scenario_tags_load(
 					's'));
 			global_tag_instances = xbox_pointer(cache_file_globals.tag_header->tag_instances);
 			tags_header_register_vertex_and_index_buffers(cache_file_globals.tag_header);
+#if defined(HALO_ANDROID) && defined(HALO_ARM64_GUEST) && !defined(HALO_BROWSER)
+			/* port: (an Xbox map's model vertices and indices, in its tags
+			from the first buffer to their end) */
+			{
+				struct cache_file_tag_header *tags = cache_file_globals.tag_header;
+				const void *end = (const byte *)tag_cache_base_address + cache_file_globals.header.tag_data_size;
+
+				xgpu_static_buffers_add(xbox_pointer(tags->vertex_buffers), tags->vertex_buffer_count, CACHE_FILE_BUFFER_SIZE, 0, end);
+				xgpu_static_buffers_add(xbox_pointer(tags->index_buffers), tags->index_buffer_count, CACHE_FILE_BUFFER_SIZE, 1, end);
+			}
+#endif
 			cache_file_globals.tags_loaded = TRUE;
 			/* port: a PAL map played as the NTSC maps are (port/linux/game/pal_tags.c) */
 			{
@@ -2243,6 +2333,20 @@ boolean scenario_structure_bsp_load(
 		ce_repairs_bsp_loaded(xbox_pointer(cache_file_globals.structure_bsp_header->base_address));
 	}
 #endif
+#if defined(HALO_ANDROID) && defined(HALO_ARM64_GUEST) && !defined(HALO_BROWSER)
+	/* port: (an Xbox bsp's vertices and lightmap vertices, from the first
+	buffer to the bsp's end, and the indices its surfaces draw: a Custom
+	Edition bsp's too, whose vertices custom_edition_geometry.c gave buffers) */
+	{
+		const void *end = (const byte *)xbox_pointer(reference->base_address) + reference->file_size;
+
+		xgpu_static_buffers_add(xbox_pointer(structure_bsp_header->vertex_buffers), structure_bsp_header->vertex_buffer_count,
+			CACHE_FILE_BUFFER_SIZE, 0, end);
+		xgpu_static_buffers_add(xbox_pointer(structure_bsp_header->index_buffers), structure_bsp_header->index_buffer_count,
+			CACHE_FILE_BUFFER_SIZE, 0, end);
+		xgpu_static_range_add(xbox_pointer(reference->base_address), (unsigned long)reference->file_size, 1);
+	}
+#endif
 	tag_instance = cache_get_tag_instance(reference->structure_bsp.index);
 	match_assert(
 		"c:\\halo\\SOURCE\\cache\\cache_files.c",
@@ -2266,6 +2370,15 @@ void scenario_structure_bsp_unload(
 #else
 	struct cache_file_tag_instance *tag_instance;
 
+#if defined(HALO_ANDROID) && defined(HALO_ARM64_GUEST) && !defined(HALO_BROWSER)
+	{
+		struct cache_file_structure_bsp_header *bsp = cache_file_globals.structure_bsp_header;
+
+		xgpu_static_buffers_remove(xbox_pointer(bsp->vertex_buffers), bsp->vertex_buffer_count, CACHE_FILE_BUFFER_SIZE, 0);
+		xgpu_static_buffers_remove(xbox_pointer(bsp->index_buffers), bsp->index_buffer_count, CACHE_FILE_BUFFER_SIZE, 1);
+		xgpu_static_range_remove(xbox_pointer(reference->base_address), 1);
+	}
+#endif
 	structure_bsp_header_deregister_vertex_buffers(cache_file_globals.structure_bsp_header);
 #ifdef HALO_CUSTOM_EDITION
 	if (cache_file_is_ce)
@@ -2352,6 +2465,35 @@ boolean tag_index_is_group(
 	return tag_instance->tag_index == tag_index && tag_instance->base_address &&
 		(tag_instance->group_tag == group_tag || tag_instance->parent_group_tags[0] == group_tag ||
 			tag_instance->parent_group_tags[1] == group_tag);
+}
+
+/* port: the loaded tag whose data holds an address in the tag cache (a
+tag block's, for its log: tag_groups.c), the one whose data begins nearest
+below it, and the address's offset in it; NONE if none does */
+long tag_index_holding_address(
+	void const *address,
+	unsigned long *offset)
+{
+	byte const *best_base = NULL;
+	long best = NONE;
+	long absolute_index;
+
+	if (!address || !cache_file_globals.tags_loaded || !global_tag_instances)
+		return NONE;
+	for (absolute_index = 0; absolute_index < cache_file_globals.tag_header->tag_count; absolute_index++)
+	{
+		struct cache_file_tag_instance const *tag_instance = &global_tag_instances[absolute_index];
+		byte const *base = tag_instance->base_address ? (byte const *)xbox_pointer(tag_instance->base_address) : NULL;
+
+		if (base && base <= (byte const *)address && (!best_base || base > best_base))
+		{
+			best_base = base;
+			best = tag_instance->tag_index;
+		}
+	}
+	if (best != NONE)
+		*offset = (unsigned long)((byte const *)address - best_base);
+	return best;
 }
 
 char *tag_get_name(

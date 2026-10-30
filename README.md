@@ -48,8 +48,8 @@ press **L + D-pad Down + SELECT**, then choose
 
 The `multiplayer` branch runs the
 [FractumSeraph/OpenCE](https://github.com/FractumSeraph/OpenCE) fork's engine
-under this port, with its network code (network version 39: it joins games of
-versions 11 to 40):
+under this port, with its network code (network version 41: it joins games of
+versions 11 to 42):
 
 - **System Link Play** works with the fork's games and servers and with other
   3DS consoles on the same network.
@@ -61,7 +61,8 @@ versions 11 to 40):
   players and ping. Up and down (or a tap on the bottom
   screen) pick a game, left and right turn the page, **A** joins it, **X**
   refreshes, **B** goes back. **SELECT** opens the keyboard to join a game
-  by its invite (a `halo://join/` link or its 64 digits).
+  by its invite (a `halo://join/` link or its 64 digits). A game with a
+  password asks for it on the keyboard too.
 - **Hosting**: **Y** in Online Games creates a game on the internet. Its
   invite is shown on the bottom screen for friends to join; a public game
   (the default, `network.host_public`) is also listed in everyone's browser.

@@ -84,6 +84,8 @@ char const *cache_files_multiplayer_region(
 boolean cache_files_map_plays_multiplayer(
 	char const *map_name,
 	char build[0x20]);
+boolean cache_files_map_needs_delta(
+	char const *map_name);
 void cache_files_show_multiplayer_unavailable(
 	char const *map_name,
 	char const *build);
@@ -105,6 +107,13 @@ unsigned long cache_files_map_choose(
 /* port: a Halo PC map here but refused by the port's checks: why, and
 whether its file is the one it should be (cache_files_windows.c) */
 boolean cache_files_ce_map_refused(
+	char const *map_name,
+	char *text,
+	long size);
+/* port: whether a Halo PC map here would be refused as it loads, checked
+without opening it for play (a dedicated server's check of a map a command
+names, while a game may be in progress): why (cache_files_windows.c) */
+boolean cache_files_ce_map_check(
 	char const *map_name,
 	char *text,
 	long size);

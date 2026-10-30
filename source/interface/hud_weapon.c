@@ -59,6 +59,7 @@ symbols in this file:
 #include "passenger_camera.h" /* port: port/linux/game/passenger_camera.c */
 #include "cseries/errors.h"
 #include "bitmaps/bitmap_group.h"
+#include "main/main.h" /* port: first_person_reticle_scale */
 #include "cache/texture_cache.h"
 #include "game/game.h"
 #include "game/game_globals.h"
@@ -80,6 +81,7 @@ symbols in this file:
 #include "tag_files/tag_groups.h"
 #include "units/unit_definitions.h"
 #include "units/units.h"
+#include "hud_hires_crosshairs.h" /* port: port/linux/game/hud_hires_tags.c */
 
 /* port: CE warning placement and reticle classification (OpenCE's,
 port/linux/game/ce_hud.c) */
@@ -1279,7 +1281,7 @@ static void crosshairs_draw(
 										item->sequence_index;
 									/* port: the bitmap (the sprite's, or the item's own) must be
 									one the group has, or the item isn't drawn */
-									struct bitmap_data *bitmap = bitmap_index >= 0 && bitmap_index < bitmap_group->bitmaps.count ?
+									struct bitmap_data const *bitmap = bitmap_index >= 0 && bitmap_index < bitmap_group->bitmaps.count ? /* port: replacement is read-only */
 										TAG_BLOCK_GET_ELEMENT(
 											&bitmap_group->bitmaps,
 											bitmap_index,
@@ -1294,6 +1296,8 @@ static void crosshairs_draw(
 									}
 									if (bitmap && _texture_cache_bitmap_get_hardware_format(bitmap, FALSE, TRUE))
 									{
+										/* port: replace only supplied CE scope sprites, preserving its original 8x. */
+										bitmap = hud_hires_crosshair_bitmap(bitmap, item->sequence_index, frame_index);
 										if (TEST_FLAG(item->flags, _hud_crosshair_hide_outside_area_bit))
 										{
 											real texel_scale_u = 1.0f;
@@ -1319,6 +1323,12 @@ static void crosshairs_draw(
 											}
 
 											inverse_scale = 1.0f / scale;
+#ifdef HALO_CUSTOM_EDITION
+											/* port: a bitmap drawn at its group's high resolution
+											scale (its item's placement's, ce_hud.c) covers the view
+											at that size */
+											inverse_scale /= hud_bitmap_group_scale(element->crosshairs.bitmap.index);
+#endif
 											expand_u = (bitmap->width - (render.camera.viewport_bounds.x1 - render.camera.viewport_bounds.x0) * inverse_scale) *
 												texel_scale_u * -0.5f;
 											expand_v = (bitmap->height - (render.camera.viewport_bounds.y1 - render.camera.viewport_bounds.y0) * inverse_scale) *
@@ -1342,9 +1352,17 @@ static void crosshairs_draw(
 										}
 										else
 										{
-											/* port: CE warnings retain HUD coordinates, independent
-											of the aiming reticle's FOV and passenger projection. */
+											/* port: display.reticle_scales_with_fov, the reticle
+											and its items' places about the middle scaled as the
+											world's image is by display.field_of_view; CE warnings
+											retain HUD coordinates, independent of the aiming
+											reticle's FOV and passenger projection (port, this fork) */
 											struct hud_placement_definition placement = item->placement;
+											real reticle_scale = ce_hud_warning(state_index) ? 1.0f :
+												first_person_reticle_scale(render.local_player_index);
+
+											placement.offset.x = (short)fast_ftol(placement.offset.x * reticle_scale);
+											placement.offset.y = (short)fast_ftol(placement.offset.y * reticle_scale);
 											ce_hud_warning_offset(state_index,
 												(short)(render.camera.window_bounds.x1 - render.camera.window_bounds.x0),
 												(short)(render.camera.window_bounds.y1 - render.camera.window_bounds.y0),
@@ -1356,7 +1374,7 @@ static void crosshairs_draw(
 												sequence ?
 													&TAG_BLOCK_GET_ELEMENT(&sequence->sprites, frame_index, struct bitmap_group_sprite)->bounds :
 													NULL,
-												scale,
+												scale * reticle_scale,
 												0.0f,
 												color,
 												in_multiplayer,
@@ -1831,13 +1849,6 @@ static void render_weapon_hud(
 			weapon_hud_state_index_valid(element->header.state_type, NUMBER_OF_WEAPON_HUD_FLASH_REFERENCES))
 		{
 			byte value;
-#ifndef HALO_XBOX_CONSOLE
-			rectangle2d window_bounds;
-			boolean zoomed_layout = hud_multitexture_overlays_follow_zoom(&element->meter_element.multitexture_overlays);
-
-			if (zoomed_layout)
-				hud_zoomed_layout_begin(&window_bounds);
-#endif
 
 			state_index = element->header.state_type;
 			value = (byte)number_values[state_index];
@@ -1850,10 +1861,6 @@ static void render_weapon_hud(
 				state_flags[state_index],
 				(real)hud_state->last_weapon_flash_time[state_index],
 				0.0f);
-#ifndef HALO_XBOX_CONSOLE
-			if (zoomed_layout)
-				hud_zoomed_layout_end(&window_bounds);
-#endif
 		}
 	}
 

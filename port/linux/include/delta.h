@@ -26,33 +26,63 @@ or handshake. Machines of different majors fall back to the legacy protocol
 alone. */
 #define DELTA_MAJOR 1
 
-/* a host that speaks Delta Peer sets this in its advertisement's flags
-(HALO_PORT_ADVERTISED_FLAGS_OFFSET; 0x01 and 0x02 are the port's): OpenCE's
-machines ignore it. Set only while the host's Delta socket is open and
-network.protocol is not "opence" (delta_peer_advertised_flags). */
+/* A host that speaks Delta Peer says so in its advertisement's 0x1A reserved
+bytes with a tagged block at their TAIL (docs/delta.md, "The advertisement"):
+OpenCE writes its own fields there from the front (the version, the flags,
+since its version 37 the game's kind at byte 3), so the tail stays clear of
+them. The block: 'D', 'L', the host's Delta major, the block's layout
+version (1), the host's own wire (its number, then its letter), its oldest
+compatible wire (number, letter), and a check byte (0xA5 xor the eight before;
+the 2026-10-27 console builds read it so).
+A reader knows Delta by a valid tag and check, never by a flag bit. Written
+only while the host's Delta socket is open and network.protocol is not
+"opence" (delta_peer_advertised_wire); OpenCE's machines leave and ignore the
+bytes. */
+#define DELTA_ADVERTISED_RESERVED_SIZE 0x1A
+#define DELTA_ADVERTISED_TAG_SIZE 9
+#define DELTA_ADVERTISED_TAG_OFFSET (DELTA_ADVERTISED_RESERVED_SIZE - DELTA_ADVERTISED_TAG_SIZE)
+#define DELTA_ADVERTISED_TAG_FIRST 'D'
+#define DELTA_ADVERTISED_TAG_SECOND 'L'
+#define DELTA_ADVERTISED_TAG_VERSION 1
+
+/* The old layout, which hosts before the tag wrote (0.7.5a to 0.8.0h, wires
+to chupa-38a) and which readers still take when there is no tag, so that a
+new client still finds an old Delta host. Released clients read nothing
+else, so a host still writes it where it does not clash with OpenCE's
+meaning of the bytes (docs/delta.md, "The transition"): OpenCE took the flag
+0x04 for a dedicated server (version 39) and byte 3 for the game's kind
+(version 37), so a dedicated server alone sets the flag, and writes its
+major at byte 3 only in a game whose engine is not Slayer, the one engine
+OpenCE names a kind for (DELTA_ADVERTISED_KIND_ENGINE). The flag (in the
+port's flags byte, HALO_PORT_ADVERTISED_FLAGS_OFFSET) said Delta... */
+#define DELTA_ADVERTISED_FLAGS_OFFSET 2
 #define DELTA_ADVERTISED_FLAG 0x04
-/* ... and with it, after the port's flags in the advertisement's reserved
-bytes, the game wire the host plays: its Delta major (a byte), then
-DELTA_WIRE, zero padded (delta_peer_advertised_wire). OpenCE's machines, and
-hosts built before then, leave the bytes zero. A Delta client joins a host
-of its own major and wire whatever OpenCE number either announces, and
-refuses one of another wire; a host without the bytes, or of another major,
-is joined by its OpenCE number, as before
-(delta_peer_advertised_wire_matches). A host that writes the range bytes puts in the wire there its
-OLDEST COMPATIBLE wire that a released client knows (one that checks
-the bytes for an exact match, as 0.7.5a's does, then joins), and the host's
-own wire and its compatible range follow in the range bytes below. */
+/* ... and with it, in the bytes after the flags, the host's Delta major (a
+byte), then a wire, zero padded: its OLDEST COMPATIBLE wire that a released
+client knows (one that checks the bytes for an exact match, as 0.7.5a's
+does, then joins). Readers stop at the first zero, so the tag may follow it
+in the slot's last three bytes: a host writes the slot's wire only when it
+is ended before the tag (delta_compat_advertise_old) */
 #define DELTA_ADVERTISED_WIRE_OFFSET 3
 #define DELTA_ADVERTISED_WIRE_SIZE 16
-/* ... and after the wire, in the six bytes that were free to the end of the
-advertisement's 0x1A reserved bytes (docs/delta.md, "Wire compatibility
-ranges"): the range's layout version (1), the host's own wire (its number, then
-its letter), its oldest compatible wire (number, letter), and a check byte
-(0xA5 xor the five before). All zero when absent; machines that do not read
-them (OpenCE's, released builds) leave and ignore them (delta_compat.h). */
+/* ... and after the wire, to the end of the reserved bytes, the range: its
+layout version (1), the host's own wire (number, letter), its oldest
+compatible wire (number, letter), and a check byte (0xA5 xor the five
+before). The tag's last six bytes sit where these did, with a check of its
+own, so a released client never reads them as range bytes: it takes the old
+slot's wire (delta_compat.h). */
 #define DELTA_ADVERTISED_RANGE_OFFSET (DELTA_ADVERTISED_WIRE_OFFSET + 1 + DELTA_ADVERTISED_WIRE_SIZE)
 #define DELTA_ADVERTISED_RANGE_SIZE 6
 #define DELTA_ADVERTISED_RANGE_VERSION 1
+/* ... the OpenCE version from which the flag can be OpenCE's (a dedicated
+server): an old-layout host announcing it or later is taken for Delta only
+with a wire in the old slot */
+#define DELTA_ADVERTISED_FLAG_TAKEN_VERSION 39
+/* ... the game engine (its stock index, Slayer) of the one game whose kind
+byte OpenCE's browsers read (its version 37): a major there names an OpenCE
+game type (1, SWAT), so a host writes the old layout's major and slot only
+in games of other engines */
+#define DELTA_ADVERTISED_KIND_ENGINE 2
 
 /* Delta Peer's UDP port: the game's server port (NETWORK_GAME_SERVER_PORT,
 5150) plus this, so 5160. A host listens there; a client sends from any
@@ -116,6 +146,15 @@ enum delta_capability
 	(TEAM_RESULT); the change itself reaches every machine, OpenCE's too,
 	through the game's own player respawn */
 	_delta_capability_team_change = 15,
+	/* reserved for server badges (a draft, not built yet): never set here */
+	_delta_capability_server_badge = 16,
+	/* what the game's own messages leave out of the host's objects
+	(docs/delta.md, Object sync): every unit's shield and health as they
+	change (UNIT_VITALS), so that a client's copy of a placed biped or an
+	empty vehicle reads as the host's does, and the scenario names of the
+	objects the host made (OBJECT_NAMES), so that a client's scripts find
+	them by name */
+	_delta_capability_object_sync = 17,
 
 	NUMBER_OF_DELTA_CAPABILITIES
 };
@@ -140,6 +179,18 @@ enum delta_platform
 	_delta_platform_psp = 10,
 	_delta_platform_vita = 11,
 	_delta_platform_xbox_uwp = 12,
+	/* a PC build for FreeBSD (port/unix) */
+	_delta_platform_pc_freebsd = 13,
+	/* the PlayStation 3 (Mayo's port, warthog-ps3), and community ports to
+	the PlayStation 4 and 5 */
+	_delta_platform_ps3 = 14,
+	_delta_platform_ps4 = 15,
+	_delta_platform_ps5 = 16,
+	/* the Nintendo 64 (JackT's port) */
+	_delta_platform_n64 = 17,
+	/* old PCs: DOS and Windows 9x, with a software renderer (JackT's Legacy
+	PC port) */
+	_delta_platform_pc_legacy = 18,
 
 	NUMBER_OF_DELTA_PLATFORMS
 };
@@ -186,7 +237,8 @@ a game it joins (unless its player opted in: network.platform_limits =
 and whether it plays network co-op (a host offers no co-op while a machine
 that does not is in its game: delta_peer_room_coop). One row a platform, in
 the registry's order. The consoles' rows are placeholders until their ports
-play (the original Xbox's is the owner's: 16 and 16, no co-op); the signed
+play (the original Xbox's is the owner's: 16 and 16, no co-op), as are the
+other ports' (docs/delta.md, "Platform numbers"); the signed
 legacy table's "platform_policy" section is to tune them without a release
 (delta_peer_platform_policy, delta_peer_game.c). */
 #define DELTA_PLATFORM_POLICY(X) \
@@ -202,7 +254,13 @@ legacy table's "platform_policy" section is to tune them without a release
 	X(_delta_platform_switch, 16, 16, 128, 12, 1) \
 	X(_delta_platform_psp, 16, 16, 128, 6, 0) \
 	X(_delta_platform_vita, 16, 16, 128, 9, 0) \
-	X(_delta_platform_xbox_uwp, 128, 128, 128, 12, 1)
+	X(_delta_platform_xbox_uwp, 128, 128, 128, 12, 1) \
+	X(_delta_platform_pc_freebsd, 128, 128, 128, 12, 1) \
+	X(_delta_platform_ps3, 16, 16, 128, 8, 0) \
+	X(_delta_platform_ps4, 16, 16, 128, 12, 1) \
+	X(_delta_platform_ps5, 16, 16, 128, 13, 1) \
+	X(_delta_platform_n64, 0, 8, 16, 3, 0) \
+	X(_delta_platform_pc_legacy, 16, 16, 128, 7, 0)
 
 /* ---------- the legacy number */
 
@@ -215,11 +273,14 @@ build that learns a legacy layout or behavior (a newer DELTA_LEGACY_NEWEST):
 a row widens every build of its wire, so a wire's builds must all play the
 same OpenCE versions (docs/delta.md, "When the wire changes"). chupa-38a:
 0.8.0e and the Xbox build of 2026-10-21 said chupa-32a and play 32 (33's one
-bit is the host's), 0.8.0f and 0.8.0g said it too and play to 38. (port:
-this fork's builds said chupa-36a on 2026-10-23, then chupa-32a, playing
-to 36 and then 38; they say chupa-38a with ChupathingyCE 0.8.0h, its rows
-and layouts, their hosts announcing 38 built in.) */
-#define DELTA_WIRE "chupa-38a"
+bit is the host's), 0.8.0f and 0.8.0g said it too and play to 38. chupa-39a:
+the tagged advertisement (a Delta host's block at the reserved bytes' tail,
+no longer OpenCE's flag 0x04 and byte 3), hosts' message 91, co-op's ally
+switch honored, and 39's dedicated flag on dedicated servers that announce
+it. chupa-41a: the join request 234 bytes longer to hosts of 40 and later
+(network_rules_join_request_extra), the refusals 8 to 13 said plainly, and
+41's vote messages (78, 79, 94, 95) dropped quietly. */
+#define DELTA_WIRE "chupa-41a"
 
 /* Wire compatibility ranges: the oldest wire each one plays the game with,
 without a desync and without losing what the older wire has (a feature the
@@ -228,14 +289,22 @@ join cleanly). One row for a wire that plays with older ones; a wire with no
 row plays with itself alone. A wire's row is added when the release is made
 and is not changed afterward: an older build cannot learn of a newer row, so
 a host also tells its newer clients its range in the advertisement. The first
-wire a build advertised is DELTA_WIRE_FIRST_ADVERTISED: what a host puts in
-the advertisement's old wire slot is its oldest compatible wire from there on,
-as released clients compare it for an exact match (delta_compat.h). */
+wire a build advertised is DELTA_WIRE_FIRST_ADVERTISED: what a host of the
+old layout put in the advertisement's old wire slot was its oldest compatible
+wire from there on, as released clients compare it for an exact match
+(delta_compat.h). Every row from DELTA_WIRE_CONSOLE_FLOOR on reaches back to
+it (tools/test_delta.py fails otherwise): the oldest wire a console build in
+the wild plays, so that every Chupathingy platform stays in one pool
+(docs/delta.md, "The console floor"). Raise it only when every console port
+has shipped a newer wire. */
+#define DELTA_WIRE_CONSOLE_FLOOR "chupa-32a"
 #define DELTA_WIRE_FIRST_ADVERTISED "chupa-29a"
 #define DELTA_WIRE_COMPATIBILITY(X) \
 	X("chupa-29a", "chupa-28a") /* maps by their own names: 29 also takes 28's hashed names and checksums */ \
 	X("chupa-32a", "chupa-28a") /* 30 to 32 are additive; a host of 32 plays with 28 to 31 (docs/delta.md) */ \
-	X("chupa-38a", "chupa-28a") /* 33 to 38 played by the host's number; a host announcing 32 plays as chupa-32a's */
+	X("chupa-38a", "chupa-28a") /* 33 to 38 played by the host's number; a host announcing 32 plays as chupa-32a's */ \
+	X("chupa-39a", "chupa-28a") /* the tagged advertisement and 39's dedicated flag; the game's messages as chupa-38a's, a host announcing 32 plays as chupa-32a's */ \
+	X("chupa-41a", "chupa-28a") /* the longer join request to hosts of 40 on; the game's messages as chupa-39a's */
 
 /* Each wire's newest OpenCE network version that every build of it plays by
 its own rules (DELTA_LEGACY_NEWEST when it was made): the most a signed
@@ -247,7 +316,15 @@ version's rules has a new wire. */
 	X("chupa-28a", 28) \
 	X("chupa-29a", 29) \
 	X("chupa-32a", 33) \
-	X("chupa-38a", 38)
+	X("chupa-38a", 38) \
+	X("chupa-39a", 39) \
+	X("chupa-41a", 41)
+
+/* the oldest network version a build that reads the tagged advertisement
+says in its HELLO: chupa-39a's row above, the first such wire. A host whose
+advertisement carries the tag alone hears none older; one that also carries
+the old layout may (released builds before the tag said 32 or older). */
+#define DELTA_TAG_OLDEST_LEGACY 39
 
 /* how many OpenCE numbers past the newest this build knows (the table
 below, and the one announced, the newest this build or the signed table has
@@ -269,10 +346,10 @@ announces, for what that client reads: the game settings record of 35's
 layout, and whether it reports a static target's own damage
 (network_rules_host_settings_size). Builds before it said their
 HALO_PORT_NETWORK_VERSION there, 32 or older (port: this fork's builds
-have said 36 and then 38 since they followed them, their record 35's layout
-too). A build that reads a signed legacy table's layouts says the newest of
-them past this one (network_rules_layout_newest). */
-#define DELTA_LEGACY_NEWEST 38
+have said 36, 38 and then 39 since they followed them, their record 35's
+layout too). A build that reads a signed legacy table's layouts says the
+newest of them past this one (network_rules_layout_newest). */
+#define DELTA_LEGACY_NEWEST 41
 
 /* OpenCE's network versions (HALO_PORT_NETWORK_VERSION in its builds), the
 first of its releases with each, and whether the version's change is one the
@@ -317,15 +394,11 @@ first; the command repository's watch adds a row when it follows OpenCE's raise
 	X(34, "build-266", additive) /* no message changed: scenery and devices that are a shield alone are static targets too, every machine runs static targets' shields, a client reports no damage a static target deals (the host deals it), a static target's copy made during play found by the nearest; in no release */ \
 	X(35, "build-266", additive) /* OpenCE's own game types (SWAT, Infection, Gun Game, Hardcore): the gametype's options 0x2C bytes, the settings record 16 bytes longer, which a machine of 34 cannot read, and Infection's game type state; this build reads both, by the host's number (port: this fork plays them, widening an older host's record, and its hosts send a machine before 35 the older record, but no game of one of them); in no release */ \
 	X(36, "build-266", additive) /* the host's shield effects, a new message (91) a machine of 35 drops (port: this fork draws them, network_shield_effects.c) */ \
-	X(37, "build-268", additive) /* a game's kind (an OpenCE gametype's mode, Hardcore) in its LAN advertisement's fourth reserved byte and its internet listing's stamp, which older machines leave (port: this fork's hosts leave the advertisement's to Delta's major while they speak it) */ \
-	X(38, "build-268", additive) /* the shield effects "players" (each player's own, not synced): a value of message 91 a machine of 37 does not know, and draws the stock ones */
-/* (port, this fork: 39, OpenCE's build-280, has no row: a dedicated server's
-flag in the LAN advertisement (0x04 of the flags, DELTA_ADVERTISED_FLAG's bit
-too) and internet listing (32), and the client build message (92) an older
-host drops; no message a game plays changed. This fork's hosts announce it
-built in (HALO_PORT_NETWORK_VERSION), on wire chupa-38a and 38's rules, as a
-legacy table's row for chupa-38a would: a row here would be a new wire,
-docs/delta.md "When the wire changes") */
+	X(37, "build-268", additive) /* a game's kind (an OpenCE gametype's mode, Hardcore) in its LAN advertisement's fourth reserved byte and its internet listing's stamp, which older machines leave (port: this fork plays them, and its hosts send their kind) */ \
+	X(38, "build-268", additive) /* the shield effects "players" (each player's own, not synced): a value of message 91 a machine of 37 does not know, and draws the stock ones */ \
+	X(39, "build-294", additive) /* a dedicated server's game: the advertisement's flag 0x04 and the internet listing's flag 32; no message or record changed (first build: the oldest published release whose commit has the change, by git ancestry, 2026-10-27; older releases were removed, so an earlier one may have had it) */ \
+	X(40, "build-334", additive) /* the join request 234 bytes longer (a pass and a proof for OpenCE's own servers, sent as zeros), which a host of 40 needs and an older one ignores; a dedicated server's refusals 8 to 12; in no release of OpenCE's alone */ \
+	X(41, "build-334", additive) /* a refusal 13 (too many machines from one address), messages 78 and 79 laid out anew and 94 and 95 (map votes) new, all dropped by this build; co-op's flags bit 2 (a dedicated host) ignored */
 
 /* ---------- the legacy table (port/linux/src/delta.c)
 
@@ -336,6 +409,12 @@ legacy table this machine has (or set by a local, unsigned override). */
 /* at start-up, on the game's thread: loads the cached table, and fetches a
 newer one in the background (never holding anything up) */
 void delta_legacy_start(void);
+/* a console with HTTPS (HALO_CONSOLE_HTTPS): one round of fetching the
+signed table (the site, else GitHub), blocking, on a thread of the port's
+(with CONSOLE_HTTPS_STACK_SIZE + DELTA_REFRESH_STACK_SIZE of stack to
+spare: the document is read on it); 1 if a valid table came
+(taken, or no newer than the one in use), 0 if none could be had */
+int delta_legacy_refresh(void);
 /* the serial of the signed table in use; 0 for none (or a local override,
 which is never passed on) */
 unsigned int delta_legacy_serial(void);
@@ -355,6 +434,27 @@ gate proved it with), "Following OpenCE network version 20 (built in)" */
 #define DELTA_FOLLOWS_SIZE 32
 void delta_legacy_following(char *text, int size);
 
+/* ---------- auto-announce: the number a host announces
+
+A host announces the newest OpenCE version the table in use proves for
+hosting: its row's announce, or a newer one its optional "hosting" list
+names (versions the cross-play gate proved with our host and their clients
+alone; docs/delta.md, "Auto-announce"). Older builds skip the list and go by
+announce. network.announce pins a number instead ("latest", the default,
+follows the table). A new number is taken at once, except while a game this
+machine hosts is under way (delta_legacy_hold): then at its end, so that one
+game is played by one number. */
+#define DELTA_HOSTING_MAXIMUM 8
+/* the newest version the table in use proves for hosting (its announce, or
+its hosting list's newest) */
+int delta_legacy_hosting_newest(void);
+/* (the game) a game this machine hosts is under way (1) or not (0): while
+it is, the number announced stays as it was */
+void delta_legacy_hold(int hold);
+/* whether network.announce pins the number announced (and the pin in use, or
+0 when it is not one this machine may announce) */
+int delta_legacy_pinned(void);
+
 /* whether a local, unsigned table (network.legacy_table) is in use */
 int delta_legacy_override(void);
 /* whether this machine relays signed tables (Delta Peer: takes them from
@@ -368,7 +468,8 @@ A wire from chupa-38a on reads "layouts" in its row: for a network version,
 the facts a host of it sends that this build reads by data, not code (the
 game settings record's size, the gametype's options' length, the distributed
 messages a machine that does not know them drops, the shield effects
-message's largest value; docs/delta.md, "Layouts"). A fact holds for its
+message's largest value, and from chupa-41a the join request's length past
+0x70 and its fill; docs/delta.md, "Layouts"). A fact holds for its
 version and every later one until the next fact, and is used only for
 versions past DELTA_LEGACY_NEWEST (the build's own rules are the built-in
 facts) and only within the limits network_rules.c sets (port/linux/game/
@@ -389,7 +490,18 @@ struct delta_layout_fact
 	machine that does not know them drops: a bit a kind (kind 8 is bit 0 of
 	byte 1) */
 	unsigned char dropped[DELTA_LAYOUT_KIND_BYTES];
+	/* (chupa-41a on) the bytes a client's join request carries after its
+	first 0x70 (the Xbox's and the hardware id) to a host of the version,
+	and how they are filled: join_request_said when the fact says it (0 is
+	a length too: none), join_request_fill DELTA_LAYOUT_FILL_ZEROS, the
+	only fill this build writes, or DELTA_LAYOUT_FILL_UNKNOWN for another
+	the fact names, whose length is then not taken */
+	unsigned short join_request_extra;
+	unsigned char join_request_said;
+	unsigned char join_request_fill;
 };
+#define DELTA_LAYOUT_FILL_ZEROS 0
+#define DELTA_LAYOUT_FILL_UNKNOWN 1
 
 /* the table in use's facts for this build's wire (its own row's, or the
 local override's), oldest first, into facts (at most count): how many */
@@ -398,5 +510,8 @@ int delta_legacy_layouts(struct delta_layout_fact *facts, int count);
 /* the largest document, and signed table */
 #define DELTA_LEGACY_DOCUMENT_SIZE 16384
 #define DELTA_LEGACY_SIGNED_SIZE (128 + 1 + DELTA_LEGACY_DOCUMENT_SIZE)
+/* the stack delta_legacy_refresh needs beyond the HTTPS client's (the
+document, its answer's headers and the signature's) */
+#define DELTA_REFRESH_STACK_SIZE (DELTA_LEGACY_DOCUMENT_SIZE + 6 * 1024)
 
 #endif

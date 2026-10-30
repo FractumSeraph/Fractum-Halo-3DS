@@ -662,6 +662,7 @@ struct widget_instance;
 #include "networking/network_game_globals.h"
 #include "networking/network_server_manager.h"
 #include "network_coop.h" /* port: port/linux/game/network_coop.c */
+#include "touch_postgame.h" /* port: port/linux/game/touch_postgame.c */
 #include "rasterizer/rasterizer.h"
 #include "saved games/player_profile.h"
 #include "saved games/playlist_profile.h"
@@ -700,7 +701,8 @@ void browser_screen_open(void);
 boolean browser_screen_open_map_offer(void);
 void browser_screen_process(void);
 void browser_screen_render(void);
-/* port: moderation on a dedicated server (port/linux/game/moderation_screen.c) */
+/* port: moderation on a dedicated server, and the host's own kick and ban
+(port/linux/game/moderation_screen.c) */
 boolean moderation_screen_active(void);
 void moderation_screen_update(boolean menu_open);
 void moderation_screen_process(void);
@@ -738,8 +740,13 @@ boolean ui_widget_online_games_list(struct widget_instance *widget);
 enum
 {
 	/* port: 16 KB on the Xbox; the PC version's screens (port/assets/menus)
-	have many more widgets */
+	have many more widgets. A console that shows only the Xbox's menus sets
+	its own (halo_console_features.h) */
+#ifdef HALO_CONSOLE_WIDGET_POOL_SIZE
+	WIDGET_MEMORY_POOL_SIZE = HALO_CONSOLE_WIDGET_POOL_SIZE,
+#else
 	WIDGET_MEMORY_POOL_SIZE = 0x40000,
+#endif
 	MAXIMUM_WIDGET_MEMORY_POOL_BLOCKS = 4096
 };
 
@@ -2740,12 +2747,48 @@ static struct widget_instance *widget_instance_find_by_tag_index_recursive(
 	return result;
 }
 
+/* port: giving the focus clears focused_child all along the old focus's path,
+then links only the new focus's parents. Backing out of a screen does that: it
+loads the screen, focused on its first row, then focuses the row you left it
+from, so the first row is left with no focused child. A row that only passes
+events on (a setting's row and its spinner, a lobby row) then passes the d-pad,
+keys and buttons to nothing when it has the focus again, and only the mouse,
+which focuses the spinner itself, could change it. Such a row gets its first
+child that takes events back, as it had when its screen was loaded, whenever
+it takes the focus (here, and the d-pad's widget_instance_tab_to_*) */
+static void widget_instance_refocus_passthrough(
+	struct widget_instance *widget)
+{
+	struct widget_instance *child;
+	long flags;
+
+	if (!widget || widget->focused_child || widget_instance_can_handle_events(widget))
+		return;
+	flags = ui_widget_definition_get(widget->definition_tag_index)->flags;
+	if (!TEST_FLAG(flags, _widget_pass_unhandled_events_to_children_bit) ||
+		TEST_FLAG(flags, _widget_dont_focus_a_specific_child_bit))
+	{
+		return;
+	}
+	for (child = widget->child; child; child = child->next)
+	{
+		if (widget_instance_can_handle_events(child))
+		{
+			widget->focused_child = child;
+			break;
+		}
+	}
+
+	return;
+}
+
 static void widget_instance_give_focus_directly(
 	struct widget_instance *widget,
 	struct widget_instance *new_focus)
 {
 	struct widget_instance *focused_child =
 		widget_instance_get_topmost_parent(widget)->focused_child;
+	struct widget_instance *leaf;
 
 	if (new_focus->disabled == TRUE)
 	{
@@ -2775,6 +2818,7 @@ static void widget_instance_give_focus_directly(
 		if (substitute)
 			new_focus = substitute;
 	}
+	leaf = new_focus;
 	if (focused_child)
 	{
 		if (new_focus &&
@@ -2782,6 +2826,7 @@ static void widget_instance_give_focus_directly(
 			focused_child->parent)
 		{
 			new_focus->parent->focused_child = new_focus;
+			widget_instance_refocus_passthrough(leaf);
 
 			return;
 		}
@@ -2796,6 +2841,7 @@ static void widget_instance_give_focus_directly(
 		new_focus->parent->focused_child = new_focus;
 		new_focus = new_focus->parent;
 	}
+	widget_instance_refocus_passthrough(leaf);
 
 	return;
 }
@@ -4256,6 +4302,41 @@ static void widget_instance_initialize(
 	return;
 }
 
+/* port: (menu_functions.c's ADD PLAYER screen) the profile spinner among
+the widget's children on the first profile that is usable ("player profile
+list initialize" starts on player 1's), when the one it is on is not: the
+enumeration's high bit (available to its player) and the callback's say;
+the profile it is on, NONE if it has none */
+long ui_widget_port_spinner_first_available(
+	struct widget_instance *widget,
+	boolean (*usable)(short controller, long profile))
+{
+	struct widget_instance *spinner;
+	long const *profiles;
+	word index;
+
+	for (spinner = widget->child; spinner && spinner->type != _ui_widget_type_spinner_list; spinner = spinner->next)
+		;
+	if (!spinner || !(profiles = spinner->parameters.list.list_items) || !spinner->parameters.list.number_of_items)
+		return NONE;
+#define SPINNER_USABLE(profile) ((profile) != NONE && ((profile) & 0x80000000) && 	usable(spinner->local_player_index, (profile)))
+	if ((word)spinner->parameters.list.selected_index < spinner->parameters.list.number_of_items &&
+		SPINNER_USABLE(profiles[spinner->parameters.list.selected_index]))
+	{
+		return profiles[spinner->parameters.list.selected_index];
+	}
+	for (index = 0; index < spinner->parameters.list.number_of_items; index++)
+	{
+		if (SPINNER_USABLE(profiles[index]))
+		{
+			spinner->parameters.list.selected_index = (short)index;
+			return profiles[index];
+		}
+	}
+#undef SPINNER_USABLE
+	return NONE;
+}
+
 /* port: the PC version's events that this engine never sends (its custom
 activation), for the menus' functions (port/linux/game/menu_functions.c):
 runs the widget's handlers for the event, else the first descendant's that
@@ -5443,10 +5524,15 @@ void main_screen_shell_load(
 	if (main_screen_shell_first_load == TRUE)
 	{
 		char const *command_line = shell_get_command_line();
+		int config_boolean(char const *name);
 
 		if (command_line && _stricmp(command_line, "xdemo") == 0)
 		{
 			error(_error_silent, "xbox command line= '%s'", command_line);
+		}
+		else if (config_boolean("display.skip_intro"))
+		{
+			load_main_menu = TRUE;
 		}
 		else
 		{
@@ -6228,6 +6314,8 @@ text was drawn in (the lobby's speaker icons) */
 void menu_functions_text_box_drawn(struct widget_instance *widget, rectangle2d const *bounds);
 
 #ifndef HALO_XBOX_CONSOLE
+#include "../../port/linux/src/ui_point.h"
+
 /* ---------- the mouse (desktop builds)
 
 The menus were made for a controller: the d-pad moves the focus through a
@@ -7488,6 +7576,24 @@ static void ui_debug_log_targets(
 	return;
 }
 
+/* port: where in the menus' 640 columns the last click that pressed a
+row's A was, and in which frame (ui_widget_port_item_click_x) */
+static short ui_mouse_item_click_x;
+static long ui_mouse_item_click_frame = -16;
+
+/* port: the column of the click whose A a row's handler runs now (the
+Controls Setup key rows' two bindings: menu_functions.c), else NONE; the
+press is posted the frame the click is taken and handled at most a frame or
+two after, and a press of A from anything else is not a click's */
+short ui_widget_port_item_click_x(
+	void)
+{
+	short x = ui_debug_frame - ui_mouse_item_click_frame <= 2 ? ui_mouse_item_click_x : NONE;
+
+	ui_mouse_item_click_frame = -16;
+	return x;
+}
+
 /* port: a press the menus post from their updates (menu_functions.c: the
 server browser's join, once its game is reached), posted where the mouse's
 are: one posted while the widgets update or draw would be overwritten by the
@@ -7598,6 +7704,26 @@ static void ui_widgets_process_mouse(
 		controls_screen_pointer(&pointer);
 #endif
 #endif
+	/* the carnage report's prompt is text, not targets: a click or tap on
+	one of its parts presses that part's button (game_engine_postgame_prompt,
+	#467); no menu is up to take the click instead. A finger reaches a little
+	around the text. */
+	if (pointer_active && !keyboard_active && !overlay_active && pointer.left_clicks && !ui_mouse_menu() &&
+		/* port: (nor under a map's download screen) */
+		!download_screen_active())
+	{
+		struct ui_point_prompt prompt;
+
+		if (game_engine_postgame_prompt(&prompt.top, &prompt.bottom, &prompt.left, &prompt.right, &prompt.split))
+		{
+			short part = (short)ui_point_prompt_part(&prompt, ui_mouse_pointer_is_touch ? 32 : 2,
+				pointer.click_x, pointer.click_y);
+
+			if (part != NONE)
+				game_engine_postgame_prompt_press(part);
+			pointer.left_clicks = 0;
+		}
+	}
 	if (!pointer_active || keyboard_active || overlay_active
 		/* port: (nor under a map's download screen, which hides the menus) */
 		|| download_screen_active())
@@ -7614,7 +7740,10 @@ static void ui_widgets_process_mouse(
 			ui_mouse_hover_x = pointer.x;
 			ui_mouse_hover_y = pointer.y;
 		}
-		if (pointer.left_clicks)
+		/* (a click on the carnage report's touchscreen buttons is the
+		report's: touch_postgame.c) */
+		if (pointer.left_clicks &&
+			(!game_engine_showing_postgame() || !touch_postgame_click(pointer.click_x, pointer.click_y)))
 		{
 			ui_mouse_click_pending = TRUE;
 			ui_mouse_click_x = pointer.click_x;
@@ -7719,6 +7848,8 @@ static void ui_widgets_process_mouse(
 					}
 					ui_mouse_give_focus(target->widget);
 					ui_mouse_press(_gamepad_analog_button_a);
+					ui_mouse_item_click_x = ui_mouse_click_x;
+					ui_mouse_item_click_frame = ui_debug_frame;
 					break;
 				case _ui_mouse_target_value:
 				{
@@ -7860,11 +7991,19 @@ static void widget_instance_render_recursive(
 		 * added. Only flat fills (the dims, and the menus' vertical
 		 * gradient, at most 16 texels wide): a picture is drawn texel for
 		 * texel, so wider bounds would shift it (the loading screen). */
+		/* (a split screen's too: the pause menu's dim of a half screen,
+		640x240, and of a quarter, 320x240, whose right edge is already the
+		quarter's: the 640 columns are centred in the screen) */
 		boolean widen_to_screen =
 			bounds.x0 <= 0 && bounds.y0 <= 0 &&
-			bounds.x1 >= 640 && bounds.y1 >= 480 &&
+			bounds.x1 >= 320 && bounds.y1 >= 240 &&
 			bitmap->width <= 16 &&
 			halo_screen_width() > 640;
+		/* (the view's margins: the centring shift, on either side of the
+		640 columns, or of a quarter's 320; declared here, before the first
+		statement: C89) */
+		long extra = halo_screen_ui_offset_current();
+		short design_right = bounds.x1;
 
 		if (use_nifty_plasma_fx)
 		{
@@ -7875,9 +8014,8 @@ static void widget_instance_render_recursive(
 		}
 		if (widen_to_screen)
 		{
-			long extra = (halo_screen_width() - 640) / 2;
 			bounds.x0 -= (short)extra;
-			bounds.x1 = (short)(640 + extra);
+			bounds.x1 = (short)(bounds.x1 + extra);
 		}
 		bounds.x0 += offset.x;
 		bounds.x1 += offset.x;
@@ -7897,10 +8035,9 @@ static void widget_instance_render_recursive(
 			/* widen the clip by the same amount (it is offset-shifted but
 			 * still 640-wide at the edges) so the dim is not clipped back
 			 * to the centered columns */
-			long extra = (halo_screen_width() - 640) / 2;
 			if (clip->x0 <= 0)
 				clip->x0 -= (short)extra;
-			if (clip->x1 >= 640)
+			if (clip->x1 >= design_right)
 				clip->x1 = (short)(clip->x1 + extra);
 		}
 		if (TEST_FLAG(definition->flags, _widget_flash_background_bitmap_bit))
@@ -8503,6 +8640,8 @@ static void widget_instance_tab_to_next_valid_widget(
 				widget_instance_port_is_label(child)))
 		{
 			widget->focused_child = child;
+			/* port: (widget_instance_refocus_passthrough) */
+			widget_instance_refocus_passthrough(child);
 			break;
 		}
 		child = child->next;
@@ -8545,6 +8684,8 @@ static void widget_instance_tab_to_previous_valid_widget(
 				widget_instance_port_is_label(child)))
 		{
 			widget->focused_child = child;
+			/* port: (widget_instance_refocus_passthrough) */
+			widget_instance_refocus_passthrough(child);
 			break;
 		}
 		if (child->previous)
@@ -8556,13 +8697,55 @@ static void widget_instance_tab_to_previous_valid_widget(
 	return;
 }
 
+/* port: whether the widget or one inside it is the local player's */
+static boolean widget_tree_has_local_player(
+	struct widget_instance const *widget,
+	short local_player_index)
+{
+	struct widget_instance const *child;
+
+	if (widget->local_player_index == local_player_index)
+		return TRUE;
+	for (child = widget->child; child; child = child->next)
+	{
+		if (widget_tree_has_local_player(child, local_player_index))
+			return TRUE;
+	}
+	return FALSE;
+}
+
+/* port: whether a screen shown has a widget of the controller's own: its
+own screen, or its part of a shared one (the Xbox menus' four quarters of
+SELECT PROFILE, where each controller presses A to join) */
+static boolean controller_has_own_widget(
+	short controller_index)
+{
+	short widget_index;
+
+	if (controller_index < 0 || controller_index >= MAXIMUM_NUMBER_OF_LOCAL_PLAYERS)
+		return FALSE;
+	if (widget_globals.active_widgets[controller_index])
+		return TRUE;
+	for (widget_index = 0; widget_index < MAXIMUM_NUMBER_OF_LOCAL_PLAYERS; widget_index++)
+	{
+		struct widget_instance const *widget = widget_globals.active_widgets[widget_index];
+
+		if (widget && widget_tree_has_local_player(widget, controller_index))
+			return TRUE;
+	}
+	return FALSE;
+}
+
 /* port: with one person playing, any controller drives the first player's
 menus, not only the first port's: a phone can list a device of its own (its
 touch controls) before the gamepad, which then reads port 2, and a player
 picks up whichever pad is at hand. Its screens read every controller's
 events (process_ui_widgets), and take them
 (widget_takes_events_of_controller). With two or more players, each
-controller keeps to its own player's menus */
+controller keeps to its own player's menus, and a controller with a widget
+of its own on the screen (a quarter of the Xbox menus' SELECT PROFILE,
+still empty while one person plays) keeps to it: else its A joined the
+first player's quarter, as the first player */
 static boolean widget_takes_any_controller(
 	struct widget_instance const *widget)
 {
@@ -8570,11 +8753,25 @@ static boolean widget_takes_any_controller(
 		(we_are_at_the_main_menu || players_port_local_player_count() <= 1);
 }
 
-/* port: the controller whose events a screen reads (NONE: every one's) */
+/* port: the controller whose events a screen reads (NONE: every one's;
+only its own while another controller has a widget of its own) */
 static short widget_event_controller(
 	struct widget_instance const *widget)
 {
-	return widget_takes_any_controller(widget) ? NONE : widget->local_player_index;
+	short controller_index;
+
+	/* (a screen that reads every controller's events: the lobby, ADD
+	PLAYER's quarters, pc_menu_screen_reads_every_controller) */
+	if (pc_menu_screen_reads_every_controller(widget))
+		return NONE;
+	if (!widget_takes_any_controller(widget))
+		return widget->local_player_index;
+	for (controller_index = 1; controller_index < MAXIMUM_NUMBER_OF_LOCAL_PLAYERS; controller_index++)
+	{
+		if (controller_has_own_widget(controller_index))
+			return widget->local_player_index;
+	}
+	return NONE;
 }
 
 /* port: whether a widget of the local player (NONE: any) takes the
@@ -8589,10 +8786,13 @@ static boolean widget_takes_events_of_controller(
 {
 	short player;
 
+	if (pc_menu_screen_routes_by_controller(widget))
+		return !widget->parent || widget->local_player_index == controller_index;
 	if (widget->local_player_index == NONE || widget->local_player_index == controller_index)
 		return TRUE;
 	if (controller_index > 0 && controller_index < MAXIMUM_NUMBER_OF_LOCAL_PLAYERS &&
-		widget_takes_any_controller(widget))
+		((widget_takes_any_controller(widget) && !controller_has_own_widget(controller_index)) ||
+		pc_menu_screen_reads_every_controller(widget)))
 	{
 		return TRUE;
 	}
@@ -9357,6 +9557,35 @@ static boolean ui_check_for_pause_game(
 	return pause_pressed;
 }
 
+/* port: console.widget_pool_log, a line in debug.txt each time the menus'
+widget memory reaches a new high, by a KB or more: what a console's pool
+size (HALO_CONSOLE_WIDGET_POOL_SIZE) has to hold */
+static void widget_pool_log_update(
+	void)
+{
+	static int enabled = -1;
+	static long logged_bytes;
+	long maximum_bytes;
+	unsigned long maximum_blocks;
+
+	if (enabled < 0)
+	{
+		enabled = config_boolean("console.widget_pool_log") ? 1 : 0;
+		if (enabled)
+			error(_error_log, "ui: the widget pool holds %ld KB", (long)WIDGET_MEMORY_POOL_SIZE / 1024);
+	}
+	if (!enabled)
+		return;
+	stack_memory_pool_usage(widget_memory_pool, &maximum_bytes, &maximum_blocks);
+	if (maximum_bytes >= logged_bytes + 1024)
+	{
+		logged_bytes = maximum_bytes;
+		error(_error_log, "ui: widget pool high-water %ld bytes of %ld (%ld%%), %lu of %d blocks", maximum_bytes,
+			(long)WIDGET_MEMORY_POOL_SIZE, maximum_bytes * 100 / (long)WIDGET_MEMORY_POOL_SIZE, maximum_blocks,
+			(int)MAXIMUM_WIDGET_MEMORY_POOL_BLOCKS);
+	}
+}
+
 void process_ui_widgets(
 	void)
 {
@@ -9372,6 +9601,7 @@ void process_ui_widgets(
 		644,
 		widget_globals.initialized);
 	widget_globals.current_system_milliseconds = system_milliseconds();
+	widget_pool_log_update();
 #ifndef HALO_XBOX_CONSOLE
 	ui_widgets_process_mouse();
 	if (ui_widget_port_press_controller != NONE)
@@ -9463,7 +9693,8 @@ void process_ui_widgets(
 		return;
 	}
 #endif
-	/* port: moderation's screen, over a menu of a dedicated server's game */
+	/* port: moderation's screen, over a menu of a dedicated server's game or
+	one this machine hosts */
 	moderation_screen_update(widget_globals.active_widgets[0] != NULL);
 	if (moderation_screen_active())
 	{

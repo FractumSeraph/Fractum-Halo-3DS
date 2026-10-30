@@ -86,6 +86,7 @@ symbols in this file:
 #include "interface/first_person_weapons.h"
 #include "interface/hud.h"
 #include "interface/hud_definitions.h"
+#include "interface/hud_draw.h" /* port: hud_set_screen_effect_mask */
 #include "interface/interface.h"
 #include "interface/hud_messaging.h"
 #include "interface/terminal.h"
@@ -108,6 +109,8 @@ symbols in this file:
 #include "map_share.h" /* port: port/linux/game/map_share.c */
 #include "latency_meter.h" /* port: port/linux/game/latency_meter.c */
 #include "halo_perf_log.h" /* port: console.perf_log */
+#include "stats_log.h" /* port: port/linux/game/stats_log.c */
+#include "frame_rate_display.h" /* port: port/linux/game/frame_rate_display.c */
 
 /* ---------- constants */
 
@@ -404,6 +407,11 @@ void interface_draw_fullscreen_overlays(
 	map_share_render();
 	/* port: a network game's round trip to the host (display.latency_meter) */
 	latency_meter_draw();
+	/* port: display.stats_log, a line a second in the log (stats_log.c) */
+	stats_log_tick();
+	/* port: the frame rate counter as display.show_fps says
+	(port/linux/game/frame_rate_display.c) */
+	frame_rate_display_update();
 	terminal_draw();
 	main_framerate_render();
 	render_debug_profile();
@@ -613,6 +621,9 @@ void interface_draw_screen(
 			struct rasterizer_cinematic_screen_effect_parameters parameters;
 
 			csmemset(&parameters, 0, sizeof(parameters));
+#ifdef HALO_CUSTOM_EDITION
+			hud_set_screen_effect_mask(NULL, NONE);
+#endif
 
 			if (zoomed ||
 				!TEST_FLAG(screen_effect->mask_flags,
@@ -628,6 +639,10 @@ void interface_draw_screen(
 						&bitmap_group_get(mask_tag_index)->bitmaps,
 						0,
 						struct bitmap_data);
+#ifdef HALO_CUSTOM_EDITION
+					/* port: drawn at its group's high resolution scale (hud_draw.c) */
+					hud_set_screen_effect_mask(parameters.convolution_mask, mask_tag_index);
+#endif
 					parameters.filter_light_enhancement_uses_convolution_mask =
 						TEST_FLAG(
 							screen_effect->light_enhancement_flags,

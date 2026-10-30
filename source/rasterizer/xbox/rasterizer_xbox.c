@@ -2389,6 +2389,14 @@ static void rasterizer_screen_width_update(
 			(short)(RASTERIZER_FRAME_BOUNDS_X0 * width / RASTERIZER_SCREEN_WIDTH);
 		rasterizer_globals.reserved04.frame_bounds.x1 =
 			(short)(width - rasterizer_globals.reserved04.frame_bounds.x0);
+		/* port: the frame inside a round display (a watch's) at its new width */
+		rasterizer_globals.reserved04.frame_bounds.y0 = RASTERIZER_FRAME_BOUNDS_Y0;
+		rasterizer_globals.reserved04.frame_bounds.y1 = RASTERIZER_FRAME_BOUNDS_Y1;
+		halo_screen_round_frame(
+			&rasterizer_globals.reserved04.frame_bounds.x0,
+			&rasterizer_globals.reserved04.frame_bounds.y0,
+			&rasterizer_globals.reserved04.frame_bounds.x1,
+			&rasterizer_globals.reserved04.frame_bounds.y1);
 		if (global_d3d_surface_render_primary)
 		{
 			DWORD size = global_d3d_surface_render_primary->Size;
@@ -2746,6 +2754,11 @@ void rasterizer_set_stencil_mode(
 	return;
 }
 
+/* port: set while a pass redraws the first-person weapon at the world's
+clip distances (the fog screen's), so its frustum takes the weapon's own
+view width as well */
+static boolean frustum_first_person_width = FALSE;
+
 void rasterizer_set_frustum_z(
 	real z_near,
 	real z_far)
@@ -2779,8 +2792,9 @@ void rasterizer_set_frustum_z(
 	/* port: display.viewmodel_field_of_view: the first-person weapon's
 frustum (its own clip distances) narrowed or widened to the weapon's view
 width; only its x and y, the depth as before */
-	if (z_near == rasterizer_globals.first_person_weapon_near_clip_distance &&
-		z_far == rasterizer_globals.first_person_weapon_far_clip_distance)
+	if (frustum_first_person_width ||
+		(z_near == rasterizer_globals.first_person_weapon_near_clip_distance &&
+		z_far == rasterizer_globals.first_person_weapon_far_clip_distance))
 	{
 		real scale = first_person_weapon_projection_scale();
 
@@ -2814,6 +2828,21 @@ width; only its x and y, the depth as before */
 		-96,
 		vertex_constants,
 		8);
+	return;
+}
+
+/* port: the world's frustum with the first-person weapon's view width
+(display.viewmodel_field_of_view) or back to the world's own. The fog screen
+redraws the opaque models, the weapon among them, at the world's clip
+distances to keep the fog off them; at the world's width the weapon's copy
+missed the weapon whenever the two widths differed, and left a fogged
+shadow of it beside the weapon. */
+void rasterizer_set_frustum_first_person_width(
+	boolean first_person)
+{
+	frustum_first_person_width = first_person;
+	rasterizer_set_frustum_z(0.0f, 0.0f);
+
 	return;
 }
 
@@ -2931,6 +2960,14 @@ boolean _rasterizer_initialize(
 #endif
 		rasterizer_globals.reserved04.frame_bounds.y0 = RASTERIZER_FRAME_BOUNDS_Y0;
 		rasterizer_globals.reserved04.frame_bounds.y1 = RASTERIZER_FRAME_BOUNDS_Y1;
+#ifndef HALO_XBOX_CONSOLE
+		/* port: the frame inside a round display (a watch's) */
+		halo_screen_round_frame(
+			&rasterizer_globals.reserved04.frame_bounds.x0,
+			&rasterizer_globals.reserved04.frame_bounds.y0,
+			&rasterizer_globals.reserved04.frame_bounds.x1,
+			&rasterizer_globals.reserved04.frame_bounds.y1);
+#endif
 		rasterizer_globals.fps_accumulation_frame_index = 1;
 		csmemset(&d3d_present_parameters, 0, sizeof(d3d_present_parameters));
 		d3d_present_parameters.Flags = D3DPRESENTFLAG_LOCKABLE_BACKBUFFER;

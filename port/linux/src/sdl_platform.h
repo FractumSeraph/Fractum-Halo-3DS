@@ -49,6 +49,9 @@ void platform_menus_set_active(BOOL active);
 mouse button or wheel turn is taken, and none reaches the game or the
 menus; nor does the keyboard after, until every key and button is up */
 void platform_binding_capture_begin(void);
+/* the capture ends, nothing taken, as Escape ends it (the menus' B); its
+guard for the keys already held stays */
+void platform_binding_capture_cancel(void);
 /* 0 while waiting; else the capture ends: 1 with the input, 2 for none
 (Delete), 3 if cancelled (Escape) */
 int platform_binding_capture_poll(int *input);
@@ -65,6 +68,34 @@ struct platform_keystroke
 	CHAR ascii;
 	BYTE flags;
 };
+
+/* the device the player used last, for the button prompts (xinput_sdl.c):
+a gamepad (an SDL_Gamepad), or NULL for the keyboard and mouse. The
+launcher's own input (launcher.c), which the controller emulation never
+sees */
+void platform_input_scheme_used(void *gamepad);
+
+/* whether the game runs without anyone to answer a question (a test run, a
+null renderer, the Steam Deck's Game Mode): no launcher, no message boxes */
+BOOL platform_run_is_quiet(void);
+
+/* the maps out of a file the player picked (the first start, the
+launcher's Add maps), on a thread of their own: the kind of file it is
+(an Xbox disc image, a Halo PC CD image, Custom Edition's installer), by
+what it holds; the copy started into destination (its maps/, or maps_pc/,
+maps_ce/); then, polled, how far it has got, and TRUE once it is done, with
+whether it worked (and why not in error) */
+enum
+{
+	PLATFORM_IMPORT_UNKNOWN,
+	PLATFORM_IMPORT_XBOX_DISC,
+	PLATFORM_IMPORT_HALO_PC_DISC,
+	PLATFORM_IMPORT_CE_INSTALLER,
+};
+int platform_import_kind(const char *path);
+BOOL platform_import_start(int kind, const char *image, const char *destination, char *error, int error_size);
+BOOL platform_import_poll(char *file, int file_size, unsigned long long *done, unsigned long long *total,
+	BOOL *succeeded, char *error, int error_size);
 
 BOOL platform_sdl_initialize(void);
 /* creates the window and makes its OpenGL context current on this thread */
@@ -156,11 +187,15 @@ void platform_test_pointer_event(float x, float y, int button, int wheel);
 which differ from the drawable's pixels on displays that scale */
 void platform_video_window_size(int *width, int *height);
 #ifndef HALO_ANDROID
-/* a menu's text field typed into or not (a password's or not): the system's
-on-screen keyboard up while it is, where there is one that text input shows
-(Steam's); each field begun brings it up again */
-void platform_screen_keyboard(BOOL show, BOOL password);
+/* the open scoreboard's pointer, offered (a network game's) or not: TRUE
+while a right click has freed it, with what it did since the last call */
+BOOL platform_scoreboard_pointer(BOOL offered, struct platform_ui_pointer *pointer);
 #endif
+/* a menu's text field typed into or not (a password's or not), or on
+Android also the game's own keyboard: the system's on-screen keyboard up
+while it is, where there is one that text input shows (Steam's, Android's on
+a touchscreen); each field begun brings it up again */
+void platform_screen_keyboard(BOOL show, BOOL password);
 BOOL platform_next_keystroke(struct platform_keystroke *keystroke);
 /* the multiplayer scoreboard (game_engine.c) open or not: while it is, the
 mouse wheel and Page Up/Down scroll it instead of switching weapons; how

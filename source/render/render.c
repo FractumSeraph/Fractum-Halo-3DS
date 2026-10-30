@@ -339,6 +339,7 @@ static void render_window(
 	render.local_player_index = local_player_index;
 	render.camera = *camera;
 	render.frustum = *frustum;
+	object_functions_set_for_render(TRUE);
 	parameters.camera = *rasterizer_camera;
 	parameters.frustum = *rasterizer_frustum;
 	parameters.rasterizer_target = rasterizer_target;
@@ -364,6 +365,7 @@ static void render_window(
 		HALO_PERF_RENDER_PART(_halo_perf_render_world);
 		structure_render_preprocess();
 		structure_render_lightmaps();
+		HALO_PERF_RENDER_PART(_halo_perf_render_lens_flares);
 		rasterizer_lens_flares_submit_occlusion_tests();
 		HALO_PERF_RENDER_PART(_halo_perf_render_objects);
 		render_object_shadows();
@@ -465,7 +467,8 @@ static void render_window(
 		interface_draw_screen();
 		rasterizer_screen_flash();
 #ifndef HALO_XBOX_CONSOLE
-		halo_screen_ui_offset(TRUE);
+		/* port: the view's menus centred in it (a quarter's are 320 wide) */
+		halo_screen_ui_offset_view(rasterizer_camera->viewport_bounds.x1 - rasterizer_camera->viewport_bounds.x0);
 		render_ui_widgets(local_player_index, &rasterizer_camera->viewport_bounds);
 		halo_screen_ui_offset(FALSE);
 #else
@@ -482,6 +485,7 @@ static void render_window(
 	rasterizer_window_end();
 	HALO_PERF_RENDER_PART(_halo_perf_render_setup);
 	profile_render_window_end();
+	object_functions_set_for_render(FALSE);
 
 	return;
 }

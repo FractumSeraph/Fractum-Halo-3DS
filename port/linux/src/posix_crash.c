@@ -173,9 +173,17 @@ static void context_registers(void *context, uintptr_t *pc, uintptr_t *frame)
 #elif defined(__linux__) && defined(__x86_64__)
 	*pc = (uintptr_t)ucontext->uc_mcontext.gregs[REG_RIP];
 	*frame = (uintptr_t)ucontext->uc_mcontext.gregs[REG_RBP];
+#elif defined(HALO_UNIX_CONTEXT_PC)
+	/* (the other Unix hosts': port/unix/include/halo_unix_host.h) */
+	*pc = (uintptr_t)HALO_UNIX_CONTEXT_PC(ucontext);
+	*frame = (uintptr_t)HALO_UNIX_CONTEXT_FRAME(ucontext);
 #elif defined(__linux__) && defined(__i386__)
 	*pc = (uintptr_t)ucontext->uc_mcontext.gregs[REG_EIP];
 	*frame = (uintptr_t)ucontext->uc_mcontext.gregs[REG_EBP];
+#elif defined(__linux__) && defined(__arm__)
+	/* (Thumb-2 code's frame pointer is r7, ARM code's r11) */
+	*pc = (uintptr_t)ucontext->uc_mcontext.arm_pc;
+	*frame = (uintptr_t)ucontext->uc_mcontext.arm_r7;
 #else
 	(void)ucontext;
 	*pc = 0;

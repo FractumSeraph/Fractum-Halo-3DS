@@ -15,8 +15,9 @@ know, which are put right when the map's tags load:
     since do the same from the bitmap an element draws: Chimera's "force HUD
     use high resolution scale" draws it as if its placement had the flag,
     and MCC's "0.5 HUD scale" halves its scale again, after that. (What the
-    HUD globals draw with no placement of their own to scale, the digits and
-    the waypoints' arrows, is scaled by those flags as it is drawn:
+    HUD draws with no placement of its own to scale, the digits, the
+    waypoints' arrows, the messages' icons, the damage indicators and the
+    zoomed view's mask, is scaled by those flags as it is drawn:
     hud_bitmap_group_scale, hud_draw.c.) A number's digits are drawn at the
     HUD's scale, not its placement's, so a number keeps the flag, and
     hud_draw_numbers draws a flagged number's digits at half size (a custom
@@ -34,7 +35,11 @@ know, which are put right when the map's tags load:
     custom HUD's shared sheet) keeps its channels, and only its meter's draw
     samples them so (ce_hud_bitmap_is_mixed_meter: hud_draw.c,
     halo_custom_edition_hud_meter; OpenCE's 384d9ba5, its "mixed-use"
-    sheets).
+    sheets). A meter
+    flagged "use Xbox shading" (MCC's flag, which Chimera reads too) has
+    its bitmap in the Xbox's order, as halopc-restored's Xbox order meters
+    and custom HUDs do, so its bitmap is not listed and is drawn as the
+    Xbox draws it.
 
 Some maps were made around how Halo PC drew their HUD, where Chimera (by
 SnowyMouse) draws them otherwise; Chimera lists them by name and tag data
@@ -104,8 +109,12 @@ enum
 	PLACEMENT_SCALING_FLAGS_OFFSET = 0x0c,
 	PLACEMENT_HIGH_RESOLUTION_SCALE_FLAG = 1 << 2,
 	/* a static or meter element (static_hud_element_definition,
-	meter_hud_element_definition): its placement, then its bitmap */
+	meter_hud_element_definition): its placement, then its bitmap; a
+	meter's flags, and the one saying its bitmap is in the Xbox's order
+	(after the Xbox's five: MCC's "use Xbox shading") */
 	ELEMENT_BITMAP_OFFSET = 0x24,
+	METER_FLAGS_OFFSET = 0x44,
+	METER_USE_XBOX_SHADING_FLAG = 1 << 5,
 
 	/* the unit HUD interface (unit_hud_interface_definition) */
 	UNIT_HUD_BACKGROUND_OFFSET = 0x24,
@@ -329,6 +338,9 @@ static struct
 {
 	void const *bitmap_group;
 	long first_sequence;
+	/* (the Xbox's bitmaps in it, drawn at their own size whatever its
+	flags: ce_hud_bitmap_is_xbox_button) */
+	byte const *xbox_bitmaps;
 } ce_hud_button_icon_groups[4];
 static long ce_hud_button_icon_group_count;
 
@@ -548,15 +560,19 @@ static void ce_hud_digits_halve(
 	}
 }
 
-/* the bitmap a meter element draws: each of its bitmaps listed (once) */
+/* the bitmap a meter element draws: each of its bitmaps listed (once),
+unless the meter says they are in the Xbox's order */
 static void ce_hud_meter_bitmap(
 	byte const *element)
 {
-	byte *bitmap_group = ce_hud_bitmap_group(element + ELEMENT_BITMAP_OFFSET);
+	byte *bitmap_group;
 	long count;
 	unsigned long address;
 	long index;
 
+	if (element[METER_FLAGS_OFFSET] & METER_USE_XBOX_SHADING_FLAG)
+		return;
+	bitmap_group = ce_hud_bitmap_group(element + ELEMENT_BITMAP_OFFSET);
 	if (!bitmap_group)
 		return;
 	/* (Bigass Open v1.1's shared weapon sheet has the Xbox's meter channels:
@@ -1232,6 +1248,8 @@ static void ce_hud_button_icons(
 		first_sequence = sequence_count;
 		ce_hud_button_icon_groups[ce_hud_button_icon_group_count].bitmap_group = group;
 		ce_hud_button_icon_groups[ce_hud_button_icon_group_count].first_sequence = first_sequence;
+		ce_hud_button_icon_groups[ce_hud_button_icon_group_count].xbox_bitmaps =
+			(byte const *)xbox_pointer(new_bitmaps) + bitmap_count * BITMAP_SIZE;
 		ce_hud_button_icon_group_count++;
 	}
 	else
@@ -1346,12 +1364,13 @@ void ce_hud_tags_loaded(
 	ce_hud_tag_count = 0;
 }
 
-/* the map unloaded (cache_files.c): no bitmaps are meters, and nothing is
-relied on */
+/* the map unloaded (cache_files.c): no bitmaps are meters, nor the Xbox's
+button icons, and nothing is relied on */
 void ce_hud_tags_unloaded(
 	void)
 {
 	ce_hud_meter_bitmap_count = 0;
+	ce_hud_button_icon_group_count = 0;
 	ce_hud_mixed_meter_bitmap_count = 0;
 	ce_hud_static_group_count = 0;
 	ce_hud_behaviours = 0;
@@ -1551,6 +1570,28 @@ boolean ce_hud_check(
 		}
 	}
 	return TRUE;
+}
+
+/* whether a bitmap (bitmap_data) of the map loaded is one of the Xbox's
+button icons added to its message icons (ce_hud_button_icons), which are
+drawn at their own size: not the map's, whose bitmap flags may scale them
+(render_state_bitmap, hud_messaging.c) */
+boolean ce_hud_bitmap_is_xbox_button(
+	void const *bitmap)
+{
+	long index;
+
+	for (index = 0; index < ce_hud_button_icon_group_count; index++)
+	{
+		byte const *first = ce_hud_button_icon_groups[index].xbox_bitmaps;
+
+		if ((byte const *)bitmap >= first &&
+			(byte const *)bitmap < first + ce_xbox_button_icons.bitmap_count * BITMAP_SIZE)
+		{
+			return TRUE;
+		}
+	}
+	return FALSE;
 }
 
 /* whether a bitmap (bitmap_data) of the map loaded is a Custom Edition

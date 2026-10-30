@@ -101,6 +101,7 @@ symbols in this file:
 #include "console.h"
 #include "game_state.h"
 #include "coop_vehicles.h" /* port: preserve replacement-vehicle homes across reverts */
+#include "network_coop.h" /* port: checkpoint membership for host team-wipe reverts */
 #include "game.h"
 #include "tag_files.h"
 #include "cache_files.h"
@@ -199,6 +200,9 @@ static game_state_before_load_proc before_load_procs[] =
 	cluster_partitions_port_forget,
 	/* port: (the objects are put back: object_bounds_cache.c) */
 	object_bounds_cache_invalidate,
+	/* port: (and the inputs their functions were computed from are not
+	theirs: objects.c's object_function_inputs) */
+	object_function_inputs_forget,
 };
 
 static game_state_after_load_proc after_load_procs[] =
@@ -300,6 +304,9 @@ void game_state_initialize_for_new_map(
 
 	/* port: (the objects are put back: object_bounds_cache.c) */
 	object_bounds_cache_invalidate();
+	/* port: (and the inputs their functions were computed from are not
+	theirs: objects.c's object_function_inputs) */
+	object_function_inputs_forget();
 	game_state_note_event("map start");
 	game_state_data_arrays_new_map();
 
@@ -345,6 +352,9 @@ static void game_state_capture_checkpoint(boolean persist)
          n3ds_checkpoint_write_captured(game_state_globals.base_address,
              &game_state_globals.header->checksum,sizeof(*game_state_globals.header),GAME_STATE_SIZE);}
 #endif
+	/* port: never associate new players with an older or failed save. */
+	if (game_state_globals.saved_game_valid)
+		network_coop_checkpoint_saved();
 	main_start_time();
 	game_state_note_event("checkpoint saved");
 

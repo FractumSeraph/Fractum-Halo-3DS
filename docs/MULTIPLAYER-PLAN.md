@@ -113,7 +113,7 @@ System link works in Azahar, both ways, with the fork's Windows game
   overshield effect, the passenger camera, structure culling, model
   detail). The model part cache takes its `display.model_detail` rules.
   To follow the fork again: `port/n3ds/tools/fork_update.py`'s three-way merge from the
-  last fork commit taken (now 4a752e42f) to the new one.
+  last fork commit taken (now 7da18311c) to the new one.
 - **Internet play.** The fork's p2p layer and Delta are built (9a3b288):
   STUN, the MQTT brokers (its built-in list: halovps.fractumseraph.net
   first), the tunnel with kcp, Monocypher's signatures; no WebRTC (the
@@ -616,6 +616,38 @@ The first runs on a New 3DS (124 MB for the game; `CE MAPS: playable`):
   community list, OpenCE's dedicated servers among them ("OpenCE (legacy,
   network 39)"). The first ask, made before the console's network was up,
   failed to connect; the next round 30 s later answered.
+- **Fork 7da18311c, network version 41 (2026-10-30).** The last fork commit
+  taken is now 7da18311c (fork main): OpenCE main da8d45562 (network
+  version 41, joining 11 to 42) and ChupathingyCE 0.8.1d (Delta wire
+  `chupa-41a`, locked invites, host moderation, map votes, AFK kicks,
+  Player Link, playlists' map sets). `fork_update.py`: 208 files merged,
+  44 added, 5 conflicts resolved:
+  - `browser_screen.c`: SELECT still types an invite on the 3DS (the fork
+    made Back its list filter); the prompt bar says TYPE INVITE there.
+  - `p2p_lobby.c`: the fork took the listing time window into
+    `listing_current`, which now reads `LISTING_NOW()` (the 3DS's UTC).
+  - `cache_files.c`: the 3DS's SD card read moved into the fork's new
+    `cache_files_map_xbox_header`.
+  - `build_identity.c` (the 3DS before the fork's 32-bit ARM Android, both
+    `__arm__`) and `game_state.c` (both sides).
+  New units built: `network_link.c`, `network_afk.c`, `network_map_vote.c`,
+  `bots_combat.c`, `determinism_check.c`, `touch_postgame.c` (game) and
+  `player_link.c`, `playlist_download.c`, `playlist_manifest.c`,
+  `server_events.c`, `server_log.c`, `server_netlist.c` (the last three are
+  the fork's stand-ins with `HALO_SERVER_BUILD` 0). Not built, given
+  stand-ins in `engine_fork_stubs.c`: the SDL controller remapper (the 3DS
+  has its own buttons), the desktop's debug camera keys, the stencil modes
+  (light volumes on the viewmodel are drawn in one pass, as before),
+  `halo_screen_scale` (1: the HUD stays point sampled), the high
+  resolution crosshairs and frame interpolation's object points.
+  Locked invites' passwords: `platform_text_field` opens the system
+  keyboard in password mode (`engine_invite_keyboard.c`), and
+  `invite_prompt_password_typed` answers the fork's password dialog; a
+  wrong one asks again. Tested in Azahar: Online Games lists the master's
+  32 servers, OpenCE's as "OpenCE (legacy, network 41)"; the 3DS joined
+  the fork's ChupathingyCE server and OpenCE's `halo --server`, both built
+  from 7da18311c (network version 41, Delta agreed), and played Blood
+  Gulch; Chaos Gulch and a 15-bot game played.
 - **A test of the socket service as the console has it.** With
   `halo-source/soc-serial.txt` present, every socket call is made under one
   lock (`engine_soc_serial.c`, wrapped at link time: `port/n3ds/build.py`).

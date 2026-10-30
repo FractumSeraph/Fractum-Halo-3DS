@@ -198,6 +198,12 @@ enum
 	MAXIMUM_ENVIRONMENT_FOG_SCREEN_OPAQUE_MODELS = 128,
 };
 
+/* (a model's geometry flags: rasterizer_xbox_models.c) */
+enum
+{
+	_rasterizer_geometry_first_person_bit = 7,
+};
+
 enum
 {
 	_rasterizer_target_render_primary = 0,
@@ -394,6 +400,9 @@ static short local_fog_pass = 0;
 static struct rasterizer_environment_fog_screen_window windows[MAXIMUM_WINDOWS] = {0};
 static struct transparent_geometry_group *opaque_model_submit_parameters = NULL;
 static long opaque_model_count = 0;
+/* port: which of them are the first-person weapon's, drawn at its own view
+width (display.viewmodel_field_of_view) */
+static boolean opaque_model_first_person[MAXIMUM_ENVIRONMENT_FOG_SCREEN_OPAQUE_MODELS] = {0};
 static boolean fog_screen_active[MAXIMUM_WINDOWS] = {0};
 static unsigned __int64 last_frame_index[MAXIMUM_WINDOWS] = {0};
 static short atmosphere_dominant_warning_count = 0;
@@ -541,6 +550,9 @@ void rasterizer_environment_fog_screen_model_submit(
 			group->dynamic_vertex_buffer_index = dynamic_vertex_buffer_index;
 			group->vertex_buffer = vertex_buffer;
 			group->model_base_map_scale = model->base_map_scale;
+			opaque_model_first_person[opaque_model_count - 1] = TEST_FLAG(
+				model->geometry_flags,
+				_rasterizer_geometry_first_person_bit);
 			if (!model_parameters_cached)
 			{
 				cached_node_matrices =
@@ -1053,11 +1065,9 @@ void _rasterizer_environment_fog_screen_begin(
 					}
 					/* January copies the first matrix-sized camera bytes here verbatim. */
 					csmemcpy(
-						&previous_camera_matrix[
-							window_index],
+						previous_camera_matrix_for_window(window_index),
 						&global_window_parameters.camera,
-						sizeof(previous_camera_matrix[
-							window_index]));
+						sizeof(real_matrix4x3));
 				}
 				local_fog_screen_first_time = FALSE;
 			}
@@ -1073,8 +1083,7 @@ void _rasterizer_environment_fog_screen_begin(
 			matrix4x3_multiply(&wind_matrix, &matrix, &matrix);
 			matrix4x3_multiply(&global_window_parameters.frustum.world_to_view, &matrix, &matrix);
 			csmemcpy(
-				&previous_camera_matrix[
-					global_window_parameters.window_index],
+				previous_camera_matrix,
 				&global_window_parameters.frustum.world_to_view,
 				sizeof(real_matrix4x3));
 			}
@@ -1564,7 +1573,15 @@ void _rasterizer_environment_fog_screen_begin(
 					rasterizer_set_model_skinning(&skinning);
 					if (success)
 					{
+						if (opaque_model_first_person[group_index])
+						{
+							rasterizer_set_frustum_first_person_width(TRUE);
+						}
 						rasterizer_transparent_geometry_group_draw__internal(group, FALSE);
+						if (opaque_model_first_person[group_index])
+						{
+							rasterizer_set_frustum_first_person_width(FALSE);
+						}
 						if (rasterizer_debug_options.statistics_mode ==
 							_rasterizer_statistics_mode_enabled)
 						{

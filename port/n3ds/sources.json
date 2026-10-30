@@ -3579,6 +3579,78 @@
       "defines": [
         "HALO_LINUX_PLATFORM_LAYER=1"
       ]
+    },
+    {
+      "source": "port/linux/game/network_link.c",
+      "compiler": "clang",
+      "defines": []
+    },
+    {
+      "source": "port/linux/game/network_afk.c",
+      "compiler": "clang",
+      "defines": []
+    },
+    {
+      "source": "port/linux/game/network_map_vote.c",
+      "compiler": "clang",
+      "defines": []
+    },
+    {
+      "source": "port/linux/src/player_link.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
+    },
+    {
+      "source": "port/linux/src/server_events.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
+    },
+    {
+      "source": "port/linux/src/server_log.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
+    },
+    {
+      "source": "port/linux/src/server_netlist.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
+    },
+    {
+      "source": "port/linux/src/playlist_download.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
+    },
+    {
+      "source": "port/linux/src/playlist_manifest.c",
+      "compiler": "clang",
+      "defines": [
+        "HALO_LINUX_PLATFORM_LAYER=1"
+      ]
+    },
+    {
+      "source": "port/linux/game/bots_combat.c",
+      "compiler": "clang",
+      "defines": []
+    },
+    {
+      "source": "port/linux/game/determinism_check.c",
+      "compiler": "clang",
+      "defines": []
+    },
+    {
+      "source": "port/linux/game/touch_postgame.c",
+      "compiler": "clang",
+      "defines": []
     }
   ],
   "runtime": [

@@ -275,6 +275,8 @@ boolean network_voice_handles_message(word const *message, word size);
 void network_voice_handle_message(long machine_index, word const *message, word size);
 /* port/linux/game/map_share.c's: map sharing, in the lobby too */
 boolean map_share_handles_message(word const *message, word size);
+boolean network_map_vote_handles_message(word const *message, word size);
+void network_map_vote_handle_message(long machine_index, word const *message, word size, boolean from_stream);
 void map_share_handle_message(long machine_index, word const *message, word size, boolean from_stream);
 void network_distributed_handle_stream_message(long machine_index, word const *message, word size);
 
@@ -446,6 +448,11 @@ struct message_client_join_game_request
 	byte join_game_token[JOIN_GAME_TOKEN_LENGTH];
 	/* port: the machine's hardware id, as hex, as it tells it (p2p.c) */
 	char hardware_id[0x20];
+	/* port: a Discord account's pass and its proof for this connection, all
+	zero for none (port/linux/src/player_link.c: a dedicated server that
+	refused the machine for its VPN asks for it) */
+	byte link_pass[170];
+	byte link_proof[64];
 };
 
 struct message_client_settings_request
@@ -885,8 +892,18 @@ void network_rules_settings_record_copy(unsigned char const *record, int options
 	unsigned char *out);
 int network_rules_host_takes_game_type(int size, int opence);
 #ifdef HALO_GAME_BROWSER
-unsigned char delta_peer_advertised_flags(void);
+int delta_peer_hosting_delta(void);
+/* (the advertisement's game engine, as delta.h's DELTA_ADVERTISED_KIND_ENGINE
+says Slayer's) */
+typedef char advertised_kind_engine_is_slayer[game_engine_slayer == 2 ? 1 : -1];
 int delta_peer_game_machine_legacy_version(int machine_index);
+int delta_peer_advertised_old_layout(void);
+int network_rules_host_hello_matters(unsigned announce, unsigned oldest);
+#include "delta.h"
+#endif
+#if defined(HALO_GAME_BROWSER) || defined(HALO_CONSOLE_DELTA)
+/* port/linux/src/delta_compat.c's */
+int delta_compat_join_marked(unsigned short *name, int count);
 #endif
 
 enum
@@ -909,8 +926,9 @@ typedef char network_game_server_settings_size_assert[
 /* each client machine's record: the connection it is for, since when it is
 waited for, its size once known (0: not yet) and its options' bytes,
 whether the record is owed it (it was held back:
-network_game_server_settings_frame sends it), and (port, this fork) whether
-it was refused a game of OpenCE's game types */
+network_game_server_settings_frame sends it), whether its join request
+had the join mark (delta_compat.h: it will say HELLO), and (port, this
+fork) whether it was refused a game of OpenCE's game types */
 static struct network_game_server_settings_machine
 {
 	struct network_connection *connection;
@@ -919,7 +937,12 @@ static struct network_game_server_settings_machine
 	long options;
 	boolean owed;
 	boolean refused;
+	boolean marked;
 } network_game_server_settings_machines[MAXIMUM_NETWORK_MACHINE_COUNT];
+
+/* the join mark of the join request being handled, for
+network_game_server_settings_machine_joined */
+static boolean network_game_server_join_marked;
 
 static long network_game_server_settings_slot(
 	struct network_game_server *server,
@@ -957,7 +980,11 @@ static void network_game_server_settings_machine_joined(
 	long slot = network_game_server_settings_slot(server, machine);
 
 	if (slot != NONE)
+	{
 		csmemset(&network_game_server_settings_machines[slot], 0, sizeof(network_game_server_settings_machines[slot]));
+		network_game_server_settings_machines[slot].connection = network_game_server_get_client_connection(machine);
+		network_game_server_settings_machines[slot].marked = network_game_server_join_marked;
+	}
 }
 
 /* the size of the record the machine takes, 0 while it is waited for (and
@@ -1010,8 +1037,15 @@ static long network_game_server_settings_layout(
 		if (network_game_server_get_client_machine(server, machine, &machine_index))
 			delta_version = network_game_server_machine_delta_version(machine_index);
 #ifdef HALO_GAME_BROWSER
-		waiting = delta_peer_advertised_flags() != 0 &&
-			now - entry->since < NETWORK_GAME_SERVER_SETTINGS_HELLO_WAIT;
+		/* (a machine that marked its join will say HELLO; one that did not
+		is OpenCE's, or a Delta build from before the mark, waited for only
+		if a HELLO it may say could change its record: the oldest version a
+		Delta build reading this host's advertisement says, from the tag
+		on, takes the host's record unless the host announces newer) */
+		waiting = delta_peer_hosting_delta() &&
+			now - entry->since < NETWORK_GAME_SERVER_SETTINGS_HELLO_WAIT &&
+			(entry->marked || network_rules_host_hello_matters(announce,
+				delta_peer_advertised_old_layout() ? 0 : DELTA_TAG_OLDEST_LEGACY));
 #endif
 	}
 	entry->size = network_rules_host_settings_size(announce, delta_version, waiting);
@@ -1021,7 +1055,8 @@ static long network_game_server_settings_layout(
 	if (entry->size && announce >= 35)
 	{
 		network_event("machine #%ld takes the game settings record of %ld bytes (this host's network version %u, "
-			"its HELLO's %u: 0 for none)", machine_index, entry->size, announce, delta_version);
+			"its HELLO's %u: 0 for none; join mark %s)", machine_index, entry->size, announce, delta_version,
+			entry->marked ? "yes" : "no");
 	}
 	return entry->size;
 }
@@ -1846,6 +1881,20 @@ boolean network_game_server_handle_client_message(
 					}
 					break;
 				}
+				/* (port: a dedicated server's map vote's, in the lobby too,
+				from its stream alone: network_map_vote.c) */
+				if (network_map_vote_handles_message(message, message_buffer_size))
+				{
+					long machine_index;
+
+					if (network_game_server_client_machine_is_joined_to_game(server, machine) &&
+						network_game_server_get_client_machine(server, machine, &machine_index))
+					{
+						network_game_server_client_machine_heard(server, machine);
+						network_map_vote_handle_message(machine_index, message, message_buffer_size, TRUE);
+					}
+					break;
+				}
 				/* (in game, from a machine that has loaded it, as a datagram
 				is: else dropped) */
 				if (network_game_server_client_machine_is_joined_to_game(server, machine) &&
@@ -2225,18 +2274,27 @@ static boolean network_game_server_handle_message_client_broadcast_game_search(
 			/* the native builds' network version and netcode (a client
 			refuses a host of another version, or of the lockstep netcode
 			older builds had: network_client_manager.c) */
+			/* (a game under way holds the number it is played by: a newer
+			one the legacy table proves is taken back in the lobby,
+			delta_legacy_hold) */
+			delta_legacy_hold(network_game_server_get_state(server, NULL) != _network_game_server_state_pregame ||
+				network_game_server_game_is_loading(server));
 			advertisement.reserved[HALO_PORT_ADVERTISED_VERSION_OFFSET] = (byte)(delta_legacy_announce() & 0xFF);
 			advertisement.reserved[HALO_PORT_ADVERTISED_VERSION_OFFSET + 1] = (byte)(delta_legacy_announce() >> 8);
 			advertisement.reserved[HALO_PORT_ADVERTISED_FLAGS_OFFSET] =
 				HALO_PORT_ADVERTISED_DISTRIBUTED_FLAG;
 #ifdef HALO_GAME_BROWSER
-			/* (and Delta Peer's flag, while this host speaks it, with the
-			game wire it plays after the flags: OpenCE's machines ignore
-			both; port/linux/src/delta_peer.h) */
+			/* (and a dedicated server's flag, version 39's, which released
+			Delta clients read as Delta's; the game's kind, 0; and while this
+			host speaks Delta Peer, the Delta tag at the reserved bytes' tail,
+			which OpenCE's machines ignore, and on a dedicated server, in a
+			game that is not Slayer, the old layout for released clients:
+			port/linux/src/delta_peer.h) */
 			{ unsigned char delta_peer_advertised_flags(void);
-			  void delta_peer_advertised_wire(unsigned char *reserved, int size);
+			  void delta_peer_advertised_wire(unsigned char *reserved, int size, int engine);
 			  advertisement.reserved[HALO_PORT_ADVERTISED_FLAGS_OFFSET] |= delta_peer_advertised_flags();
-			  delta_peer_advertised_wire(advertisement.reserved, (int)sizeof(advertisement.reserved)); }
+			  delta_peer_advertised_wire(advertisement.reserved, (int)sizeof(advertisement.reserved),
+				  (int)game->variant.game_engine_index); }
 #endif
 			if (network_game_server_get_state(server, NULL) != _network_game_server_state_pregame ||
 				network_game_server_game_is_loading(server))
@@ -2245,9 +2303,9 @@ static boolean network_game_server_handle_message_client_broadcast_game_search(
 			}
 			/* port: a dedicated server, with no player of its own
 			(port/linux/game/server_director.c; port, this fork: and its own
-			dedicated server, server/src/dedicated.c). The bit is Delta's
-			DELTA_ADVERTISED_FLAG too, which a host speaking Delta sets anyway:
-			OpenCE's clients of 39 take every such host for a dedicated one */
+			dedicated server, server/src/dedicated.c, which
+			delta_peer_advertised_flags marks too). A host with a player at it
+			never sets it: Delta says itself in its tag at the tail */
 			if (halo_server_mode())
 				advertisement.reserved[HALO_PORT_ADVERTISED_FLAGS_OFFSET] |= HALO_PORT_ADVERTISED_DEDICATED_FLAG;
 #ifdef HALO_GAME_BROWSER
@@ -2256,18 +2314,16 @@ static boolean network_game_server_handle_message_client_broadcast_game_search(
 				advertisement.reserved[HALO_PORT_ADVERTISED_FLAGS_OFFSET] |= HALO_PORT_ADVERTISED_DEDICATED_FLAG; }
 #endif
 			/* (an OpenCE gametype's kind, the server browser's name for it;
-			port (this fork): not while it speaks Delta, whose major is in
-			that byte, the game wire after it, which ChupathingyCE's clients
-			join by: OpenCE's take that for a kind) */
-#ifdef HALO_GAME_BROWSER
-			{ unsigned char delta_peer_advertised_flags(void);
-			  if (!delta_peer_advertised_flags())
-#endif
-			advertisement.reserved[HALO_PORT_ADVERTISED_KIND_OFFSET] = game_modes_kind(&game->variant,
-				&game->variant_options);
-#ifdef HALO_GAME_BROWSER
+			port (this fork): not where a dedicated server wrote Delta's old
+			layout for released clients, its major in that byte and its game
+			wire after it, delta_peer_advertised_wire: OpenCE's clients read no
+			kind there, outside Slayer) */
+			if (advertisement.reserved[HALO_PORT_ADVERTISED_KIND_OFFSET + 1] != 'c' ||
+				csmemcmp(advertisement.reserved + HALO_PORT_ADVERTISED_KIND_OFFSET + 1, "chupa-", 6))
+			{
+				advertisement.reserved[HALO_PORT_ADVERTISED_KIND_OFFSET] = game_modes_kind(&game->variant,
+					&game->variant_options);
 			}
-#endif
 			/* (open to joins: not while the machines load the game, nor
 			once it is over, nor in progress when no player can join it) */
 			if (network_game_server_get_state(server, NULL) == _network_game_server_state_ingame
@@ -2414,14 +2470,31 @@ static boolean network_game_server_handle_message_client_join_game_request(
 		short packet_type = _message_client_join_game_request;
 		short packet_version = NETWORK_GAME_MESSAGE_VERSION;
 
+		/* (port: the request of 0x70 bytes, or OpenCE's of 40 on, 234 bytes
+		longer: a pass and a proof for OpenCE's own servers, which this host
+		takes (network_game_server_set_machine_link). The decoder reads
+		OpenCE's longer one; a short one, a ChupathingyCE or older client's,
+		is padded with zeros before its type byte, the encoded message's last,
+		to read as one with no pass) */
+		byte padded[1 + 0x70 + 170 + 64 + 1];
+		const void *encoded = message + 1;
+
 		message_size -= sizeof(word);
+		if (message_size == 1 + 0x70 + 1)
+		{
+			csmemcpy(padded, message + 1, message_size - 1);
+			csmemset(padded + message_size - 1, 0, 170 + 64);
+			padded[sizeof(padded) - 1] = ((const byte *)(message + 1))[message_size - 1];
+			message_size = (short)sizeof(padded);
+			encoded = padded;
+		}
 		if (network_game_server_client_machine_is_joined_to_game(server, server_client_machine))
 		{
 			network_event("ignoring redundant join request from machine");
 		}
 		else if (decode_network_game_message(
 			&join_game_request,
-			message + 1,
+			encoded,
 			&message_size,
 			&packet_type,
 			&packet_version,
@@ -2445,6 +2518,12 @@ static boolean network_game_server_handle_message_client_join_game_request(
 				hardware_id[sizeof(join_game_request.hardware_id)] = 0;
 				network_game_server_set_machine_hardware_id(server_client_machine, hardware_id);
 			}
+			/* port: whether it has the join mark (delta_compat.h), which
+			then goes: nothing past the name's end is kept */
+#if defined(HALO_GAME_BROWSER) || defined(HALO_CONSOLE_DELTA)
+			network_game_server_join_marked = (boolean)delta_compat_join_marked(
+				(unsigned short *)join_game_request.machine_name, MAXIMUM_MACHINE_NAME_LENGTH);
+#endif
 			/* (the name comes from the wire, and need not end, nor be text
 			that draws: kept to what does; then in ASCII, for the log) */
 			network_game_server_clean_name(join_game_request.machine_name, MAXIMUM_MACHINE_NAME_LENGTH, L"Machine");
@@ -2453,6 +2532,10 @@ static boolean network_game_server_handle_message_client_join_game_request(
 				join_game_request.machine_name,
 				(char *)join_game_request.machine_name,
 				sizeof(join_game_request.machine_name));
+			/* port: the Discord pass it showed, if any, for the door
+			(network_game_server_accept_client_machine_into_game) */
+			network_game_server_set_machine_link(server_client_machine, join_game_request.link_pass,
+				join_game_request.link_proof, (char const *)join_game_request.machine_name);
 			network_connection_get_address(
 				network_game_server_get_client_connection(server_client_machine),
 				&source_address,
@@ -3002,9 +3085,11 @@ static boolean network_game_server_handle_message_client_game_start_request(
 			short countdown_event = (short)game_start_request.countdown_time;
 
 			/* port: the pregame screen's faster and slower, from any machine;
-			to stop the countdown or start at once (a script's), the host's own
-			(the Xbox game took any event from any machine, and a machine
-			could hold the lobby or skip the countdown) */
+			to stop the countdown or start at once (a script's, or the host's
+			faster), the host's own (the Xbox game took any event from any
+			machine, and a machine could hold the lobby or skip the countdown) */
+			if (countdown_event == _network_game_server_countdown_event_player_joined)
+				countdown_event = network_game_server_client_machine_faster_event(server, client_machine);
 			if ((countdown_event == _network_game_server_countdown_event_player_left &&
 					network_game_server_client_machine_may_slow_countdown(server, client_machine)) ||
 				countdown_event == _network_game_server_countdown_event_player_joined ||
